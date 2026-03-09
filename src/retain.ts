@@ -1,0 +1,163 @@
+/**
+ * Retain operation — capture events and create/update atoms.
+ * "Something meaningful happened. Remember it."
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { appendEvent } from './event-log.js';
+import { normalizeTimestamp } from './format.js';
+import {
+  DEFAULT_TTLS,
+  generateAtomId,
+  validateAtomFrontmatter,
+} from './schema.js';
+import { atomFilePath, readAtom, writeAtom } from './store.js';
+import type { Atom, AtomFrontmatter, AtomType, Classification } from './types.js';
+
+export interface RetainOptions {
+  agent_id: string;
+  session_id: string;
+  memoryDir: string;
+}
+
+/**
+ * Create a new atom and emit an event.
+ */
+export function createAtom(
+  opts: RetainOptions & {
+    type: AtomType;
+    slug: string;
+    body: string;
+    confidence?: number;
+    classification?: Classification;
+    scope?: AtomFrontmatter['scope'];
+    provenance?: AtomFrontmatter['provenance'];
+    links?: AtomFrontmatter['links'];
+  },
+): Atom {
+  const now = normalizeTimestamp();
+  const id = generateAtomId(opts.type, opts.slug);
+
+  const frontmatter: AtomFrontmatter = {
+    id,
+    type: opts.type,
+    status: opts.type === 'belief' ? 'draft' : 'active',
+    confidence: opts.confidence ?? (opts.type === 'belief' ? 0.5 : 0.8),
+    created_at: now,
+    updated_at: now,
+    ttl_days: DEFAULT_TTLS[opts.type] ?? null,
+    scope: opts.scope,
+    classification: opts.classification ?? 'TEAM',
+    provenance: opts.provenance,
+    links: opts.links,
+  };
+
+  // Validate
+  const result = validateAtomFrontmatter(frontmatter);
+  if (!result.success) {
+    throw new Error(
+      `Invalid atom frontmatter: ${JSON.stringify(result.error.issues)}`,
+    );
+  }
+
+  const atom: Atom = {
+    frontmatter,
+    body: opts.body,
+  };
+
+  // Write to disk
+  const fp = atomFilePath(opts.memoryDir, id, opts.type);
+  writeAtom(atom, fp);
+  atom.filePath = fp;
+
+  // Emit event
+  appendEvent(opts.memoryDir, 'atom_created', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    atom_refs: [id],
+    touched_paths: opts.scope?.paths,
+  });
+
+  return atom;
+}
+
+/**
+ * Update an existing atom's body and/or frontmatter fields.
+ */
+export function updateAtom(
+  opts: RetainOptions & {
+    filePath: string;
+    updates: Partial<Pick<AtomFrontmatter, 'status' | 'confidence' | 'scope' | 'links' | 'provenance'>>;
+    body?: string;
+  },
+): Atom {
+  const atom = readAtom(opts.filePath);
+  const now = normalizeTimestamp();
+
+  // Apply updates
+  if (opts.updates.status) atom.frontmatter.status = opts.updates.status;
+  if (opts.updates.confidence !== undefined)
+    atom.frontmatter.confidence = opts.updates.confidence;
+  if (opts.updates.scope) atom.frontmatter.scope = opts.updates.scope;
+  if (opts.updates.links) atom.frontmatter.links = opts.updates.links;
+  if (opts.updates.provenance)
+    atom.frontmatter.provenance = opts.updates.provenance;
+  if (opts.body !== undefined) atom.body = opts.body;
+
+  atom.frontmatter.updated_at = now;
+
+  // Validate
+  const result = validateAtomFrontmatter(atom.frontmatter);
+  if (!result.success) {
+    throw new Error(
+      `Invalid atom frontmatter after update: ${JSON.stringify(result.error.issues)}`,
+    );
+  }
+
+  // Write
+  writeAtom(atom, opts.filePath);
+
+  // Emit event
+  appendEvent(opts.memoryDir, 'atom_updated', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    atom_refs: [atom.frontmatter.id],
+    touched_paths: atom.frontmatter.scope?.paths,
+  });
+
+  return atom;
+}
+
+/**
+ * Archive an atom (move to ARCHIVE/, emit event).
+ */
+export function archiveAtom(
+  opts: RetainOptions & { filePath: string },
+): Atom {
+  const atom = readAtom(opts.filePath);
+  atom.frontmatter.status = 'archived';
+  atom.frontmatter.updated_at = normalizeTimestamp();
+
+  // Write to archive location
+  const archivePath = path.join(
+    opts.memoryDir,
+    'ARCHIVE',
+    path.basename(opts.filePath),
+  );
+  writeAtom(atom, archivePath);
+
+  // Remove original
+  if (fs.existsSync(opts.filePath)) {
+    fs.unlinkSync(opts.filePath);
+  }
+
+  // Emit event
+  appendEvent(opts.memoryDir, 'atom_archived', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    atom_refs: [atom.frontmatter.id],
+  });
+
+  return atom;
+}
