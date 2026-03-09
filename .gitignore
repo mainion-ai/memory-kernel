@@ -6,3 +6,7 @@ dist/
 *.pem
 .DS_Store
 Thumbs.db
+# SQLite index (derived cache — rebuild with mk reindex)
+.memory-index.db
+.memory-index.db-wal
+.memory-index.db-shm

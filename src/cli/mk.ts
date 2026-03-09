@@ -22,6 +22,10 @@ import {
   countEvents,
   readEvents,
   validateAtomFrontmatter,
+  reindex,
+  indexStats,
+  indexExists,
+  createAtom,
 } from '../index.js';
 import { recall } from '../recall.js';
 import { reflect } from '../reflect.js';
@@ -89,6 +93,17 @@ program
       for (const [status, count] of [...byStatus].sort()) {
         console.log(`  ${status}: ${count}`);
       }
+      console.log('');
+    }
+
+    // Index status
+    if (indexExists(memoryDir)) {
+      const stats = indexStats(memoryDir);
+      if (stats) {
+        console.log(`Index: ✓ (${stats.atoms} atoms, ${stats.tags} tags, ${stats.paths} paths)`);
+      }
+    } else {
+      console.log('Index: ✗ (run "mk reindex" to build)');
     }
   });
 
@@ -222,6 +237,75 @@ program
       }
       process.exit(1);
     }
+  });
+
+// --- mk reindex ---
+program
+  .command('reindex')
+  .description('Rebuild SQLite index from atom files')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .action((opts: { dir: string }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      process.exit(1);
+    }
+
+    console.log(`Rebuilding index for ${memoryDir}...`);
+    const result = reindex(memoryDir);
+    console.log(`✓ Indexed ${result.indexed} atoms in ${result.timeMs}ms`);
+
+    const stats = indexStats(memoryDir);
+    if (stats) {
+      console.log(`  Atoms: ${stats.atoms}, Tags: ${stats.tags}, Paths: ${stats.paths}`);
+    }
+  });
+
+// --- mk remember ---
+program
+  .command('remember')
+  .description('Quick atom creation from command line')
+  .argument('<body>', 'Atom body text')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('-t, --type <type>', 'Atom type', 'belief')
+  .option('-c, --confidence <n>', 'Confidence (0-1)', parseFloat)
+  .option('--slug <slug>', 'Custom slug for atom ID')
+  .option('--tags <tags...>', 'Tags for scope')
+  .option('--agent-id <id>', 'Agent ID', 'cli')
+  .option('--session-id <id>', 'Session ID', 'cli-session')
+  .action((body: string, opts: {
+    dir: string; type: string; confidence?: number;
+    slug?: string; tags?: string[];
+    agentId: string; sessionId: string;
+  }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      process.exit(1);
+    }
+
+    // Generate slug from body if not provided
+    const slug = opts.slug ?? body
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+
+    const atom = createAtom({
+      memoryDir,
+      type: opts.type as any,
+      slug,
+      body,
+      confidence: opts.confidence,
+      agent_id: opts.agentId,
+      session_id: opts.sessionId,
+      scope: opts.tags ? { tags: opts.tags } : undefined,
+    });
+
+    console.log(`✓ Created: ${atom.frontmatter.id}`);
+    console.log(`  Type: ${atom.frontmatter.type}, Status: ${atom.frontmatter.status}`);
+    console.log(`  Confidence: ${atom.frontmatter.confidence}`);
+    if (opts.tags) console.log(`  Tags: ${opts.tags.join(', ')}`);
   });
 
 program.parse();

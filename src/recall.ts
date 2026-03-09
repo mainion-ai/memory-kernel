@@ -8,7 +8,8 @@
  * - Episodes: only on explicit request
  */
 
-import { readView, listAtoms } from './store.js';
+import { readView, listAtoms, readAtom } from './store.js';
+import { queryIndex } from './index-db.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 /**
@@ -23,16 +24,34 @@ export function recall(
   const handoff = readView(memoryDir, 'HANDOFF.md');
   const constraints = readView(memoryDir, 'CONSTRAINTS.md');
 
-  // Load all atoms and filter
-  const allAtoms = listAtoms(memoryDir);
-  let filtered = filterAtoms(allAtoms, query);
+  // Try indexed query first, fall back to file scan
+  let filtered: Atom[];
+  const indexResults = queryIndex(memoryDir, query);
 
-  // Sort by relevance: active first, then by updated_at descending
-  filtered.sort((a, b) => {
-    const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
-    if (statusOrder !== 0) return statusOrder;
-    return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
-  });
+  if (indexResults !== null) {
+    // Index available — load only matching atoms from files
+    filtered = indexResults
+      .map((r) => {
+        try {
+          return readAtom(r.file_path);
+        } catch {
+          return null; // File removed but index stale — skip
+        }
+      })
+      .filter((a): a is Atom => a !== null);
+    // Already sorted by index query (status priority, updated_at DESC)
+  } else {
+    // No index — full file scan + in-memory filter
+    const allAtoms = listAtoms(memoryDir);
+    filtered = filterAtoms(allAtoms, query);
+
+    // Sort by relevance: active first, then by updated_at descending
+    filtered.sort((a, b) => {
+      const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
+      if (statusOrder !== 0) return statusOrder;
+      return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
+    });
+  }
 
   // Apply token budget if specified
   if (query.max_tokens) {

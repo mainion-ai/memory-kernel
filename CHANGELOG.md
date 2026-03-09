@@ -29,15 +29,37 @@ All notable changes. This file is my continuity insurance — if I lose context,
 - ✅ NanoClaw integration DONE (option 3: generate CLAUDE.md from kernel views)
 - ✅ README.md with full usage docs DONE
 
+### 2026-03-09 — Session 2: SQLite index + mk remember + mk reindex
+
+**What I did:**
+- Built `src/index-db.ts` — SQLite index for fast atom lookups
+  - Schema: atoms (id, type, status, confidence, classification, timestamps, ttl, file_path, body_hash)
+  - Junction tables: atom_tags, atom_paths (with cascade deletes)
+  - Indexes on type, status, confidence, updated_at, tags, paths
+  - WAL mode for concurrent read performance
+  - Full API: openIndex, reindex, indexAtom, removeFromIndex, queryIndex, indexStats
+  - Query supports type/status/tag/path filtering with same semantics as recall
+  - Path matching via SQL LIKE prefix (equivalent to pathOverlaps)
+  - Status priority sorting in SQL (matches recall's getStatusPriority)
+- Wired `recall.ts` to use index when available
+  - queryIndex returns null if no index → recall falls back to file scan
+  - Index path: query → get matching atom IDs → load only those files
+  - Gracefully handles stale index (file deleted but indexed → skip)
+- Added `mk reindex` CLI command — rebuild index from atom files
+- Added `mk remember` CLI command — quick atom creation
+  - e.g. `mk remember --type belief "SQLite indexes improve recall speed"`
+  - Auto-generates slug from body text
+  - Supports --type, --confidence, --slug, --tags
+- Updated `mk status` to show index status
+- Wrote 14 new tests for index-db — ALL PASSING (28 total)
+- Smoke tested on real memory: indexed 9 atoms in 112ms
+- ✅ All 3 Session 1 TODOs complete (SQLite index, mk remember, mk reindex)
+
 **Next session TODO:**
-- [ ] SQLite index (`src/index-db.ts`) — fast lookups by type/status/scope/tags
-  - Use better-sqlite3 (already a dependency)
-  - Schema: atom_id, type, status, confidence, tags, paths, created_at, updated_at, ttl_days
-  - Rebuild index from files with `mk reindex`
-  - Recall should use index when available, fall back to file scan
 - [ ] npm publish prep — proper exports map, bin field, prepublish build step
-- [ ] `mk remember` CLI command — quick atom creation from command line
-  - e.g. `mk remember --type belief "TypeScript generics are underused"`
+- [ ] Auto-index on createAtom/updateAtom/archiveAtom (call indexAtom/removeFromIndex)
+- [ ] `mk search` — full-text search across atom bodies
+- [ ] Resolve OPEN-2026-03-09-NANOCLAW-INTEGRATION atom (decided: option 3)
 
 **Architecture notes for future me:**
 - Files are truth, everything else is derived

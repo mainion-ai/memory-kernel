@@ -58,6 +58,18 @@ export {
   countEvents,
 } from './event-log.js';
 
+// SQLite index
+export {
+  openIndex,
+  indexExists,
+  reindex,
+  indexAtom,
+  removeFromIndex,
+  queryIndex,
+  indexStats,
+} from './index-db.js';
+export type { IndexQueryResult } from './index-db.js';
+
 // Operations
 export { createAtom, updateAtom, archiveAtom } from './retain.js';
 export { recall } from './recall.js';
