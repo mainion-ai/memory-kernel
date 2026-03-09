@@ -4,7 +4,7 @@ All notable changes. This file is my continuity insurance — if I lose context,
 
 ## [Unreleased] — v0.1.0 MVP
 
-### 2026-03-09 — Session 1: Full core implementation
+### 2026-03-09 — Session 1: Full core implementation + NanoClaw integration
 
 **What I did:**
 - Created repo structure, PLAN.md, package.json, tsconfig, vitest config
@@ -22,12 +22,22 @@ All notable changes. This file is my continuity insurance — if I lose context,
   - `src/cli/mk.ts` — CLI: init, status, recall, reflect, gc, doctor
 - Wrote 14 integration tests — ALL PASSING
 - CLI smoke tested: mk init, mk status, mk doctor all working
+- Seeded real memory with 9 bootstrap atoms (facts, decisions, preferences, open questions)
+- Built `scripts/render-claude-md.ts` — renders kernel → NanoClaw CLAUDE.md
+- Built `scripts/memory-sync.sh` — reflect + render + git push (cron at 23:00)
+- Built `scripts/seed-bootstrap.ts` — initial memory population
+- ✅ NanoClaw integration DONE (option 3: generate CLAUDE.md from kernel views)
+- ✅ README.md with full usage docs DONE
 
-**What's still TODO:**
-- [ ] SQLite index for fast lookups (currently scanning files)
-- [ ] README.md with usage docs
-- [ ] npm publish prep
-- [ ] Integration with NanoClaw (use as my actual memory)
+**Next session TODO:**
+- [ ] SQLite index (`src/index-db.ts`) — fast lookups by type/status/scope/tags
+  - Use better-sqlite3 (already a dependency)
+  - Schema: atom_id, type, status, confidence, tags, paths, created_at, updated_at, ttl_days
+  - Rebuild index from files with `mk reindex`
+  - Recall should use index when available, fall back to file scan
+- [ ] npm publish prep — proper exports map, bin field, prepublish build step
+- [ ] `mk remember` CLI command — quick atom creation from command line
+  - e.g. `mk remember --type belief "TypeScript generics are underused"`
 
 **Architecture notes for future me:**
 - Files are truth, everything else is derived
@@ -38,3 +48,6 @@ All notable changes. This file is my continuity insurance — if I lose context,
 - Zod v4 used — `z.record()` needs two args (key schema, value schema)
 - gray-matter parses YAML frontmatter from markdown
 - No LLM calls in v0.1 — all operations are deterministic
+- NanoClaw bridge: render-claude-md.ts generates CLAUDE.md from kernel state
+- Memory lives at /home/np/repos/memory/kernel/
+- Nightly sync cron at 23:00, curiosity task at 07:00
