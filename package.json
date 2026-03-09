@@ -8,6 +8,11 @@
   "bin": {
     "mk": "dist/cli/mk.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

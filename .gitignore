@@ -10,3 +10,5 @@ Thumbs.db
 .memory-index.db
 .memory-index.db-wal
 .memory-index.db-shm
+# npm auth (never commit)
+.npmrc
