@@ -424,17 +424,22 @@ program
       process.exit(1);
     }
 
-    const result = compactLog(memoryDir);
+    try {
+      const result = compactLog(memoryDir);
 
-    if (result.removed === 0) {
-      console.log('✓ Event log is already compact. Nothing to do.');
-      console.log(`  Events: ${result.events_before}`);
-    } else {
-      console.log('✓ Event log compacted:');
-      console.log(`  Before: ${result.events_before} events`);
-      console.log(`  After:  ${result.events_after} events`);
-      console.log(`  Removed: ${result.removed} intermediate events`);
-      console.log(`  Backup: ${result.backup_path}`);
+      if (result.removed === 0) {
+        console.log('✓ Event log is already compact. Nothing to do.');
+        console.log(`  Events: ${result.events_before}`);
+      } else {
+        console.log('✓ Event log compacted:');
+        console.log(`  Before: ${result.events_before} events`);
+        console.log(`  After:  ${result.events_after} events`);
+        console.log(`  Removed: ${result.removed} intermediate events`);
+        console.log(`  Backup: ${result.backup_path}`);
+      }
+    } catch (err) {
+      console.error(`✗ Compact failed: ${String(err)}`);
+      process.exit(1);
     }
   });
 

@@ -59,6 +59,7 @@ export function reflect(opts: ReflectOptions): ReflectResult {
   // 2. Dedup
   const dedupResult = dedup(opts, atoms);
   result.deduped = dedupResult.count;
+  result.archived += dedupResult.archivedIds.size; // dedup also archives atoms
 
   // Filter out deduped atoms
   if (dedupResult.archivedIds.size > 0) {

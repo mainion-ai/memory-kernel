@@ -2244,13 +2244,15 @@ describe('Log compaction', () => {
     updateAtom({
       ...base(testDir),
       filePath: atom.filePath!,
-      updates: { body: 'Version 2' },
+      updates: {},
+      body: 'Version 2',
     });
 
     updateAtom({
       ...base(testDir),
       filePath: atom.filePath!,
-      updates: { body: 'Version 3' },
+      updates: {},
+      body: 'Version 3',
     });
 
     const eventsBefore = readEvents(testDir).length;
@@ -2429,18 +2431,20 @@ describe('SQLite index — connection caching and LIMIT', () => {
 
     // Create a second temp dir
     const testDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-idx2-'));
-    initMemoryDir(testDir2);
-    openIndex(testDir2);
+    try {
+      initMemoryDir(testDir2);
+      openIndex(testDir2);
 
-    // Close all — should not throw
-    closeAllIndexes();
+      // Close all — should not throw
+      closeAllIndexes();
 
-    // Re-opening should work
-    openIndex(testDir);
-    const stats = indexStats(testDir);
-    expect(stats).not.toBeNull();
-
-    fs.rmSync(testDir2, { recursive: true, force: true });
+      // Re-opening should work
+      openIndex(testDir);
+      const stats = indexStats(testDir);
+      expect(stats).not.toBeNull();
+    } finally {
+      fs.rmSync(testDir2, { recursive: true, force: true });
+    }
   });
 });
 
