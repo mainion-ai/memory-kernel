@@ -372,7 +372,7 @@ describe('event log corruption', () => {
     expect(events).toEqual([]);
   });
 
-  it('Finding #1: invalid atom type in snapshot passes replay silently (no schema validation at replay layer)', () => {
+  it('invalid atom type in snapshot is rejected by replay with a validation error', () => {
     const snap = [
       '---',
       'id: FACT-BADTYPE-STRESS',
@@ -398,10 +398,10 @@ describe('event log corruption', () => {
       atom_snapshot: snap,
     };
     const r = replay([evt]);
-    // No schema validation at replay layer — invalid type silently accepted
-    expect(r.errors.length).toBe(0);
-    expect(r.atoms.has('FACT-BADTYPE-STRESS')).toBe(true);
-    expect(r.atoms.get('FACT-BADTYPE-STRESS')?.frontmatter.type as string).toBe('NOTATYPE');
+    // Schema validation at replay layer — invalid type produces an error and atom is excluded
+    expect(r.errors.length).toBe(1);
+    expect(r.errors[0]).toMatch(/evt-bad-type-stress/);
+    expect(r.atoms.has('FACT-BADTYPE-STRESS')).toBe(false);
   });
 
   it('duplicate event_ids: both events loaded, replay does not crash', () => {
