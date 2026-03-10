@@ -151,9 +151,33 @@ export function atomFilePath(memoryDir: string, id: string, type: string): strin
  * Validate that a resolved path is within the given root directory.
  * Prevents path traversal attacks.
  */
+/**
+ * Walk up the path tree until finding an existing ancestor, resolve symlinks
+ * on it (handles /var → /private/var on macOS), then reconstruct the full path.
+ */
+function realpathWalk(p: string): string {
+  const parts: string[] = [];
+  let current = path.resolve(p);
+  while (true) {
+    try {
+      const real = fs.realpathSync(current);
+      return parts.reduceRight((acc, part) => path.join(acc, part), real);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(p); // reached filesystem root
+      parts.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 export function assertWithinDir(root: string, target: string): void {
-  const resolvedRoot = path.resolve(root);
-  const resolvedTarget = path.resolve(target);
+  // Use realpathWalk to follow symlinks — path.resolve() alone doesn't catch
+  // symlinks inside the directory that point outside it (e.g. ENTITIES/link → /tmp/evil).
+  // realpathWalk also handles /var → /private/var on macOS for non-existent targets.
+  const resolvedRoot = realpathWalk(root);
+  const resolvedTarget = realpathWalk(target);
+
   if (!resolvedTarget.startsWith(resolvedRoot + path.sep) && resolvedTarget !== resolvedRoot) {
     throw new Error(`Path traversal denied: ${target} is outside ${root}`);
   }

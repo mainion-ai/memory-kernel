@@ -56,9 +56,17 @@ export function reflect(opts: ReflectOptions): ReflectResult {
     atoms = atoms.filter((a) => !expiryResult.expiredIds.has(a.frontmatter.id));
   }
 
-  // 2. Dedup
+  // 2a. Dedup by ID — two files with the same atom ID, keep newer
+  const dedupByIdResult = dedupById(opts, atoms);
+  result.deduped += dedupByIdResult.count;
+  result.archived += dedupByIdResult.count;
+  if (dedupByIdResult.archivedIds.size > 0) {
+    atoms = atoms.filter((a) => !dedupByIdResult.archivedIds.has(a.frontmatter.id));
+  }
+
+  // 2b. Dedup by content — same type + body, keep newer
   const dedupResult = dedup(opts, atoms);
-  result.deduped = dedupResult.count;
+  result.deduped += dedupResult.count;
   result.archived += dedupResult.archivedIds.size; // dedup also archives atoms
 
   // Filter out deduped atoms
@@ -151,6 +159,76 @@ function processExpiry(
   }
 
   return { expired, archived, expiredIds };
+}
+
+/**
+ * ID dedup: if two files share the same atom ID, archive the older one.
+ * This handles files created externally or via copy that bypass normal retain APIs.
+ */
+function dedupById(opts: ReflectOptions, atoms: Atom[]): { count: number; archivedIds: Set<string> } {
+  let count = 0;
+  const archivedIds = new Set<string>();
+  const seen = new Map<string, Atom>(); // id → newest atom
+
+  for (const atom of atoms) {
+    if (atom.frontmatter.status === 'archived' || atom.frontmatter.status === 'expired') continue;
+
+    const id = atom.frontmatter.id;
+    const existing = seen.get(id);
+
+    if (existing && existing.filePath && atom.filePath) {
+      const existingDate = new Date(existing.frontmatter.updated_at).getTime();
+      const atomDate = new Date(atom.frontmatter.updated_at).getTime();
+
+      const toArchive = existingDate < atomDate ? existing : atom;
+      const toKeep = existingDate < atomDate ? atom : existing;
+
+      if (toArchive.filePath) {
+        assertWithinDir(opts.memoryDir, toArchive.filePath);
+
+        const archiveCopy: Atom = {
+          frontmatter: { ...toArchive.frontmatter },
+          body: toArchive.body,
+          filePath: toArchive.filePath,
+        };
+
+        const archivePath = path.join(
+          opts.memoryDir,
+          'ARCHIVE',
+          path.basename(archiveCopy.filePath!),
+        );
+        assertWithinDir(opts.memoryDir, archivePath);
+        archiveCopy.frontmatter.status = 'archived';
+        archiveCopy.frontmatter.updated_at = normalizeTimestamp();
+        writeAtom(archiveCopy, archivePath);
+        if (fs.existsSync(archiveCopy.filePath!)) {
+          fs.unlinkSync(archiveCopy.filePath!);
+        }
+
+        appendEvent(opts.memoryDir, 'atom_archived', {
+          agent_id: opts.agent_id,
+          session_id: opts.session_id,
+          atom_refs: [archiveCopy.frontmatter.id],
+          schema_version: 2,
+          atom_snapshot: serializeAtom(archiveCopy),
+          meta: { reason: 'dedup-id' },
+        });
+
+        if (indexExists(opts.memoryDir)) {
+          removeFromIndex(opts.memoryDir, archiveCopy.frontmatter.id);
+        }
+
+        archivedIds.add(archiveCopy.frontmatter.id);
+        count++;
+      }
+
+      seen.set(id, toKeep);
+    } else {
+      seen.set(id, atom);
+    }
+  }
+
+  return { count, archivedIds };
 }
 
 /**

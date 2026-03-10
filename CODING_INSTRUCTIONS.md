@@ -142,19 +142,19 @@ The schema uses `.min(0)` not `.positive()`. Zero means the atom expires immedia
 
 ---
 
-## Replay layer — no schema validation (Finding #1)
+## Replay layer — schema validation
 
-`replay()` and `replayFromFile()` do **not** run Zod schema validation on atom snapshots. Events with invalid `type`, `status`, or `confidence` values pass silently:
+`replay()` validates atom snapshots against `AtomFrontmatterSchema` after parsing. Events with invalid `type`, `status`, or out-of-range `confidence` values are rejected with an error entry and excluded from the atom map:
 
 ```typescript
 const badSnapshot = `---\nid: XXXX-bad\ntype: invalid_type\n...\n---\nbody`;
 const event: MemoryEvent = { ..., action: 'atom_created', atom_snapshot: badSnapshot };
 const r = replay([event]);
-expect(r.errors).toHaveLength(0);  // no error
-expect(r.atoms.has('XXXX-bad')).toBe(true);  // atom IS in map
+expect(r.errors).toHaveLength(1);       // validation error reported
+expect(r.atoms.has('XXXX-bad')).toBe(false);  // atom excluded
 ```
 
-This is intentional — replay is a pure fold that trusts the event log. Validation happens at write time (in `createAtom`/`updateAtom`). If you add validation to the replay layer, update this note and the corresponding stress test in `test/stress.test.ts` (describe block "event log corruption", test "invalid atom type/status in snapshot: silently passes replay").
+Validation happens at both write time (`createAtom`/`updateAtom`) and replay time (`replay()`/`replayFromFile()`). This prevents corrupt or hand-crafted event log entries from poisoning reconstructed state.
 
 ---
 
