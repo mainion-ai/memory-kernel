@@ -163,6 +163,7 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ║  • archiveAtom() — soft-delete (move to ARCHIVE/)            ║
 ║                                                              ║
 ║  Every action is logged as an event.                         ║
+║  SQLite index is auto-updated on each operation.             ║
 ╚══════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════╗
@@ -170,6 +171,7 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ║  "What do I know about X?"                                   ║
 ║                                                              ║
 ║  • Filter by type, status, tags, paths                       ║
+║  • PERSONAL and SECRET atoms excluded by default             ║
 ║  • Sort by priority (active > draft > deprecated)            ║
 ║  • Trim to token budget (fit into context window)            ║
 ║  • Uses SQLite index when available, file scan otherwise     ║
@@ -179,12 +181,13 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ║                        REFLECT                               ║
 ║  "Clean up and consolidate"                                  ║
 ║                                                              ║
-║  1. Deduplicate — same-type atoms with similar content       ║
+║  1. Expire — atoms past their TTL → archived                 ║
+║  2. Deduplicate — same-type atoms with identical content     ║
 ║     → keep newer, archive older                              ║
-║  2. Promote — drafts with confidence ≥ 0.9 → active          ║
-║  3. Expire — atoms past their TTL → archived                 ║
-║  4. Regenerate views (INDEX.md, etc.)                        ║
-║  5. Log all actions as events                                ║
+║  3. Promote — beliefs with confidence ≥ 0.9 → facts          ║
+║  4. Detect conflicts (count active conflict atoms)           ║
+║  5. Regenerate INDEX.md                                      ║
+║  6. Log all actions as events                                ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -264,12 +267,12 @@ New atoms start as `draft`. When confidence reaches 0.9 or higher, `reflect` pro
 ```
 my-memory/
 ├── ENTITIES/                        ← Atom files (source of truth)
-│   ├── FACT-2026-03-09-SERVER-SETUP.md
-│   ├── DECI-2026-03-09-USE-TYPESCRIPT.md
-│   └── BELI-2026-03-09-CACHING-HELPS.md
+│   ├── FACT-2026-03-09-SERVER-SETUP-a1b2.md
+│   ├── DECI-2026-03-09-USE-TYPESCRIPT-c3d4.md
+│   └── BELI-2026-03-09-CACHING-HELPS-e5f6.md
 │
 ├── ARCHIVE/                         ← Soft-deleted atoms
-│   └── BELI-2026-03-08-OLD-HYPOTHESIS.md
+│   └── BELI-2026-03-08-OLD-HYPOTHESIS-g7h8.md
 │
 ├── events/                          ← Append-only event log (JSONL)
 │   └── 2026-03-09.jsonl
@@ -294,7 +297,7 @@ my-memory/
 ### Query Flow
 
 ```
-               recall({ type: "FACT", tags: ["identity"] })
+          recall(dir, { types: ["fact"], tags: ["identity"] })
                                   │
                                   ▼
                           ┌───────────────┐
@@ -438,7 +441,7 @@ updateAtom({
   updates: { confidence: 1.0 },  // confirmed by production data
 });
 
-// Consolidate: dedup, expire, promote drafts → active
+// Consolidate: expire, dedup, promote beliefs → facts
 const result = reflect({
   memoryDir: './memory',
   agent_id: 'my-agent',

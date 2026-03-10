@@ -1,75 +1,69 @@
 # Changelog
 
-All notable changes. This file is my continuity insurance — if I lose context, I read this to know where I am.
+All notable changes to this project will be documented in this file.
 
-## [Unreleased] — v0.1.0 MVP
+## [0.2.0] — 2026-03-10
 
-### 2026-03-09 — Session 1: Full core implementation + NanoClaw integration
+### Security
+- **Path traversal protection** — `readView`, `writeView`, and `archiveAtom` now validate that resolved paths stay within `memoryDir`. Prevents arbitrary file read/write/delete via crafted `viewName` or `filePath`.
 
-**What I did:**
-- Created repo structure, PLAN.md, package.json, tsconfig, vitest config
-- Reviewed PRD, scoped MVP, documented 8 key decisions in PLAN.md
-- Implemented ALL core modules:
-  - `src/types.ts` — Atom, Event, RecallQuery, ContextBundle types
-  - `src/schema.ts` — Zod validation for atoms + events, ID generators, default TTLs
-  - `src/format.ts` — Canonicalization (stable YAML key order, timestamp normalization)
-  - `src/store.ts` — Atomic file writes, directory layout init, atom CRUD
-  - `src/event-log.ts` — Append-only NDJSON with fsync
-  - `src/retain.ts` — createAtom, updateAtom, archiveAtom (with event emission)
-  - `src/recall.ts` — Progressive disclosure, type/status/path/tag filtering, token budgets
-  - `src/reflect.ts` — TTL/expiry, dedup, auto-promotion (belief→fact), conflict detection, view regeneration
-  - `src/index.ts` — Public API re-exports
-  - `src/cli/mk.ts` — CLI: init, status, recall, reflect, gc, doctor
-- Wrote 14 integration tests — ALL PASSING
-- CLI smoke tested: mk init, mk status, mk doctor all working
-- Seeded real memory with 9 bootstrap atoms (facts, decisions, preferences, open questions)
-- Built `scripts/render-claude-md.ts` — renders kernel → NanoClaw CLAUDE.md
-- Built `scripts/memory-sync.sh` — reflect + render + git push (cron at 23:00)
-- Built `scripts/seed-bootstrap.ts` — initial memory population
-- ✅ NanoClaw integration DONE (option 3: generate CLAUDE.md from kernel views)
-- ✅ README.md with full usage docs DONE
+### Fixed
+- **Atomic writes leave no orphan temp files** — `writeFileAtomic` cleans up the `.tmp` file if `renameSync` fails after `closeSync`.
+- **Corrupted event log no longer crashes reads** — `readEvents` skips malformed JSON lines instead of throwing on the entire log.
+- **`parseAtom` validates required fields** — missing `id`, `type`, or `status` in frontmatter now throws a clear error instead of producing a broken `Atom` that crashes downstream.
+- **Belief promotion renames file** — when `reflect` promotes a belief to a fact, the file is renamed from `BELI-*.md` to `FACT-*.md` to match the new type.
+- **Reflect re-reads atoms between phases** — `processExpiry`, `dedup`, and `autoPromote` no longer share a stale in-memory list; each phase works on current disk state.
+- **SQLite busy timeout** — `openIndex` sets `busy_timeout = 5000` so concurrent processes don't get `SQLITE_BUSY` immediately.
+- **Unique atom IDs** — `generateAtomId` appends a random counter suffix (`TYPE-DATE-SLUG-xxxx`) to prevent collisions when two atoms share the same type, slug, and date.
+- **Unique event IDs** — `generateEventId` includes `process.pid` to avoid collisions across concurrent processes.
+- **`listAtoms` is resilient** — a single corrupted atom file no longer aborts the entire listing; bad files are skipped with a warning.
+- **Index auto-sync on retain** — `createAtom`, `updateAtom`, and `archiveAtom` now update the SQLite index automatically (no manual `reindex` needed after writes).
+- **PERSONAL classification excluded from recall** — both `PERSONAL` and `SECRET` atoms are now excluded from default recall queries, matching the PRD.
+- **LIKE wildcard injection** — path queries in `queryIndex` now escape `%` and `_` characters to prevent unintended SQL LIKE pattern matching.
+- **`updateAtom` with empty updates** — no-op calls (empty `updates` and no `body`) now return early without rewriting the file or emitting a spurious event.
+- **`render-claude-md.ts` crash** — replaced `fs.realpathSync` with `path.dirname(path.resolve(...))` to avoid `ENOENT` when the output directory doesn't exist.
+- **Zod default mismatch** — removed the `default('TEAM')` from the `classification` schema field since `parseAtom` doesn't run Zod transforms, making the runtime value consistent.
 
-### 2026-03-09 — Session 2: SQLite index + mk remember + mk reindex
+### Changed
+- **CLI version is dynamic** — `mk --version` now reads from `package.json` instead of a hardcoded string.
+- **`mk gc` shows full results** — previously hid dedup/promotion counts; now shows all reflect output.
 
-**What I did:**
-- Built `src/index-db.ts` — SQLite index for fast atom lookups
-  - Schema: atoms (id, type, status, confidence, classification, timestamps, ttl, file_path, body_hash)
-  - Junction tables: atom_tags, atom_paths (with cascade deletes)
-  - Indexes on type, status, confidence, updated_at, tags, paths
-  - WAL mode for concurrent read performance
-  - Full API: openIndex, reindex, indexAtom, removeFromIndex, queryIndex, indexStats
-  - Query supports type/status/tag/path filtering with same semantics as recall
-  - Path matching via SQL LIKE prefix (equivalent to pathOverlaps)
-  - Status priority sorting in SQL (matches recall's getStatusPriority)
-- Wired `recall.ts` to use index when available
-  - queryIndex returns null if no index → recall falls back to file scan
-  - Index path: query → get matching atom IDs → load only those files
-  - Gracefully handles stale index (file deleted but indexed → skip)
-- Added `mk reindex` CLI command — rebuild index from atom files
-- Added `mk remember` CLI command — quick atom creation
-  - e.g. `mk remember --type belief "SQLite indexes improve recall speed"`
-  - Auto-generates slug from body text
-  - Supports --type, --confidence, --slug, --tags
-- Updated `mk status` to show index status
-- Wrote 14 new tests for index-db — ALL PASSING (28 total)
-- Smoke tested on real memory: indexed 9 atoms in 112ms
-- ✅ All 3 Session 1 TODOs complete (SQLite index, mk remember, mk reindex)
+### Added
+- `tsconfig.test.json` — separate TypeScript config that includes test files for type-checking (`npm run lint:all`).
+- `lint:all` script in `package.json` — runs `tsc --noEmit` against both `src/` and `test/` files.
 
-**Next session TODO:**
-- [ ] npm publish prep — proper exports map, bin field, prepublish build step
-- [ ] Auto-index on createAtom/updateAtom/archiveAtom (call indexAtom/removeFromIndex)
-- [ ] `mk search` — full-text search across atom bodies
-- [ ] Resolve OPEN-2026-03-09-NANOCLAW-INTEGRATION atom (decided: option 3)
+### Documentation
+- Fixed `updateAtom` and `recall` signatures in SDK Usage section to match actual API.
+- Fixed Reflect operations box to show correct order and descriptions.
+- Updated atom ID examples to show counter suffix format.
+- Fixed query flow diagram to use correct `recall(dir, { types, tags })` signature.
+- Added note about PERSONAL/SECRET exclusion in Recall box.
+- Added note about index auto-sync in Retain box.
+- Documented flat directory layout (no recursive scan) in `listAtomFiles` JSDoc.
+- Documented `detectConflicts` as a v0.1 stub counting existing conflict atoms.
+- Documented that only `INDEX.md` is auto-regenerated by reflect (other views are manual).
+- Marked `task` and `include_episodes` fields as `@todo v0.2` in `RecallQuery` type.
 
-**Architecture notes for future me:**
-- Files are truth, everything else is derived
-- Event log (events.ndjson) is source of truth for "what happened"
-- Views (INDEX.md, HANDOFF.md, etc.) are regenerated by reflect()
-- Atoms live in ENTITIES/ and CONFLICTS/ as markdown + YAML frontmatter
-- Atomic writes: temp file → fsync → rename (crash-safe)
-- Zod v4 used — `z.record()` needs two args (key schema, value schema)
-- gray-matter parses YAML frontmatter from markdown
-- No LLM calls in v0.1 — all operations are deterministic
-- NanoClaw bridge: render-claude-md.ts generates CLAUDE.md from kernel state
-- Memory lives at /home/np/repos/memory/kernel/
-- Nightly sync cron at 23:00, curiosity task at 07:00
+### Tests
+- Fixed vacuous assertions in corruption tests to verify specific expected behavior.
+- Renamed misleading "concurrent writes" test to "sequential writes".
+- Updated all atom ID regex expectations to match new counter suffix format.
+- 152 tests passing.
+
+## [0.1.1] — 2026-03-09
+
+### Changed
+- Updated README with full documentation.
+
+## [0.1.0] — 2026-03-09
+
+### Added
+- Initial release.
+- Core operations: retain, recall, reflect.
+- CLI tool (`mk`) with init, status, recall, reflect, gc, doctor, reindex, remember commands.
+- SQLite index for fast queries.
+- Atom types: fact, decision, constraint, belief, preference, open_question, procedure, entity_summary, conflict.
+- NDJSON append-only event log.
+- `activate-memory` script for bootstrapping memory from CLAUDE.md.
+- `render-claude-md.ts` script for NanoClaw integration.
+- 124 tests.
