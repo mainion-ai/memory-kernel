@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseAtom } from './format.js';
 import { readEvidence } from './evidence.js';
-import { isMutationAction } from './schema.js';
+import { AtomFrontmatterSchema, isMutationAction } from './schema.js';
 import {
   renderIndex,
   renderDecisions,
@@ -74,6 +74,15 @@ export function replay(
 
     try {
       const atom = parseAtom(snapshot);
+
+      const validation = AtomFrontmatterSchema.safeParse(atom.frontmatter);
+      if (!validation.success) {
+        errors.push(
+          `Event ${event.event_id}: invalid snapshot — ${validation.error.issues.map((i) => i.message).join(', ')}`,
+        );
+        continue;
+      }
+
       const id = atom.frontmatter.id;
 
       if (
