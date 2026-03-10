@@ -1,8 +1,17 @@
-# Memory Kernel
+<p align="center">
+  <img src="docs/images/logo.png" alt="Memory Kernel" width="200">
+</p>
 
-A model-agnostic, file-first memory system for AI agents. Gives any LLM-based agent persistent, structured memory that survives context windows, compaction, and session boundaries.
+<h1 align="center">Memory Kernel</h1>
 
-**New here?** Read [STORY.md](STORY.md) first — it explains everything with no jargon.
+<p align="center">
+  A model-agnostic, file-first memory system for AI agents.<br>
+  Persistent, structured memory that survives context windows, compaction, and session boundaries.
+</p>
+
+<p align="center">
+  <strong>New here?</strong> Read <a href="STORY.md">STORY.md</a> first — it explains everything with no jargon.
+</p>
 
 ## The Problem
 
