@@ -259,7 +259,8 @@ describe('bootstrapEvents', () => {
 
     expect(result.imported).toBe(0);
     expect(result.events_written).toBe(0);
-    expect(fs.existsSync(result.backup_path)).toBe(true);
+    // No backup created when nothing was imported
+    expect(result.backup_path).toBe('');
   });
 
   it('import events use provided agent_id and session_id', () => {

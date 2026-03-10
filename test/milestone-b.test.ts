@@ -448,9 +448,10 @@ describe('Milestone B integration', () => {
     expect(result2.imported).toBe(0);
     expect(result2.skipped).toBe(1);
 
-    // Backup files should have distinct timestamped names
-    expect(result1.backup_path).not.toBe(result2.backup_path);
+    // First run created a backup, second run (no-op) did not
+    expect(result1.backup_path).not.toBe('');
     expect(fs.existsSync(result1.backup_path)).toBe(true);
-    expect(fs.existsSync(result2.backup_path)).toBe(true);
+    // Second run skipped all atoms — no backup needed
+    expect(result2.backup_path).toBe('');
   });
 });

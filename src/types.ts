@@ -176,6 +176,15 @@ export interface BootstrapResult {
   backup_path: string;
 }
 
+// --- Compact result ---
+
+export interface CompactResult {
+  events_before: number;
+  events_after: number;
+  removed: number;
+  backup_path: string;
+}
+
 // --- Memory Kernel config ---
 
 export interface KernelConfig {

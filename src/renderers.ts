@@ -34,6 +34,14 @@ function sanitizeMarkdownLine(text: string): string {
   return text.replace(/[[\]()]/g, (ch) => `\\${ch}`);
 }
 
+/**
+ * Sanitize an atom ID or ref for safe interpolation into bold/strikethrough markdown.
+ * Also escapes `*`, `~`, and `|` which break bold, strikethrough, and table syntax.
+ */
+function sanitizeId(text: string): string {
+  return text.replace(/[[\]()*~|]/g, (ch) => `\\${ch}`);
+}
+
 /** Enforce line budget: truncate and add overflow indicator. */
 function enforceBudget(lines: string[], budget?: ViewBudget): string[] {
   if (!budget || lines.length <= budget.maxLines) return lines;
@@ -339,7 +347,7 @@ export function renderHandoff(
     lines.push('_No recent activity._');
   } else {
     for (const e of recentEvents) {
-      const refs = e.atom_refs?.join(', ') ?? '';
+      const refs = (e.atom_refs ?? []).map(sanitizeId).join(', ');
       lines.push(`- **${e.action}**${refs ? `: ${refs}` : ''}`);
     }
   }

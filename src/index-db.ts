@@ -13,6 +13,7 @@ import type { Atom, AtomType, AtomStatus, Classification, RecallQuery } from './
 import { listAtoms } from './store.js';
 
 const DB_FILENAME = '.memory-index.db';
+const SCHEMA_VERSION = 2; // Bump when schema changes to trigger auto-rebuild
 
 // --- Schema ---
 
@@ -55,13 +56,63 @@ const CREATE_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_paths_path ON atom_paths(path)',
 ];
 
+// --- Connection cache ---
+
+const connectionCache = new Map<string, Database.Database>();
+
+/**
+ * Get or create a cached database connection for a memory directory.
+ * DDL only runs on first open — subsequent calls return the cached connection.
+ */
+function getCachedDb(memoryDir: string): Database.Database {
+  const resolvedDir = path.resolve(memoryDir);
+  const existing = connectionCache.get(resolvedDir);
+  if (existing) {
+    try {
+      // Verify connection is still valid
+      existing.pragma('journal_mode');
+      return existing;
+    } catch {
+      // Connection invalid — remove from cache and re-open
+      connectionCache.delete(resolvedDir);
+    }
+  }
+
+  const db = openIndexRaw(resolvedDir);
+  connectionCache.set(resolvedDir, db);
+  return db;
+}
+
+/**
+ * Close a cached connection (useful for tests and cleanup).
+ */
+export function closeIndex(memoryDir: string): void {
+  const resolvedDir = path.resolve(memoryDir);
+  const db = connectionCache.get(resolvedDir);
+  if (db) {
+    try { db.close(); } catch { /* best-effort */ }
+    connectionCache.delete(resolvedDir);
+  }
+}
+
+/**
+ * Close all cached connections (for process cleanup).
+ */
+export function closeAllIndexes(): void {
+  for (const [key, db] of connectionCache) {
+    try { db.close(); } catch { /* best-effort */ }
+    connectionCache.delete(key);
+  }
+}
+
 // --- DB lifecycle ---
 
 /**
- * Open (or create) the index database for a memory directory.
+ * Open the index database directly (no caching). Used internally.
+ * Checks schema version and rebuilds if stale.
  */
-export function openIndex(memoryDir: string): Database.Database {
-  const dbPath = path.join(memoryDir, DB_FILENAME);
+function openIndexRaw(resolvedDir: string): Database.Database {
+  const dbPath = path.join(resolvedDir, DB_FILENAME);
   const db = new Database(dbPath);
 
   // WAL mode for better concurrent read performance
@@ -69,7 +120,16 @@ export function openIndex(memoryDir: string): Database.Database {
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000'); // Wait up to 5s for locks
 
-  // Create schema
+  // Check schema version — auto-rebuild if stale
+  const currentVersion = (db.pragma('user_version', { simple: true }) as number) ?? 0;
+  if (currentVersion !== SCHEMA_VERSION) {
+    // Drop and recreate all tables for clean schema upgrade
+    db.exec('DROP TABLE IF EXISTS atom_paths');
+    db.exec('DROP TABLE IF EXISTS atom_tags');
+    db.exec('DROP TABLE IF EXISTS atoms');
+  }
+
+  // Create schema (idempotent — IF NOT EXISTS)
   db.exec(CREATE_ATOMS_TABLE);
   db.exec(CREATE_TAGS_TABLE);
   db.exec(CREATE_PATHS_TABLE);
@@ -77,7 +137,18 @@ export function openIndex(memoryDir: string): Database.Database {
     db.exec(idx);
   }
 
+  // Set schema version
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
+
   return db;
+}
+
+/**
+ * Open (or create) the index database for a memory directory.
+ * Uses connection cache — DDL only runs on first open.
+ */
+export function openIndex(memoryDir: string): Database.Database {
+  return getCachedDb(memoryDir);
 }
 
 /**
@@ -106,89 +177,35 @@ function bodyHash(body: string): string {
  */
 export function reindex(memoryDir: string): { indexed: number; timeMs: number } {
   const start = Date.now();
+  // Close cached connection before reindex to ensure clean state
+  closeIndex(memoryDir);
   const db = openIndex(memoryDir);
 
-  try {
-    const atoms = listAtoms(memoryDir);
+  const atoms = listAtoms(memoryDir);
 
-    const tx = db.transaction(() => {
-      // Clear existing data
-      db.exec('DELETE FROM atom_paths');
-      db.exec('DELETE FROM atom_tags');
-      db.exec('DELETE FROM atoms');
+  const tx = db.transaction(() => {
+    // Clear existing data
+    db.exec('DELETE FROM atom_paths');
+    db.exec('DELETE FROM atom_tags');
+    db.exec('DELETE FROM atoms');
 
-      const insertAtom = db.prepare(`
-        INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
+    const insertAtom = db.prepare(`
+      INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
 
-      const insertTag = db.prepare(`
-        INSERT OR IGNORE INTO atom_tags (atom_id, tag) VALUES (?, ?)
-      `);
+    const insertTag = db.prepare(`
+      INSERT OR IGNORE INTO atom_tags (atom_id, tag) VALUES (?, ?)
+    `);
 
-      const insertPath = db.prepare(`
-        INSERT OR IGNORE INTO atom_paths (atom_id, path) VALUES (?, ?)
-      `);
+    const insertPath = db.prepare(`
+      INSERT OR IGNORE INTO atom_paths (atom_id, path) VALUES (?, ?)
+    `);
 
-      for (const atom of atoms) {
-        const fm = atom.frontmatter;
+    for (const atom of atoms) {
+      const fm = atom.frontmatter;
 
-        insertAtom.run(
-          fm.id,
-          fm.type,
-          fm.status,
-          fm.confidence,
-          fm.classification ?? null,
-          fm.created_at,
-          fm.updated_at,
-          fm.ttl_days,
-          atom.filePath ?? '',
-          bodyHash(atom.body),
-        );
-
-        // Index tags
-        if (fm.scope?.tags) {
-          for (const tag of fm.scope.tags) {
-            insertTag.run(fm.id, tag);
-          }
-        }
-
-        // Index paths
-        if (fm.scope?.paths) {
-          for (const p of fm.scope.paths) {
-            insertPath.run(fm.id, p);
-          }
-        }
-      }
-    });
-
-    tx();
-
-    const timeMs = Date.now() - start;
-    return { indexed: atoms.length, timeMs };
-  } finally {
-    db.close();
-  }
-}
-
-/**
- * Upsert a single atom into the index.
- * Call after createAtom/updateAtom.
- */
-export function indexAtom(memoryDir: string, atom: Atom): void {
-  const db = openIndex(memoryDir);
-  try {
-    const fm = atom.frontmatter;
-
-    const tx = db.transaction(() => {
-      // Remove old data for this atom
-      db.prepare('DELETE FROM atom_tags WHERE atom_id = ?').run(fm.id);
-      db.prepare('DELETE FROM atom_paths WHERE atom_id = ?').run(fm.id);
-
-      db.prepare(`
-        INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+      insertAtom.run(
         fm.id,
         fm.type,
         fm.status,
@@ -201,25 +218,73 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
         bodyHash(atom.body),
       );
 
+      // Index tags
       if (fm.scope?.tags) {
-        const insertTag = db.prepare('INSERT OR IGNORE INTO atom_tags (atom_id, tag) VALUES (?, ?)');
         for (const tag of fm.scope.tags) {
           insertTag.run(fm.id, tag);
         }
       }
 
+      // Index paths
       if (fm.scope?.paths) {
-        const insertPath = db.prepare('INSERT OR IGNORE INTO atom_paths (atom_id, path) VALUES (?, ?)');
         for (const p of fm.scope.paths) {
           insertPath.run(fm.id, p);
         }
       }
-    });
+    }
+  });
 
-    tx();
-  } finally {
-    db.close();
-  }
+  tx();
+
+  const timeMs = Date.now() - start;
+  return { indexed: atoms.length, timeMs };
+}
+
+/**
+ * Upsert a single atom into the index.
+ * Call after createAtom/updateAtom.
+ */
+export function indexAtom(memoryDir: string, atom: Atom): void {
+  const db = openIndex(memoryDir);
+  const fm = atom.frontmatter;
+
+  const tx = db.transaction(() => {
+    // Remove old data for this atom
+    db.prepare('DELETE FROM atom_tags WHERE atom_id = ?').run(fm.id);
+    db.prepare('DELETE FROM atom_paths WHERE atom_id = ?').run(fm.id);
+
+    db.prepare(`
+      INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      fm.id,
+      fm.type,
+      fm.status,
+      fm.confidence,
+      fm.classification ?? null,
+      fm.created_at,
+      fm.updated_at,
+      fm.ttl_days,
+      atom.filePath ?? '',
+      bodyHash(atom.body),
+    );
+
+    if (fm.scope?.tags) {
+      const insertTag = db.prepare('INSERT OR IGNORE INTO atom_tags (atom_id, tag) VALUES (?, ?)');
+      for (const tag of fm.scope.tags) {
+        insertTag.run(fm.id, tag);
+      }
+    }
+
+    if (fm.scope?.paths) {
+      const insertPath = db.prepare('INSERT OR IGNORE INTO atom_paths (atom_id, path) VALUES (?, ?)');
+      for (const p of fm.scope.paths) {
+        insertPath.run(fm.id, p);
+      }
+    }
+  });
+
+  tx();
 }
 
 /**
@@ -227,12 +292,8 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
  */
 export function removeFromIndex(memoryDir: string, atomId: string): void {
   const db = openIndex(memoryDir);
-  try {
-    db.prepare('DELETE FROM atoms WHERE atom_id = ?').run(atomId);
-    // Tags and paths cascade-deleted via FK
-  } finally {
-    db.close();
-  }
+  db.prepare('DELETE FROM atoms WHERE atom_id = ?').run(atomId);
+  // Tags and paths cascade-deleted via FK
 }
 
 // --- Query interface ---
@@ -255,13 +316,12 @@ export interface IndexQueryResult {
  *
  * Falls back to null if index doesn't exist (caller should use listAtoms).
  */
-export function queryIndex(memoryDir: string, query: RecallQuery = {}): IndexQueryResult[] | null {
+export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { limit?: number }): IndexQueryResult[] | null {
   if (!indexExists(memoryDir)) return null;
 
   const db = openIndex(memoryDir);
-  try {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
+  const conditions: string[] = [];
+  const params: unknown[] = [];
 
     // Exclude archived/expired by default
     conditions.push("a.status NOT IN ('archived', 'expired')");
@@ -290,19 +350,21 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}): IndexQue
       params.push(...query.tags);
     }
 
-    // Filter by paths (prefix overlap)
+    // Filter by paths (prefix overlap using separator-boundary matching)
     if (query.paths && query.paths.length > 0) {
+      // First arm: atom path starts with query path (LIKE with escaped wildcards)
+      // Second arm: query path starts with atom path (INSTR-based, avoids unescaped column as LIKE pattern)
       const pathConditions = query.paths.map(() =>
-        `a.atom_id IN (SELECT atom_id FROM atom_paths WHERE path LIKE ? || '%' ESCAPE '\\' OR ? LIKE path || '%' ESCAPE '\\')`,
+        `a.atom_id IN (SELECT atom_id FROM atom_paths WHERE path LIKE ? || '%' ESCAPE '\\' OR INSTR(? || '/', path || '/') = 1)`,
       );
       // Unscoped atoms (no paths) always match
       conditions.push(
         `(a.atom_id NOT IN (SELECT atom_id FROM atom_paths) OR ${pathConditions.join(' OR ')})`,
       );
       for (const p of query.paths) {
-        // Escape LIKE wildcards in path values
+        // Escape LIKE wildcards in path values (only for the first LIKE arm)
         const escaped = p.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-        params.push(escaped, escaped);
+        params.push(escaped, p);
       }
     }
 
@@ -326,12 +388,10 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}): IndexQue
           ELSE 99
         END,
         a.updated_at DESC
+    ${opts?.limit ? `LIMIT ${Math.max(1, Math.floor(opts.limit))}` : ''}
     `;
 
-    return db.prepare(sql).all(...params) as IndexQueryResult[];
-  } finally {
-    db.close();
-  }
+  return db.prepare(sql).all(...params) as IndexQueryResult[];
 }
 
 /**
@@ -341,12 +401,8 @@ export function indexStats(memoryDir: string): { atoms: number; tags: number; pa
   if (!indexExists(memoryDir)) return null;
 
   const db = openIndex(memoryDir);
-  try {
-    const atoms = (db.prepare('SELECT COUNT(*) as c FROM atoms').get() as { c: number }).c;
-    const tags = (db.prepare('SELECT COUNT(*) as c FROM atom_tags').get() as { c: number }).c;
-    const paths = (db.prepare('SELECT COUNT(*) as c FROM atom_paths').get() as { c: number }).c;
-    return { atoms, tags, paths };
-  } finally {
-    db.close();
-  }
+  const atoms = (db.prepare('SELECT COUNT(*) as c FROM atoms').get() as { c: number }).c;
+  const tags = (db.prepare('SELECT COUNT(*) as c FROM atom_tags').get() as { c: number }).c;
+  const paths = (db.prepare('SELECT COUNT(*) as c FROM atom_paths').get() as { c: number }).c;
+  return { atoms, tags, paths };
 }

@@ -28,7 +28,10 @@ export interface ReflectOptions {
 
 /**
  * Run a full reflect cycle.
- * Re-reads atoms from disk between phases to avoid stale data.
+ *
+ * Uses a single `listAtoms()` call and filters the in-memory list between
+ * phases, avoiding redundant filesystem scans. Views are regenerated from
+ * a final disk read to capture all mutations.
  */
 export function reflect(opts: ReflectOptions): ReflectResult {
   const result: ReflectResult = {
@@ -40,21 +43,36 @@ export function reflect(opts: ReflectOptions): ReflectResult {
     events_emitted: 0,
   };
 
+  // Single disk read for all phases
+  let atoms = listAtoms(opts.memoryDir);
+
   // 1. TTL/Expiry check
-  const { expired, archived } = processExpiry(opts, listAtoms(opts.memoryDir));
-  result.expired = expired;
-  result.archived = archived;
+  const expiryResult = processExpiry(opts, atoms);
+  result.expired = expiryResult.expired;
+  result.archived = expiryResult.archived;
 
-  // 2. Dedup — re-read to see post-expiry state
-  result.deduped = dedup(opts, listAtoms(opts.memoryDir));
+  // Filter out expired atoms for subsequent phases (avoid re-reading disk)
+  if (expiryResult.expiredIds.size > 0) {
+    atoms = atoms.filter((a) => !expiryResult.expiredIds.has(a.frontmatter.id));
+  }
 
-  // 3. Auto-promotion — re-read to see post-dedup state
-  result.promoted = autoPromote(opts, listAtoms(opts.memoryDir));
+  // 2. Dedup
+  const dedupResult = dedup(opts, atoms);
+  result.deduped = dedupResult.count;
 
-  // 4. Conflict detection — re-read to see final state
-  result.conflicts_found = detectConflicts(opts, listAtoms(opts.memoryDir));
+  // Filter out deduped atoms
+  if (dedupResult.archivedIds.size > 0) {
+    atoms = atoms.filter((a) => !dedupResult.archivedIds.has(a.frontmatter.id));
+  }
 
-  // 5. Regenerate views
+  // 3. Auto-promotion (modifies atoms in-place, no filtering needed)
+  result.promoted = autoPromote(opts, atoms);
+
+  // 4. Conflict detection
+  result.conflicts_found = detectConflicts(opts, atoms);
+
+  // 5. Regenerate views — re-read from disk for accuracy
+  // (views need the absolute latest state including file renames from promotion)
   regenerateViews(opts);
 
   // Count per-atom events emitted by sub-phases
@@ -74,13 +92,15 @@ export function reflect(opts: ReflectOptions): ReflectResult {
 
 /**
  * Process TTL expiry — archive atoms past their TTL.
+ * Returns counts and the set of expired atom IDs (for filtering in the caller).
  */
 function processExpiry(
   opts: ReflectOptions,
   atoms: Atom[],
-): { expired: number; archived: number } {
+): { expired: number; archived: number; expiredIds: Set<string> } {
   let expired = 0;
   let archived = 0;
+  const expiredIds = new Set<string>();
   const now = Date.now();
 
   for (const atom of atoms) {
@@ -95,12 +115,13 @@ function processExpiry(
       // Validate paths before file operations
       assertWithinDir(opts.memoryDir, atom.filePath);
 
-      // Move to archive
+      // Move to archive (with traversal guard)
       const archivePath = path.join(
         opts.memoryDir,
         'ARCHIVE',
         path.basename(atom.filePath),
       );
+      assertWithinDir(opts.memoryDir, archivePath);
       atom.frontmatter.status = 'expired';
       atom.frontmatter.updated_at = normalizeTimestamp();
       writeAtom(atom, archivePath);
@@ -122,19 +143,22 @@ function processExpiry(
         removeFromIndex(opts.memoryDir, fm.id);
       }
 
+      expiredIds.add(fm.id);
       expired++;
       archived++;
     }
   }
 
-  return { expired, archived };
+  return { expired, archived, expiredIds };
 }
 
 /**
  * Simple dedup: if two atoms of same type have identical body content, archive the older one.
+ * Returns the count of deduped atoms and the set of archived atom IDs (for filtering in the caller).
  */
-function dedup(opts: ReflectOptions, atoms: Atom[]): number {
+function dedup(opts: ReflectOptions, atoms: Atom[]): { count: number; archivedIds: Set<string> } {
   let count = 0;
+  const archivedIds = new Set<string>();
   const seen = new Map<string, Atom>();
 
   for (const atom of atoms) {
@@ -169,6 +193,7 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
           'ARCHIVE',
           path.basename(archiveCopy.filePath!),
         );
+        assertWithinDir(opts.memoryDir, archivePath);
         archiveCopy.frontmatter.status = 'archived';
         archiveCopy.frontmatter.updated_at = normalizeTimestamp();
         writeAtom(archiveCopy, archivePath);
@@ -190,6 +215,7 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
           removeFromIndex(opts.memoryDir, archiveCopy.frontmatter.id);
         }
 
+        archivedIds.add(archiveCopy.frontmatter.id);
         count++;
       }
 
@@ -199,7 +225,7 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
     }
   }
 
-  return count;
+  return { count, archivedIds };
 }
 
 /**
