@@ -22,26 +22,65 @@ export interface CheckpointResult {
   bundle: ContextBundle;
   markdown: string; // Concatenated INDEX + HANDOFF + CONSTRAINTS + atoms
   event_id: string;
+  error?: string; // Present if reflect or recall failed (graceful degradation)
 }
 
 /**
  * Generate a checkpoint: reflect (optional), recall, and assemble a handoff document.
+ * Wraps reflect/recall in try/catch for graceful degradation — a partial checkpoint
+ * is better than no checkpoint at all.
  */
 export function checkpoint(opts: CheckpointOptions): CheckpointResult {
+  let reflectError: string | undefined;
+
   // 1. Run reflect to consolidate state (unless skipped)
   if (!opts.skipReflect) {
-    reflect({
-      memoryDir: opts.memoryDir,
-      agent_id: opts.agent_id,
-      session_id: opts.session_id,
-    });
+    try {
+      reflect({
+        memoryDir: opts.memoryDir,
+        agent_id: opts.agent_id,
+        session_id: opts.session_id,
+      });
+    } catch (err) {
+      reflectError = `reflect failed: ${String(err)}`;
+    }
   }
 
   // 2. Recall context with optional task/token budget
-  const bundle = recall(opts.memoryDir, {
-    task: opts.task,
-    max_tokens: opts.max_tokens ?? 4000,
-  });
+  let bundle: ContextBundle;
+  try {
+    bundle = recall(opts.memoryDir, {
+      task: opts.task,
+      max_tokens: opts.max_tokens ?? 4000,
+    });
+  } catch (err) {
+    // If recall also fails, emit error event and return minimal checkpoint
+    const errorMsg = reflectError
+      ? `${reflectError}; recall failed: ${String(err)}`
+      : `recall failed: ${String(err)}`;
+
+    const event = appendEvent(opts.memoryDir, 'checkpoint_created', {
+      agent_id: opts.agent_id,
+      session_id: opts.session_id,
+      meta: {
+        error: errorMsg,
+        task: opts.task,
+      },
+    });
+
+    return {
+      bundle: {
+        index: '',
+        handoff: '',
+        constraints: '',
+        atoms: [],
+        token_estimate: 0,
+      },
+      markdown: `<!-- Memory Kernel Checkpoint (error) -->\n\nCheckpoint failed: ${errorMsg}\n`,
+      event_id: event.event_id,
+      error: errorMsg,
+    };
+  }
 
   // 3. Read fresh views (post-reflect)
   const index = readView(opts.memoryDir, 'INDEX.md');
@@ -89,6 +128,7 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
       token_estimate: bundle.token_estimate,
       atom_count: bundle.atoms.length,
       task: opts.task,
+      ...(reflectError ? { reflect_error: reflectError } : {}),
     },
   });
 
@@ -96,5 +136,6 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
     bundle,
     markdown,
     event_id: event.event_id,
+    ...(reflectError ? { error: reflectError } : {}),
   };
 }

@@ -15,7 +15,7 @@ import {
   renderOpenQuestions,
   renderHandoff,
 } from './renderers.js';
-import { writeFileAtomic, writeAtom, atomFilePath } from './store.js';
+import { assertWithinDir, writeFileAtomic, writeAtom, atomFilePath } from './store.js';
 import type { Atom, MemoryEvent, ReplayResult } from './types.js';
 
 /**
@@ -178,9 +178,10 @@ export function replayFromFile(
       }
     }
 
-    // Write atoms
+    // Write atoms (with path traversal guard against crafted atom IDs)
     for (const [_id, atom] of result.atoms) {
       const fp = atomFilePath(outDir, atom.frontmatter.id, atom.frontmatter.type);
+      assertWithinDir(outDir, fp);
       writeAtom(atom, fp);
     }
   }

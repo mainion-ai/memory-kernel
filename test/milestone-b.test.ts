@@ -360,6 +360,40 @@ describe('Milestone B integration', () => {
     }
   });
 
+  it('replayFromFile should reject crafted atom IDs with path traversal', () => {
+    // Create a crafted event with a malicious atom ID containing ../
+    const maliciousEvent = {
+      event_id: 'evt-test-traversal',
+      timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      agent_id: AGENT,
+      session_id: SESSION,
+      action: 'atom_created' as const,
+      atom_refs: ['../../etc/passwd'],
+      schema_version: 2 as const,
+      atom_snapshot: [
+        '---',
+        'id: "../../etc/passwd"',
+        'type: fact',
+        'status: active',
+        'confidence: 0.8',
+        `created_at: "${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}"`,
+        `updated_at: "${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}"`,
+        'ttl_days: null',
+        '---',
+        '',
+        'Malicious content',
+      ].join('\n'),
+    };
+
+    const eventsFile = path.join(memoryDir, 'events.ndjson');
+    fs.writeFileSync(eventsFile, JSON.stringify(maliciousEvent) + '\n');
+
+    const outDir = path.join(tmpDir, 'replay-output');
+    expect(() =>
+      replayFromFile(eventsFile, { outputDir: outDir }),
+    ).toThrow(/Path traversal denied/);
+  });
+
   it('large-scale: 50 atoms → bootstrap → replay → all reconstructed', () => {
     for (let i = 0; i < 50; i++) {
       createAtom({
@@ -383,5 +417,40 @@ describe('Milestone B integration', () => {
 
     expect(result.atoms.size).toBe(50);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it('bootstrap idempotency: second run skips already-imported atoms', () => {
+    createAtom({
+      memoryDir,
+      type: 'fact',
+      slug: 'bootstrap-idem',
+      body: 'Bootstrap idempotency test',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    const result1 = bootstrapEvents({
+      memoryDir,
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result1.imported).toBe(1);
+    expect(result1.skipped).toBe(0);
+
+    // Second bootstrap — atom already imported
+    const result2 = bootstrapEvents({
+      memoryDir,
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result2.imported).toBe(0);
+    expect(result2.skipped).toBe(1);
+
+    // Backup files should have distinct timestamped names
+    expect(result1.backup_path).not.toBe(result2.backup_path);
+    expect(fs.existsSync(result1.backup_path)).toBe(true);
+    expect(fs.existsSync(result2.backup_path)).toBe(true);
   });
 });
