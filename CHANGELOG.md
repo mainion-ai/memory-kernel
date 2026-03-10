@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] — 2026-03-11
+
+### Tests
+- **Stress test suite** (`test/stress.test.ts`) — 54 new tests across 14 describe blocks probing edge cases, error paths, and invariants not covered by the existing suite.
+  - Path traversal: `updateAtom`, `archiveAtom`, `replayFromFile` with crafted paths.
+  - Extreme inputs: Unicode slugs, 1000-char slugs, empty slugs, 256 KB bodies, YAML-like content in body, special characters (`\t`, `\\`, `"`).
+  - Dedup edge cases: identical bodies, interleaved dups/unique, cross-type no-dedup, whitespace-only diff deduplication.
+  - TTL/expiry: `ttl_days=0`, `ttl_days=null` persistence, no double-expiry on second reflect.
+  - Auto-promotion boundary: confidence ≥ 0.9 promoted, 0.899 not promoted, accepted beliefs not re-promoted.
+  - Compact + replay invariant: state preserved after compact, double-compact removes 0, non-mutation events preserved.
+  - Event log corruption: binary noise mid-log, truncated JSON, all-whitespace log, duplicate event IDs.
+  - Index/file divergence: stale index gracefully skipped in recall, empty-dir reindex, LIMIT enforcement, negative LIMIT no-crash.
+  - `archiveAtom` idempotency: double-archive no crash, `updateAtom` on archive path works.
+  - `updateAtom` no-op: empty updates don't rewrite file; body update does.
+  - Recall edge cases: SECRET/PERSONAL exclusion, `max_tokens=1`, path boundary (no prefix false positives), prefix match.
+  - Special atom types: conflict atoms in `CONFLICTS/`, conflict detection in reflect, empty scope arrays.
+  - Replay edge cases: empty event list, V1 archive event, non-existent file, full create→update→update lifecycle.
+  - Large-scale performance: 500 atoms reflect < 15 s, 50 × create→update→archive lifecycle.
+- **Finding #1 documented** (see `CODING_INSTRUCTIONS.md`): `replay()` / `replayFromFile()` silently accept invalid atom type/status/confidence in snapshots — no Zod validation at the replay layer. The stress test asserts this **actual** (silent) behavior so any future schema-validation addition will be a conscious, visible change.
+- Total: **383 tests passing** (up from 329).
+
 ## [0.5.0] — 2026-03-10
 
 ### Security
