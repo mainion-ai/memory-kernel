@@ -57,27 +57,33 @@ export function bootstrapEvents(opts: {
   // Sort by timestamp (preserves atom creation order)
   importEvents.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-  // 4. Backup original events.ndjson with timestamped name
+  // 4. Write: import events + existing events (skip if no new imports)
   const logPath = path.join(memoryDir, 'events.ndjson');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = logPath + `.bak.${timestamp}`;
 
-  if (fs.existsSync(logPath)) {
-    fs.copyFileSync(logPath, backupPath);
-  }
-
-  // 5. Write: import events + existing events (skip if no new imports)
-  const allEvents = [...importEvents, ...existingEvents];
   if (importEvents.length > 0) {
+    // Backup only when we actually have new imports to write
+    if (fs.existsSync(logPath)) {
+      fs.copyFileSync(logPath, backupPath);
+    }
+    const allEvents = [...importEvents, ...existingEvents];
     const ndjson = allEvents.map((e) => JSON.stringify(e)).join('\n') + '\n';
     writeFileAtomic(logPath, ndjson);
+
+    return {
+      imported: importEvents.length,
+      skipped,
+      events_written: allEvents.length,
+      backup_path: backupPath,
+    };
   }
 
   return {
-    imported: importEvents.length,
+    imported: 0,
     skipped,
-    events_written: allEvents.length,
-    backup_path: backupPath,
+    events_written: 0,
+    backup_path: '',
   };
 }
 

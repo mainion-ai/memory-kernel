@@ -56,6 +56,10 @@ import {
   assertWithinDir,
   checkpoint,
   replayFromFile,
+  compactLog,
+  closeIndex,
+  closeAllIndexes,
+  openIndex,
 } from '../src/index.js';
 
 let testDir: string;
@@ -2218,5 +2222,375 @@ describe('Sprint 2 — replayFromFile error surfacing', () => {
     // Should report the invalid line
     expect(result.errors.length).toBeGreaterThanOrEqual(1);
     expect(result.errors.some((e) => e.includes('invalid JSON'))).toBe(true);
+  });
+});
+
+// ============================================================================
+// SPRINT 3: LOG COMPACTION
+// ============================================================================
+
+describe('Log compaction', () => {
+  it('compactLog removes intermediate mutation events per atom', () => {
+    initMemoryDir(testDir);
+
+    // Create and update an atom multiple times
+    const atom = createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'compact-test',
+      body: 'Version 1',
+    });
+
+    updateAtom({
+      ...base(testDir),
+      filePath: atom.filePath!,
+      updates: { body: 'Version 2' },
+    });
+
+    updateAtom({
+      ...base(testDir),
+      filePath: atom.filePath!,
+      updates: { body: 'Version 3' },
+    });
+
+    const eventsBefore = readEvents(testDir).length;
+    expect(eventsBefore).toBe(3); // create + update + update
+
+    const result = compactLog(testDir);
+
+    expect(result.events_before).toBe(3);
+    // Only the latest mutation (last update) kept
+    expect(result.events_after).toBe(1);
+    expect(result.removed).toBe(2);
+    expect(result.backup_path).not.toBe('');
+    expect(fs.existsSync(result.backup_path)).toBe(true);
+  });
+
+  it('compactLog no-op when log is already compact', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'already-compact',
+      body: 'Single event',
+    });
+
+    const result = compactLog(testDir);
+    expect(result.removed).toBe(0);
+    expect(result.backup_path).toBe('');
+  });
+
+  it('compactLog preserves non-mutation events', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'compact-non-mut',
+      body: 'Test',
+    });
+
+    // Emit a non-mutation event
+    appendEvent(testDir, 'session_started', {
+      ...base(testDir),
+    });
+
+    const result = compactLog(testDir);
+
+    // Both should be kept — one mutation (create) and one non-mutation (session)
+    expect(result.events_after).toBe(2);
+    expect(result.removed).toBe(0);
+  });
+
+  it('compactLog on empty log returns zero counts', () => {
+    initMemoryDir(testDir);
+
+    const result = compactLog(testDir);
+    expect(result.events_before).toBe(0);
+    expect(result.events_after).toBe(0);
+    expect(result.removed).toBe(0);
+    expect(result.backup_path).toBe('');
+  });
+
+  it('compactLog with reflect events keeps reflect_completed + latest per-atom', () => {
+    initMemoryDir(testDir);
+
+    const atom = createAtom({
+      ...base(testDir),
+      type: 'belief',
+      slug: 'compact-reflect',
+      body: 'A belief',
+      confidence: 0.5,
+    });
+
+    updateAtom({
+      ...base(testDir),
+      filePath: atom.filePath!,
+      updates: { confidence: 0.7 },
+    });
+
+    // Simulate a reflect_completed event
+    appendEvent(testDir, 'reflect_completed', {
+      ...base(testDir),
+      meta: { deduped: 0, expired: 0 },
+    });
+
+    updateAtom({
+      ...base(testDir),
+      filePath: atom.filePath!,
+      updates: { confidence: 0.85 },
+    });
+
+    const eventsBefore = readEvents(testDir).length;
+    expect(eventsBefore).toBe(4); // create, update, reflect_completed, update
+
+    const result = compactLog(testDir);
+
+    // Should keep: reflect_completed (non-mutation) + latest update
+    expect(result.events_after).toBe(2);
+    const eventsAfter = readEvents(testDir);
+    expect(eventsAfter.some((e) => e.action === 'reflect_completed')).toBe(true);
+  });
+});
+
+// ============================================================================
+// SPRINT 3: CONNECTION CACHING & INDEX FEATURES
+// ============================================================================
+
+describe('SQLite index — connection caching and LIMIT', () => {
+  afterEach(() => {
+    closeAllIndexes();
+  });
+
+  it('multiple openIndex calls reuse the same connection (no error)', () => {
+    initMemoryDir(testDir);
+
+    // Open index twice — should not throw
+    openIndex(testDir);
+    openIndex(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'cache-test',
+      body: 'Connection caching test',
+    });
+
+    reindex(testDir);
+    const stats = indexStats(testDir);
+    expect(stats!.atoms).toBe(1);
+  });
+
+  it('closeIndex then openIndex works correctly', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'close-reopen',
+      body: 'Close and reopen test',
+    });
+
+    reindex(testDir);
+    closeIndex(testDir);
+
+    // After close, operations should re-open cleanly
+    const stats = indexStats(testDir);
+    expect(stats!.atoms).toBe(1);
+  });
+
+  it('queryIndex with limit returns at most N results', () => {
+    initMemoryDir(testDir);
+
+    for (let i = 0; i < 5; i++) {
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: `limit-${i}`,
+        body: `Fact number ${i}`,
+      });
+    }
+
+    reindex(testDir);
+
+    const allResults = queryIndex(testDir, { types: ['fact'] });
+    expect(allResults).not.toBeNull();
+    expect(allResults!.length).toBe(5);
+
+    const limited = queryIndex(testDir, { types: ['fact'] }, { limit: 3 });
+    expect(limited).not.toBeNull();
+    expect(limited!.length).toBe(3);
+  });
+
+  it('closeAllIndexes cleans up all cached connections', () => {
+    initMemoryDir(testDir);
+    openIndex(testDir);
+
+    // Create a second temp dir
+    const testDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-idx2-'));
+    initMemoryDir(testDir2);
+    openIndex(testDir2);
+
+    // Close all — should not throw
+    closeAllIndexes();
+
+    // Re-opening should work
+    openIndex(testDir);
+    const stats = indexStats(testDir);
+    expect(stats).not.toBeNull();
+
+    fs.rmSync(testDir2, { recursive: true, force: true });
+  });
+});
+
+// ============================================================================
+// SPRINT 3: REFLECT SINGLE-PASS + REVIEW GAP TESTS
+// ============================================================================
+
+describe('Reflect — single-pass and review gaps', () => {
+  it('reflect with expirable atom: index is updated after expiry', () => {
+    initMemoryDir(testDir);
+
+    // Create atom with TTL that has already expired
+    const pastDate = new Date(Date.now() - 100 * 86_400_000).toISOString();
+    const atom = createAtom({
+      ...base(testDir),
+      type: 'belief',
+      slug: 'expired-index-sync',
+      body: 'This should expire',
+      ttl_days: 1,
+    });
+
+    // Backdate the created_at to make it expired
+    const parsed = readAtom(atom.filePath!);
+    parsed.frontmatter.created_at = pastDate;
+    writeAtom(parsed, atom.filePath!);
+
+    reindex(testDir);
+
+    // Before reflect: atom should be in index
+    const beforeResults = queryIndex(testDir, { types: ['belief'] });
+    expect(beforeResults).not.toBeNull();
+    expect(beforeResults!.length).toBe(1);
+
+    const result = reflect({ ...base(testDir) });
+    expect(result.expired).toBe(1);
+
+    // After reflect: atom should be removed from index
+    const afterResults = queryIndex(testDir, { types: ['belief'] });
+    expect(afterResults).not.toBeNull();
+    expect(afterResults!.length).toBe(0);
+
+    closeAllIndexes();
+  });
+
+  it('reflect with 3 identical atoms: dedup keeps exactly 1', () => {
+    initMemoryDir(testDir);
+
+    // Create 3 atoms with identical type+body
+    for (let i = 0; i < 3; i++) {
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: `dup-${i}`,
+        body: 'Identical body for dedup test',
+      });
+    }
+
+    expect(listAtoms(testDir).length).toBe(3);
+
+    const result = reflect({ ...base(testDir) });
+
+    // 2 should be deduped
+    expect(result.deduped).toBe(2);
+
+    // Exactly 1 should survive in active dirs
+    const remaining = listAtoms(testDir).filter(
+      (a) => a.frontmatter.status !== 'archived' && a.frontmatter.status !== 'expired',
+    );
+    expect(remaining.length).toBe(1);
+  });
+
+  it('reflect events_emitted matches actual event count in log', () => {
+    initMemoryDir(testDir);
+
+    // Create an atom that will expire
+    const pastDate = new Date(Date.now() - 100 * 86_400_000).toISOString();
+    const atom = createAtom({
+      ...base(testDir),
+      type: 'belief',
+      slug: 'events-count-test',
+      body: 'Will expire',
+      ttl_days: 1,
+    });
+    const parsed = readAtom(atom.filePath!);
+    parsed.frontmatter.created_at = pastDate;
+    writeAtom(parsed, atom.filePath!);
+
+    const eventsBefore = readEvents(testDir).length;
+    const result = reflect({ ...base(testDir) });
+
+    const eventsAfter = readEvents(testDir).length;
+    const actualEmitted = eventsAfter - eventsBefore;
+
+    expect(result.events_emitted).toBe(actualEmitted);
+  });
+
+  it('promoted atom has type fact but retains BELI- prefix in ID', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'belief',
+      slug: 'promote-id-test',
+      body: 'High confidence belief',
+      confidence: 0.95,
+    });
+
+    const result = reflect({ ...base(testDir) });
+    expect(result.promoted).toBe(1);
+
+    const atoms = listAtoms(testDir);
+    const promoted = atoms.find((a) => a.frontmatter.type === 'fact');
+    expect(promoted).toBeDefined();
+    expect(promoted!.frontmatter.id).toMatch(/^BELI-/);
+    expect(promoted!.frontmatter.type).toBe('fact');
+    expect(promoted!.frontmatter.status).toBe('active');
+  });
+});
+
+// ============================================================================
+// SPRINT 3: REVIEW GAP — COUNTEVENTS/READEVENTS CONSISTENCY
+// ============================================================================
+
+describe('countEvents/readEvents consistency', () => {
+  it('countEvents matches readEvents on log with malformed JSON lines', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'malformed-test',
+      body: 'Valid atom',
+    });
+
+    // Inject malformed lines
+    const logPath = path.join(testDir, 'events.ndjson');
+    const content = fs.readFileSync(logPath, 'utf-8');
+    fs.writeFileSync(logPath, content + '{bad json}\n\n{also bad\n');
+
+    const count = countEvents(testDir);
+    const events = readEvents(testDir);
+
+    expect(count).toBe(events.length);
+    // The valid event is still there
+    expect(count).toBe(1);
+  });
+
+  it('countEvents matches readEvents on empty log', () => {
+    initMemoryDir(testDir);
+    expect(countEvents(testDir)).toBe(readEvents(testDir).length);
+    expect(countEvents(testDir)).toBe(0);
   });
 });

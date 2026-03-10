@@ -16,6 +16,7 @@ export type {
   ReflectResult,
   ReplayResult,
   BootstrapResult,
+  CompactResult,
   KernelConfig,
 } from './types.js';
 
@@ -61,11 +62,14 @@ export {
   readEventsByAction,
   readEventsForAtoms,
   countEvents,
+  compactLog,
 } from './event-log.js';
 
 // SQLite index
 export {
   openIndex,
+  closeIndex,
+  closeAllIndexes,
   indexExists,
   reindex,
   indexAtom,

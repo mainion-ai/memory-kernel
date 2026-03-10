@@ -8,6 +8,9 @@ import path from 'path';
 import { parseAtom, serializeAtom } from './format.js';
 import type { Atom } from './types.js';
 
+/** Monotonic counter for unique tmp file names across concurrent writes. */
+let tmpCounter = 0;
+
 // --- Canonical directory layout ---
 
 const DIRS = [
@@ -62,7 +65,7 @@ export function writeFileAtomic(filePath: string, content: string): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
 
-  const tmpPath = filePath + '.tmp.' + process.pid;
+  const tmpPath = filePath + `.tmp.${process.pid}.${++tmpCounter}.${Math.random().toString(36).slice(2, 6)}`;
   const fd = fs.openSync(tmpPath, 'w');
   try {
     fs.writeSync(fd, content);

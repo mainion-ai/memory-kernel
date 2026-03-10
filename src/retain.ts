@@ -112,7 +112,7 @@ export function updateAtom(
   const now = normalizeTimestamp();
 
   // Apply updates (use 'in' checks to allow clearing optional fields with undefined)
-  if (opts.updates.status) atom.frontmatter.status = opts.updates.status;
+  if (opts.updates.status !== undefined) atom.frontmatter.status = opts.updates.status;
   if (opts.updates.confidence !== undefined)
     atom.frontmatter.confidence = opts.updates.confidence;
   if ('scope' in opts.updates) atom.frontmatter.scope = opts.updates.scope;
@@ -163,12 +163,13 @@ export function archiveAtom(
   atom.frontmatter.status = 'archived';
   atom.frontmatter.updated_at = normalizeTimestamp();
 
-  // Write to archive location
+  // Write to archive location (with traversal guard)
   const archivePath = path.join(
     opts.memoryDir,
     'ARCHIVE',
     path.basename(opts.filePath),
   );
+  assertWithinDir(opts.memoryDir, archivePath);
   writeAtom(atom, archivePath);
 
   // Remove original

@@ -5,9 +5,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import { validateEvent, generateEventId } from './schema.js';
+import { validateEvent, generateEventId, isMutationAction } from './schema.js';
 import { normalizeTimestamp } from './format.js';
-import type { EventAction, MemoryEvent } from './types.js';
+import { writeFileAtomic } from './store.js';
+import type { CompactResult, EventAction, MemoryEvent } from './types.js';
 
 /**
  * Append an event to the log. Returns the event with generated ID.
@@ -106,9 +107,83 @@ export function readEventsForAtoms(
 }
 
 /**
+ * Compact the event log by keeping only the latest mutation event per atom
+ * and all non-mutation events. Creates a timestamped backup before writing.
+ *
+ * This reduces log size for large stores where many atoms have been updated
+ * multiple times. The compacted log is still sufficient for replay — only
+ * intermediate snapshots are discarded.
+ */
+export function compactLog(memoryDir: string): CompactResult {
+  const logPath = path.join(memoryDir, 'events.ndjson');
+  const events = readEvents(memoryDir);
+  const eventsBefore = events.length;
+
+  if (eventsBefore === 0) {
+    return { events_before: 0, events_after: 0, removed: 0, backup_path: '' };
+  }
+
+  // For each atom, keep only the LATEST mutation event.
+  // Non-mutation events (reflect_completed, session_started, etc.) are always kept.
+  // atom_imported events are kept when they are the latest for that atom.
+  const latestMutationByAtom = new Map<string, number>(); // atom_id → event index
+
+  for (let i = 0; i < events.length; i++) {
+    const evt = events[i];
+    if (!isMutationAction(evt.action)) continue;
+    if (!evt.atom_refs) continue;
+    for (const ref of evt.atom_refs) {
+      latestMutationByAtom.set(ref, i);
+    }
+  }
+
+  // Build the set of event indices to keep
+  const keepIndices = new Set<number>();
+  for (let i = 0; i < events.length; i++) {
+    const evt = events[i];
+    if (!isMutationAction(evt.action)) {
+      // Non-mutation: always keep
+      keepIndices.add(i);
+    } else if (evt.atom_refs) {
+      // Mutation: keep only if this is the latest mutation for ANY of its atom refs
+      for (const ref of evt.atom_refs) {
+        if (latestMutationByAtom.get(ref) === i) {
+          keepIndices.add(i);
+          break;
+        }
+      }
+    } else {
+      // Mutation with no atom_refs: keep (shouldn't happen, but safe)
+      keepIndices.add(i);
+    }
+  }
+
+  const compacted = events.filter((_, i) => keepIndices.has(i));
+  const eventsAfter = compacted.length;
+  const removed = eventsBefore - eventsAfter;
+
+  if (removed === 0) {
+    return { events_before: eventsBefore, events_after: eventsAfter, removed: 0, backup_path: '' };
+  }
+
+  // Create timestamped backup
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = logPath + `.bak.${timestamp}`;
+  if (fs.existsSync(logPath)) {
+    fs.copyFileSync(logPath, backupPath);
+  }
+
+  // Write compacted log
+  const ndjson = compacted.map((e) => JSON.stringify(e)).join('\n') + '\n';
+  writeFileAtomic(logPath, ndjson);
+
+  return { events_before: eventsBefore, events_after: eventsAfter, removed, backup_path: backupPath };
+}
+
+/**
  * Count events in the log.
- * Filters blank lines to stay consistent with readEvents() which skips
- * unparseable lines.
+ * Matches readEvents() semantics: skips blank lines AND unparseable JSON lines.
+ * This ensures countEvents() === readEvents().length for any log state.
  */
 export function countEvents(memoryDir: string): number {
   const logPath = path.join(memoryDir, 'events.ndjson');
@@ -117,5 +192,15 @@ export function countEvents(memoryDir: string): number {
   const content = fs.readFileSync(logPath, 'utf-8').trim();
   if (!content) return 0;
 
-  return content.split('\n').filter((l) => l.trim()).length;
+  let count = 0;
+  for (const line of content.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      JSON.parse(line);
+      count++;
+    } catch {
+      // Skip malformed lines — same as readEvents()
+    }
+  }
+  return count;
 }

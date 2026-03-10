@@ -10,6 +10,9 @@ import path from 'path';
 const EVIDENCE_DIR = 'EVIDENCE';
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 
+/** Monotonic counter for unique tmp file names. */
+let tmpCounter = 0;
+
 /**
  * Validate a hash string is a valid 64-char lowercase hex SHA-256.
  * Prevents path traversal and malformed lookups.
@@ -44,7 +47,7 @@ export function writeEvidence(memoryDir: string, data: Buffer): string {
   fs.mkdirSync(dir, { recursive: true });
 
   // Atomic write (tmp → fsync → rename)
-  const tmpPath = blobPath + '.tmp.' + process.pid;
+  const tmpPath = blobPath + `.tmp.${process.pid}.${++tmpCounter}.${Math.random().toString(36).slice(2, 6)}`;
   const fd = fs.openSync(tmpPath, 'w');
   try {
     fs.writeSync(fd, data, 0, data.length);

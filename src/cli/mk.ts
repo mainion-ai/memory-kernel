@@ -36,6 +36,7 @@ import { reflect } from '../reflect.js';
 import { checkpoint } from '../checkpoint.js';
 import { bootstrapEvents } from '../bootstrap.js';
 import { replayFromFile } from '../replay.js';
+import { compactLog } from '../event-log.js';
 
 const program = new Command();
 
@@ -190,6 +191,9 @@ program
     process.stderr.write(
       `\n✓ Checkpoint created (≈${result.bundle.token_estimate} tokens, ${result.bundle.atoms.length} atoms, event: ${result.event_id})\n`,
     );
+    if (result.error) {
+      process.stderr.write(`  Warning: ${result.error}\n`);
+    }
   });
 
 // --- mk reflect ---
@@ -398,8 +402,40 @@ program
 
     console.log('✓ Bootstrap completed:');
     console.log(`  Imported: ${result.imported} atoms`);
-    console.log(`  Events written: ${result.events_written}`);
-    console.log(`  Backup: ${result.backup_path}`);
+    if (result.skipped > 0) console.log(`  Skipped: ${result.skipped} (already imported)`);
+    if (result.events_written > 0) {
+      console.log(`  Total events in log: ${result.events_written}`);
+      console.log(`  Backup: ${result.backup_path}`);
+    } else {
+      console.log('  No new atoms to import.');
+    }
+  });
+
+// --- mk compact ---
+program
+  .command('compact')
+  .description('Compact the event log — keep latest mutation per atom, remove intermediate events')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .action((opts: { dir: string }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    const result = compactLog(memoryDir);
+
+    if (result.removed === 0) {
+      console.log('✓ Event log is already compact. Nothing to do.');
+      console.log(`  Events: ${result.events_before}`);
+    } else {
+      console.log('✓ Event log compacted:');
+      console.log(`  Before: ${result.events_before} events`);
+      console.log(`  After:  ${result.events_after} events`);
+      console.log(`  Removed: ${result.removed} intermediate events`);
+      console.log(`  Backup: ${result.backup_path}`);
+    }
   });
 
 // --- mk replay ---
