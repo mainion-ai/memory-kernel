@@ -100,6 +100,8 @@ export function updateAtom(
     body?: string;
   },
 ): Atom {
+  assertWithinDir(opts.memoryDir, opts.filePath);
+
   // Early return if nothing to change
   const hasUpdates = Object.keys(opts.updates).length > 0;
   if (!hasUpdates && opts.body === undefined) {

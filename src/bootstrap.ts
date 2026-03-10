@@ -18,8 +18,9 @@ import type { Atom, MemoryEvent, BootstrapResult } from './types.js';
  * Generate atom_imported events for all existing atoms and prepend them
  * to the event log. Backs up the original events.ndjson first.
  *
- * Idempotent-ish: if run twice, it will create duplicate imports.
- * The backup lets you recover.
+ * Idempotent: if an atom_imported event already exists for an atom ID,
+ * that atom is skipped. Backup uses timestamped filenames to prevent
+ * overwriting previous backups.
  */
 export function bootstrapEvents(opts: {
   memoryDir: string;
@@ -31,20 +32,35 @@ export function bootstrapEvents(opts: {
   // 1. Read all atoms from disk
   const atoms = listAtoms(memoryDir);
 
-  // 2. Generate atom_imported events
-  const importEvents: MemoryEvent[] = atoms.map((atom) =>
-    makeImportEvent(atom, agent_id, session_id),
-  );
+  // 2. Read existing events and collect already-imported atom IDs
+  const existingEvents = readEvents(memoryDir);
+  const alreadyImported = new Set<string>();
+  for (const evt of existingEvents) {
+    if (evt.action === 'atom_imported' && evt.atom_refs) {
+      for (const ref of evt.atom_refs) {
+        alreadyImported.add(ref);
+      }
+    }
+  }
+
+  // 3. Generate atom_imported events, skipping already-imported atoms
+  let skipped = 0;
+  const importEvents: MemoryEvent[] = [];
+  for (const atom of atoms) {
+    if (alreadyImported.has(atom.frontmatter.id)) {
+      skipped++;
+      continue;
+    }
+    importEvents.push(makeImportEvent(atom, agent_id, session_id));
+  }
 
   // Sort by timestamp (preserves atom creation order)
   importEvents.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-  // 3. Read existing events
-  const existingEvents = readEvents(memoryDir);
-
-  // 4. Backup original events.ndjson
+  // 4. Backup original events.ndjson with timestamped name
   const logPath = path.join(memoryDir, 'events.ndjson');
-  const backupPath = logPath + '.bak';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = logPath + `.bak.${timestamp}`;
 
   if (fs.existsSync(logPath)) {
     fs.copyFileSync(logPath, backupPath);
@@ -57,6 +73,7 @@ export function bootstrapEvents(opts: {
 
   return {
     imported: importEvents.length,
+    skipped,
     events_written: allEvents.length,
     backup_path: backupPath,
   };

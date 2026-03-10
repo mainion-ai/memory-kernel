@@ -20,7 +20,7 @@ export const AtomFrontmatterSchema = z.object({
   confidence: z.number().min(0).max(1),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
-  ttl_days: z.number().int().positive().nullable(),
+  ttl_days: z.number().int().min(0).nullable(),
   scope: z
     .object({
       paths: z.array(z.string()).optional(),

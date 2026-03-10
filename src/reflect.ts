@@ -16,7 +16,8 @@ import {
   renderOpenQuestions,
   renderHandoff,
 } from './renderers.js';
-import { listAtoms, readAtom, writeAtom, atomFilePath, writeView, readView } from './store.js';
+import { assertWithinDir, listAtoms, readAtom, writeAtom, atomFilePath, writeView, readView } from './store.js';
+import { indexExists, indexAtom, removeFromIndex } from './index-db.js';
 import type { Atom, ReflectResult } from './types.js';
 
 export interface ReflectOptions {
@@ -56,13 +57,17 @@ export function reflect(opts: ReflectOptions): ReflectResult {
   // 5. Regenerate views
   regenerateViews(opts);
 
+  // Count per-atom events emitted by sub-phases
+  // Each expired/deduped/promoted atom generates one event
+  result.events_emitted = result.expired + result.deduped + result.promoted;
+
   // Emit reflect event
   appendEvent(opts.memoryDir, 'reflect_completed', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     meta: { ...result },
   });
-  result.events_emitted++;
+  result.events_emitted++; // +1 for reflect_completed itself
 
   return result;
 }
@@ -87,6 +92,9 @@ function processExpiry(
     const expiresAt = createdAt + fm.ttl_days * 24 * 60 * 60 * 1000;
 
     if (now > expiresAt && atom.filePath) {
+      // Validate paths before file operations
+      assertWithinDir(opts.memoryDir, atom.filePath);
+
       // Move to archive
       const archivePath = path.join(
         opts.memoryDir,
@@ -108,6 +116,11 @@ function processExpiry(
         schema_version: 2,
         atom_snapshot: serializeAtom(atom),
       });
+
+      // Keep index in sync
+      if (indexExists(opts.memoryDir)) {
+        removeFromIndex(opts.memoryDir, fm.id);
+      }
 
       expired++;
       archived++;
@@ -139,6 +152,9 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
       const toKeep = existingDate < atomDate ? atom : existing;
 
       if (toArchive.filePath) {
+        // Validate paths before file operations
+        assertWithinDir(opts.memoryDir, toArchive.filePath);
+
         const archivePath = path.join(
           opts.memoryDir,
           'ARCHIVE',
@@ -160,6 +176,11 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
           meta: { reason: 'dedup' },
         });
 
+        // Keep index in sync
+        if (indexExists(opts.memoryDir)) {
+          removeFromIndex(opts.memoryDir, toArchive.frontmatter.id);
+        }
+
         count++;
       }
 
@@ -175,6 +196,11 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
 /**
  * Auto-promote beliefs with high confidence to facts.
  * Renames the file to match the new type for consistency.
+ *
+ * Note: The atom ID retains its original `BELI-` prefix after promotion.
+ * This is intentional — IDs are immutable identifiers that trace an atom's
+ * origin. The `type` field and file path change to reflect the promotion,
+ * but the ID serves as a permanent reference across event log entries.
  */
 function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
   let count = 0;
@@ -210,6 +236,11 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
         atom_snapshot: serializeAtom(atom),
         meta: { from_type: 'belief', to_type: 'fact' },
       });
+
+      // Keep index in sync (update with new type/status)
+      if (indexExists(opts.memoryDir)) {
+        indexAtom(opts.memoryDir, atom);
+      }
 
       count++;
     }

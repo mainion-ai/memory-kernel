@@ -171,6 +171,7 @@ export interface ReplayResult {
 
 export interface BootstrapResult {
   imported: number;
+  skipped: number;
   events_written: number;
   backup_path: string;
 }
