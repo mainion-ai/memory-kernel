@@ -125,6 +125,11 @@ program
   .option('--max-tokens <n>', 'Token budget', parseInt)
   .action((opts: { dir: string; task?: string; paths?: string[]; types?: string[]; maxTokens?: number }) => {
     const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
     const bundle = recall(memoryDir, {
       task: opts.task,
       paths: opts.paths,
@@ -196,6 +201,11 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .action((opts: { dir: string; agentId: string; sessionId: string }) => {
     const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
     const result = reflect({
       memoryDir,
       agent_id: opts.agentId,
@@ -220,6 +230,11 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .action((opts: { dir: string; agentId: string; sessionId: string }) => {
     const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
     // GC is just reflect with focus on expiry
     const result = reflect({
       memoryDir,
@@ -242,6 +257,11 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .action((opts: { dir: string }) => {
     const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
     const atoms = listAtoms(memoryDir);
     const issues: string[] = [];
 

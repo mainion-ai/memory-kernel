@@ -107,6 +107,8 @@ export function readEventsForAtoms(
 
 /**
  * Count events in the log.
+ * Filters blank lines to stay consistent with readEvents() which skips
+ * unparseable lines.
  */
 export function countEvents(memoryDir: string): number {
   const logPath = path.join(memoryDir, 'events.ndjson');
@@ -115,5 +117,5 @@ export function countEvents(memoryDir: string): number {
   const content = fs.readFileSync(logPath, 'utf-8').trim();
   if (!content) return 0;
 
-  return content.split('\n').length;
+  return content.split('\n').filter((l) => l.trim()).length;
 }
