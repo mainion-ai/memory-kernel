@@ -192,6 +192,27 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
+### Event Sourcing & Replay
+
+Every mutation (create, update, archive, promote, expire) emits a **V2 event** that carries the full atom state as an inline snapshot. This makes the event log the authoritative record — you can reconstruct the entire memory from `events.ndjson` alone.
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║                     EVENT SOURCING                           ║
+║                                                              ║
+║  • Every retain/reflect action → V2 event with atom snapshot ║
+║  • replay(events) → deterministic state reconstruction       ║
+║  • bootstrapEvents() → migrate pre-V2 atoms to event-sourced ║
+║  • Evidence store → content-addressed blobs (SHA-256)        ║
+║                                                              ║
+║  Events are append-only. Same events → identical atoms+views.║
+╚══════════════════════════════════════════════════════════════╝
+```
+
+**Replay** is a pure fold over events — no filesystem needed. Each mutation event's snapshot IS the definitive atom state. Replay does not re-run reflect; reflect's own side effects (dedup, promotion, expiry) emit their own mutation events with snapshots.
+
+**Bootstrap** converts an existing memory directory into a fully event-sourced state by generating synthetic `atom_imported` events for all atoms on disk.
+
 ### Atom Lifecycle
 
 ```
@@ -233,35 +254,39 @@ New atoms start as `draft`. When confidence reaches 0.9 or higher, `reflect` pro
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│                  memory-kernel                   │
-│                                                  │
-│  ┌──────────┐  ┌─-─────────┐  ┌──-────────┐      │
-│  │  retain  │  │   recall  │  │   reflect │      │
-│  │          │  │           │  │           │      │
-│  │ create   │  │  query    │  │  dedupe   │      │
-│  │ update   │  │  filter   │  │  promote  │      │
-│  │ archive  │  │  budget   │  │  expire   │      │
-│  └────┬─────┘  └──-──┬─────┘  └─-───┬─────┘      │
-│       │              │              │            │
-│  ┌────▼──────────────▼──────────────▼────┐       │
-│  │              store                    │       │
-│  │  read / write / list / init           │       │
-│  └────────────────┬──────────────────────┘       │
-│                   │                              │
-│  ┌────────────────▼──────────────────────┐       │
-│  │           File System                 │       │
-│  │  ENTITIES/  events/  views/  ARCHIVE/ │       │
-│  └───────────────────────────────────────┘       │
-│                   │                              │
-│  ┌────────────────▼──────────────────────┐       │
-│  │        SQLite Index (optional)        │       │
-│  │  Derived cache — rebuild with reindex │       │
-│  └───────────────────────────────────────┘       │
-└──────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│                    memory-kernel                       │
+│                                                       │
+│  ┌──────────┐  ┌───────────┐  ┌───────────┐           │
+│  │  retain  │  │   recall  │  │  reflect  │           │
+│  │          │  │           │  │           │           │
+│  │ create   │  │  query    │  │  dedupe   │           │
+│  │ update   │  │  filter   │  │  promote  │           │
+│  │ archive  │  │  budget   │  │  expire   │           │
+│  └────┬─────┘  └─────┬─────┘  └─────┬─────┘           │
+│       │              │              │                 │
+│  ┌────▼──────────────▼──────────────▼──────┐          │
+│  │              store + event-log           │          │
+│  │  read / write / list / appendEvent      │          │
+│  └────────────────┬────────────────────────┘          │
+│                   │                                   │
+│  ┌────────────────▼────────────────────────┐          │
+│  │             File System                 │          │
+│  │  ENTITIES/  ARCHIVE/  EVIDENCE/         │          │
+│  │  events.ndjson  *.md views              │          │
+│  └─────────────────────────────────────────┘          │
+│                   │                                   │
+│  ┌────────────────▼────────────────────────┐          │
+│  │    replay     │  SQLite Index (optional) │          │
+│  │  events →     │  Derived cache — rebuild │          │
+│  │  atoms+views  │  with mk reindex        │          │
+│  └───────────────┴──────────────────────────┘          │
+└───────────────────────────────────────────────────────┘
 ```
 
-**Key principle: files are truth, SQLite is cache.** The index speeds up queries but is always rebuildable from files with `mk reindex`. You can delete the `.memory-index.db` file at any time — the system falls back to file scanning.
+**Key principles:**
+- **Files are truth, SQLite is cache.** The index speeds up queries but is always rebuildable from files with `mk reindex`.
+- **Events are the system of record.** Every mutation carries an inline atom snapshot (V2 events). The event log can reconstruct the entire state via `replay()`.
 
 ### On-Disk Layout
 
@@ -275,22 +300,19 @@ my-memory/
 ├── ARCHIVE/                         ← Soft-deleted atoms
 │   └── BELI-2026-03-08-OLD-HYPOTHESIS-g7h8.md
 │
-├── events/                          ← Append-only event log (JSONL)
-│   └── 2026-03-09.jsonl
+├── EVIDENCE/                        ← Content-addressed blobs (SHA-256)
+│   └── a1b2c3d4e5f6...64hex.blob
 │
-├── views/                           ← Generated views (don't edit)
-│   └── INDEX.md
-│
+├── CONFLICTS/                       ← Conflict atoms
 ├── EPISODES/                        ← Session summaries
-│   └── 2026-03-09-session-1.md
 │
-├── EVIDENCE/                        ← Supporting artifacts
+├── events.ndjson                    ← Append-only event log (V2: snapshots inline)
 │
-├── HANDOFF.md                       ← Cross-session context
-├── INDEX.md                         ← Routing map
-├── DECISIONS.md                     ← Decision log view
-├── CONSTRAINTS.md                   ← Active constraints
-├── OPEN_QUESTIONS.md                ← Unresolved questions
+├── INDEX.md                         ← Routing map (auto-generated)
+├── HANDOFF.md                       ← Cross-session context (auto-generated)
+├── DECISIONS.md                     ← Decision log (auto-generated)
+├── CONSTRAINTS.md                   ← Active constraints (auto-generated)
+├── OPEN_QUESTIONS.md                ← Unresolved questions (auto-generated)
 │
 └── .memory-index.db                 ← SQLite cache (derived, gitignored)
 ```
@@ -377,6 +399,18 @@ npx mk reflect -d ./my-memory --agent-id my-agent --session-id session-1
 npx mk checkpoint -d ./my-memory --task "Implement auth" > handoff.md
 ```
 
+### Bootstrap events (migrate to V2)
+
+```bash
+npx mk bootstrap-events -d ./my-memory --agent-id my-agent
+```
+
+### Replay from event log
+
+```bash
+npx mk replay --from ./my-memory/events.ndjson --output-dir ./replayed
+```
+
 ### Rebuild index
 
 ```bash
@@ -400,6 +434,13 @@ import {
   recall,
   reflect,
   checkpoint,
+  replay,
+  replayFromFile,
+  bootstrapEvents,
+  hashEvidence,
+  writeEvidence,
+  readEvidence,
+  readEvents,
   reindex,
 } from 'memory-kernel';
 
@@ -469,6 +510,31 @@ console.log(ckpt.markdown); // Full handoff document
 
 // Build/rebuild SQLite index for fast queries
 reindex('./memory');
+
+// --- Event Sourcing (v0.4.0+) ---
+
+// Replay: reconstruct state from events alone
+const events = readEvents('./memory');
+const replayed = replay(events, { timestamp: '2026-03-10T00:00:00Z' });
+console.log(`Atoms: ${replayed.atoms.size}, Errors: ${replayed.errors.length}`);
+// replayed.views.index, .decisions, .constraints, .open_questions, .handoff
+
+// Replay from file + write to output directory
+const fromFile = replayFromFile('./memory/events.ndjson', {
+  outputDir: './replay-output',  // writes atoms + views to disk
+});
+
+// Bootstrap: migrate existing atoms to event-sourced state
+const boot = bootstrapEvents({
+  memoryDir: './memory',
+  agent_id: 'my-agent',
+  session_id: 'bootstrap',
+});
+console.log(`Imported ${boot.imported} atoms, backup: ${boot.backup_path}`);
+
+// Evidence store: content-addressed blobs
+const hash = writeEvidence('./memory', Buffer.from('artifact data'));
+const data = readEvidence('./memory', hash);
 ```
 
 ## CLI Commands
@@ -482,6 +548,8 @@ reindex('./memory');
 | `mk recall -d <dir>`                        | Load relevant context (filter by type, tags, paths)    |
 | `mk reflect -d <dir>`                       | Consolidate: deduplicate, expire, promote, regen views |
 | `mk checkpoint -d <dir>`                    | Generate checkpoint/handoff bundle (stdout)             |
+| `mk bootstrap-events -d <dir>`              | Migrate existing atoms to V2 event-sourced format      |
+| `mk replay --from <file>`                   | Reconstruct atoms + views from an event log            |
 | `mk reindex -d <dir>`                       | Rebuild SQLite index from files                        |
 | `mk gc -d <dir>`                            | Archive expired atoms                                  |
 | `mk doctor -d <dir>`                        | Validate schema, check links, report problems          |

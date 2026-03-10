@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { appendEvent } from './event-log.js';
-import { normalizeTimestamp } from './format.js';
+import { normalizeTimestamp, serializeAtom } from './format.js';
 import {
   DEFAULT_TTLS,
   generateAtomId,
@@ -72,12 +72,14 @@ export function createAtom(
   writeAtom(atom, fp);
   atom.filePath = fp;
 
-  // Emit event
+  // Emit event (v2 with snapshot)
   appendEvent(opts.memoryDir, 'atom_created', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [id],
     touched_paths: opts.scope?.paths,
+    schema_version: 2,
+    atom_snapshot: serializeAtom(atom),
   });
 
   // Keep index in sync if it exists
@@ -130,12 +132,14 @@ export function updateAtom(
   // Write
   writeAtom(atom, opts.filePath);
 
-  // Emit event
+  // Emit event (v2 with snapshot)
   appendEvent(opts.memoryDir, 'atom_updated', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [atom.frontmatter.id],
     touched_paths: atom.frontmatter.scope?.paths,
+    schema_version: 2,
+    atom_snapshot: serializeAtom(atom),
   });
 
   // Keep index in sync if it exists
@@ -170,11 +174,13 @@ export function archiveAtom(
     fs.unlinkSync(opts.filePath);
   }
 
-  // Emit event
+  // Emit event (v2 with snapshot)
   appendEvent(opts.memoryDir, 'atom_archived', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [atom.frontmatter.id],
+    schema_version: 2,
+    atom_snapshot: serializeAtom(atom),
   });
 
   // Remove from index if it exists

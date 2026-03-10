@@ -34,6 +34,8 @@ import {
 import { recall } from '../recall.js';
 import { reflect } from '../reflect.js';
 import { checkpoint } from '../checkpoint.js';
+import { bootstrapEvents } from '../bootstrap.js';
+import { replayFromFile } from '../replay.js';
 
 const program = new Command();
 
@@ -352,6 +354,67 @@ program
     console.log(`  Type: ${atom.frontmatter.type}, Status: ${atom.frontmatter.status}`);
     console.log(`  Confidence: ${atom.frontmatter.confidence}`);
     if (opts.tags) console.log(`  Tags: ${opts.tags.join(', ')}`);
+  });
+
+// --- mk bootstrap-events ---
+program
+  .command('bootstrap-events')
+  .description('Migrate existing atoms into V2 event log (prepends atom_imported events)')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--agent-id <id>', 'Agent ID', 'cli')
+  .option('--session-id <id>', 'Session ID', 'cli-bootstrap')
+  .action((opts: { dir: string; agentId: string; sessionId: string }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      process.exit(1);
+    }
+
+    const result = bootstrapEvents({
+      memoryDir,
+      agent_id: opts.agentId,
+      session_id: opts.sessionId,
+    });
+
+    console.log('✓ Bootstrap completed:');
+    console.log(`  Imported: ${result.imported} atoms`);
+    console.log(`  Events written: ${result.events_written}`);
+    console.log(`  Backup: ${result.backup_path}`);
+  });
+
+// --- mk replay ---
+program
+  .command('replay')
+  .description('Replay events to reconstruct state')
+  .requiredOption('--from <file>', 'Events NDJSON file to replay')
+  .option('--output-dir <dir>', 'Write reconstructed atoms and views to this directory')
+  .option('--evidence-dir <dir>', 'Directory containing evidence blobs')
+  .action((opts: { from: string; outputDir?: string; evidenceDir?: string }) => {
+    const eventsFile = path.resolve(opts.from);
+    if (!fs.existsSync(eventsFile)) {
+      console.error(`✗ Events file not found: ${eventsFile}`);
+      process.exit(1);
+    }
+
+    const result = replayFromFile(eventsFile, {
+      outputDir: opts.outputDir ? path.resolve(opts.outputDir) : undefined,
+      evidenceDir: opts.evidenceDir ? path.resolve(opts.evidenceDir) : undefined,
+    });
+
+    console.log('✓ Replay completed:');
+    console.log(`  Events processed: ${result.events_processed}`);
+    console.log(`  Atoms reconstructed: ${result.atoms.size}`);
+
+    if (result.errors.length > 0) {
+      console.log(`  Errors: ${result.errors.length}`);
+      for (const err of result.errors) {
+        console.log(`    - ${err}`);
+      }
+    }
+
+    if (opts.outputDir) {
+      console.log(`  Output written to: ${path.resolve(opts.outputDir)}`);
+    }
   });
 
 program.parse();

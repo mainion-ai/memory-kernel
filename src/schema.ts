@@ -56,7 +56,26 @@ export const MemoryEventSchema = z.object({
   touched_paths: z.array(z.string()).optional(),
   evidence: z.array(z.string()).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
+  // V2 fields
+  schema_version: z.literal(2).optional(),
+  atom_snapshot: z.string().optional(),
+  atom_snapshot_hash: z.string().optional(),
 });
+
+// --- Mutation actions (events that carry atom state) ---
+
+export const MUTATION_ACTIONS = [
+  'atom_created',
+  'atom_updated',
+  'atom_archived',
+  'atom_promoted',
+  'atom_expired',
+  'atom_imported',
+] as const;
+
+export function isMutationAction(action: string): boolean {
+  return (MUTATION_ACTIONS as readonly string[]).includes(action);
+}
 
 // --- Validation helpers ---
 

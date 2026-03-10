@@ -87,6 +87,7 @@ export const EVENT_ACTIONS = [
   'atom_archived',
   'atom_promoted',
   'atom_expired',
+  'atom_imported',
   'checkpoint_created',
   'conflict_detected',
   'conflict_resolved',
@@ -109,6 +110,10 @@ export interface MemoryEvent {
   touched_paths?: string[]; // File/scope paths
   evidence?: string[]; // Evidence pointers (hashes, file refs)
   meta?: Record<string, unknown>; // Extra context
+  // V2 fields (optional for backward compat with v1 events)
+  schema_version?: 2; // Present on v2 events
+  atom_snapshot?: string; // Serialized atom (frontmatter+body markdown)
+  atom_snapshot_hash?: string; // SHA-256 hash if snapshot stored in evidence
 }
 
 // --- Recall query ---
@@ -145,6 +150,29 @@ export interface ReflectResult {
   archived: number;
   conflicts_found: number;
   events_emitted: number;
+}
+
+// --- Replay result ---
+
+export interface ReplayResult {
+  atoms: Map<string, Atom>;
+  views: {
+    index: string;
+    decisions: string;
+    constraints: string;
+    open_questions: string;
+    handoff: string;
+  };
+  events_processed: number;
+  errors: string[];
+}
+
+// --- Bootstrap result ---
+
+export interface BootstrapResult {
+  imported: number;
+  events_written: number;
+  backup_path: string;
 }
 
 // --- Memory Kernel config ---

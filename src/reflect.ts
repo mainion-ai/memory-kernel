@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { appendEvent, readEvents } from './event-log.js';
-import { normalizeTimestamp } from './format.js';
+import { normalizeTimestamp, serializeAtom } from './format.js';
 import {
   renderIndex,
   renderDecisions,
@@ -105,6 +105,8 @@ function processExpiry(
         agent_id: opts.agent_id,
         session_id: opts.session_id,
         atom_refs: [fm.id],
+        schema_version: 2,
+        atom_snapshot: serializeAtom(atom),
       });
 
       expired++;
@@ -148,6 +150,16 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
         if (fs.existsSync(toArchive.filePath)) {
           fs.unlinkSync(toArchive.filePath);
         }
+
+        appendEvent(opts.memoryDir, 'atom_archived', {
+          agent_id: opts.agent_id,
+          session_id: opts.session_id,
+          atom_refs: [toArchive.frontmatter.id],
+          schema_version: 2,
+          atom_snapshot: serializeAtom(toArchive),
+          meta: { reason: 'dedup' },
+        });
+
         count++;
       }
 
@@ -194,6 +206,8 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
         agent_id: opts.agent_id,
         session_id: opts.session_id,
         atom_refs: [atom.frontmatter.id],
+        schema_version: 2,
+        atom_snapshot: serializeAtom(atom),
         meta: { from_type: 'belief', to_type: 'fact' },
       });
 

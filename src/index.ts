@@ -14,6 +14,8 @@ export type {
   RecallQuery,
   ContextBundle,
   ReflectResult,
+  ReplayResult,
+  BootstrapResult,
   KernelConfig,
 } from './types.js';
 
@@ -26,6 +28,8 @@ export {
   generateAtomId,
   generateEventId,
   DEFAULT_TTLS,
+  MUTATION_ACTIONS,
+  isMutationAction,
 } from './schema.js';
 
 // Format
@@ -81,9 +85,25 @@ export {
 } from './renderers.js';
 export type { ViewBudget } from './renderers.js';
 
+// Evidence store
+export {
+  hashEvidence,
+  writeEvidence,
+  readEvidence,
+  evidenceExists,
+  listEvidence,
+  assertValidHash,
+} from './evidence.js';
+
 // Checkpoint
 export { checkpoint } from './checkpoint.js';
 export type { CheckpointOptions, CheckpointResult } from './checkpoint.js';
+
+// Replay
+export { replay, replayFromFile } from './replay.js';
+
+// Bootstrap
+export { bootstrapEvents } from './bootstrap.js';
 
 // Operations
 export { createAtom, updateAtom, archiveAtom } from './retain.js';

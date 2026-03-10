@@ -22,6 +22,10 @@ export function appendEvent(
     touched_paths?: string[];
     evidence?: string[];
     meta?: Record<string, unknown>;
+    // V2 fields
+    schema_version?: 2;
+    atom_snapshot?: string;
+    atom_snapshot_hash?: string;
   },
 ): MemoryEvent {
   const event: MemoryEvent = {
@@ -34,6 +38,9 @@ export function appendEvent(
     touched_paths: opts.touched_paths,
     evidence: opts.evidence,
     meta: opts.meta,
+    schema_version: opts.schema_version,
+    atom_snapshot: opts.atom_snapshot,
+    atom_snapshot_hash: opts.atom_snapshot_hash,
   };
 
   // Validate before writing
