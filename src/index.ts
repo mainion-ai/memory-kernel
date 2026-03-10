@@ -71,6 +71,20 @@ export {
 } from './index-db.js';
 export type { IndexQueryResult } from './index-db.js';
 
+// Renderers
+export {
+  renderIndex,
+  renderDecisions,
+  renderConstraints,
+  renderOpenQuestions,
+  renderHandoff,
+} from './renderers.js';
+export type { ViewBudget } from './renderers.js';
+
+// Checkpoint
+export { checkpoint } from './checkpoint.js';
+export type { CheckpointOptions, CheckpointResult } from './checkpoint.js';
+
 // Operations
 export { createAtom, updateAtom, archiveAtom } from './retain.js';
 export { recall } from './recall.js';

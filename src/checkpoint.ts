@@ -1,0 +1,100 @@
+/**
+ * Checkpoint — generate a handoff bundle for cross-session context transfer.
+ * Combines reflect + recall + fresh views into a single markdown document.
+ */
+
+import { appendEvent } from './event-log.js';
+import { recall } from './recall.js';
+import { reflect } from './reflect.js';
+import { readView } from './store.js';
+import type { ContextBundle } from './types.js';
+
+export interface CheckpointOptions {
+  memoryDir: string;
+  agent_id: string;
+  session_id: string;
+  task?: string;
+  max_tokens?: number; // default: 4000
+  skipReflect?: boolean;
+}
+
+export interface CheckpointResult {
+  bundle: ContextBundle;
+  markdown: string; // Concatenated INDEX + HANDOFF + CONSTRAINTS + atoms
+  event_id: string;
+}
+
+/**
+ * Generate a checkpoint: reflect (optional), recall, and assemble a handoff document.
+ */
+export function checkpoint(opts: CheckpointOptions): CheckpointResult {
+  // 1. Run reflect to consolidate state (unless skipped)
+  if (!opts.skipReflect) {
+    reflect({
+      memoryDir: opts.memoryDir,
+      agent_id: opts.agent_id,
+      session_id: opts.session_id,
+    });
+  }
+
+  // 2. Recall context with optional task/token budget
+  const bundle = recall(opts.memoryDir, {
+    task: opts.task,
+    max_tokens: opts.max_tokens ?? 4000,
+  });
+
+  // 3. Read fresh views (post-reflect)
+  const index = readView(opts.memoryDir, 'INDEX.md');
+  const handoff = readView(opts.memoryDir, 'HANDOFF.md');
+  const constraints = readView(opts.memoryDir, 'CONSTRAINTS.md');
+
+  // Update bundle with fresh views
+  bundle.index = index;
+  bundle.handoff = handoff;
+  bundle.constraints = constraints;
+
+  // 4. Assemble markdown
+  const sections: string[] = [
+    '<!-- Memory Kernel Checkpoint -->',
+    '',
+    index.trim(),
+    '',
+    '---',
+    '',
+    handoff.trim(),
+    '',
+    '---',
+    '',
+    constraints.trim(),
+  ];
+
+  if (bundle.atoms.length > 0) {
+    sections.push('', '---', '', '## Scoped Atoms', '');
+    for (const atom of bundle.atoms) {
+      const fm = atom.frontmatter;
+      sections.push(`### ${fm.id} (${fm.type}, ${fm.status}, confidence: ${fm.confidence})`);
+      sections.push('');
+      sections.push(atom.body.trim());
+      sections.push('');
+    }
+  }
+
+  const markdown = sections.join('\n') + '\n';
+
+  // 5. Emit checkpoint event
+  const event = appendEvent(opts.memoryDir, 'checkpoint_created', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    meta: {
+      token_estimate: bundle.token_estimate,
+      atom_count: bundle.atoms.length,
+      task: opts.task,
+    },
+  });
+
+  return {
+    bundle,
+    markdown,
+    event_id: event.event_id,
+  };
+}

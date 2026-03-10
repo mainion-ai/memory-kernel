@@ -194,6 +194,38 @@ describe('reflect', () => {
     expect(index).toContain('Open Questions (1)');
   });
 
+  it('regenerates all 5 views', () => {
+    initMemoryDir(testDir);
+    const base = { memoryDir: testDir, agent_id: 'a', session_id: 's' };
+
+    createAtom({ ...base, type: 'decision', slug: 'use-ts', body: 'Use TypeScript' });
+    createAtom({ ...base, type: 'constraint', slug: 'max-lines', body: 'Max 200 lines' });
+    createAtom({ ...base, type: 'open_question', slug: 'which-crdt', body: 'Which CRDT?' });
+
+    reflect({ memoryDir: testDir, agent_id: 'a', session_id: 's' });
+
+    // All views should exist and contain real content
+    const index = readView(testDir, 'INDEX.md');
+    expect(index).toContain('# Memory Index');
+    expect(index).toContain('Decisions (1)');
+
+    const decisions = readView(testDir, 'DECISIONS.md');
+    expect(decisions).toContain('# Decisions');
+    expect(decisions).toContain('USE-TS');
+
+    const constraints = readView(testDir, 'CONSTRAINTS.md');
+    expect(constraints).toContain('# Constraints');
+    expect(constraints).toContain('MAX-LINES');
+
+    const openQuestions = readView(testDir, 'OPEN_QUESTIONS.md');
+    expect(openQuestions).toContain('# Open Questions');
+    expect(openQuestions).toContain('WHICH-CRDT');
+
+    const handoff = readView(testDir, 'HANDOFF.md');
+    expect(handoff).toContain('# Handoff');
+    expect(handoff).toContain('3 active atoms');
+  });
+
   it('auto-promotes high-confidence beliefs to facts', () => {
     initMemoryDir(testDir);
     const base = { memoryDir: testDir, agent_id: 'a', session_id: 's' };

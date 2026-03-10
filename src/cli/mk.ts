@@ -33,6 +33,7 @@ import {
 } from '../index.js';
 import { recall } from '../recall.js';
 import { reflect } from '../reflect.js';
+import { checkpoint } from '../checkpoint.js';
 
 const program = new Command();
 
@@ -144,6 +145,44 @@ program
         console.log(atom.body.slice(0, 200) + (atom.body.length > 200 ? '...' : ''));
       }
     }
+  });
+
+// --- mk checkpoint ---
+program
+  .command('checkpoint')
+  .description('Generate a checkpoint/handoff bundle')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('-t, --task <task>', 'Task description for scoping')
+  .option('--max-tokens <n>', 'Token budget', parseInt)
+  .option('--agent-id <id>', 'Agent ID', 'cli')
+  .option('--session-id <id>', 'Session ID', 'cli-session')
+  .option('--no-reflect', 'Skip reflect before checkpoint')
+  .action((opts: {
+    dir: string; task?: string; maxTokens?: number;
+    agentId: string; sessionId: string; reflect: boolean;
+  }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      process.exit(1);
+    }
+
+    const result = checkpoint({
+      memoryDir,
+      agent_id: opts.agentId,
+      session_id: opts.sessionId,
+      task: opts.task,
+      max_tokens: opts.maxTokens,
+      skipReflect: !opts.reflect,
+    });
+
+    // Markdown to stdout (pipeable)
+    process.stdout.write(result.markdown);
+
+    // Metadata to stderr
+    process.stderr.write(
+      `\n✓ Checkpoint created (≈${result.bundle.token_estimate} tokens, ${result.bundle.atoms.length} atoms, event: ${result.event_id})\n`,
+    );
   });
 
 // --- mk reflect ---

@@ -7,8 +7,15 @@
 
 import fs from 'fs';
 import path from 'path';
-import { appendEvent } from './event-log.js';
+import { appendEvent, readEvents } from './event-log.js';
 import { normalizeTimestamp } from './format.js';
+import {
+  renderIndex,
+  renderDecisions,
+  renderConstraints,
+  renderOpenQuestions,
+  renderHandoff,
+} from './renderers.js';
 import { listAtoms, readAtom, writeAtom, atomFilePath, writeView, readView } from './store.js';
 import type { Atom, ReflectResult } from './types.js';
 
@@ -213,67 +220,16 @@ function detectConflicts(_opts: ReflectOptions, atoms: Atom[]): number {
 }
 
 /**
- * Regenerate INDEX.md from current atoms.
- * Note: DECISIONS.md, CONSTRAINTS.md, OPEN_QUESTIONS.md are initialized
- * by `initMemoryDir` but not auto-regenerated — they are manually curated.
+ * Regenerate all views from current atoms and events.
+ * Produces: INDEX.md, DECISIONS.md, CONSTRAINTS.md, OPEN_QUESTIONS.md, HANDOFF.md.
  */
 function regenerateViews(opts: ReflectOptions): void {
   const atoms = listAtoms(opts.memoryDir);
-  const active = atoms.filter(
-    (a) => a.frontmatter.status !== 'archived' && a.frontmatter.status !== 'expired',
-  );
+  const events = readEvents(opts.memoryDir);
 
-  // Group by type
-  const decisions = active.filter((a) => a.frontmatter.type === 'decision');
-  const constraints = active.filter((a) => a.frontmatter.type === 'constraint');
-  const openQuestions = active.filter((a) => a.frontmatter.type === 'open_question');
-  const entities = active.filter((a) => a.frontmatter.type === 'entity_summary');
-  const conflicts = active.filter((a) => a.frontmatter.type === 'conflict');
-
-  // Regenerate INDEX.md
-  const indexLines = [
-    '---',
-    'type: index',
-    `updated_at: ${normalizeTimestamp()}`,
-    '---',
-    '',
-    '# Memory Index',
-    '',
-    '> Routing map. Kept under 200 lines. Details in ENTITIES/ and EPISODES/.',
-    '',
-  ];
-
-  if (conflicts.length > 0) {
-    indexLines.push(`## ⚠ Active Conflicts (${conflicts.length})`, '');
-    for (const c of conflicts) {
-      indexLines.push(`- **${c.frontmatter.id}**: ${c.body.split('\n')[0]}`);
-    }
-    indexLines.push('');
-  }
-
-  indexLines.push(`## Decisions (${decisions.length})`, '');
-  for (const d of decisions) {
-    indexLines.push(`- [${d.frontmatter.status}] **${d.frontmatter.id}** (confidence: ${d.frontmatter.confidence})`);
-  }
-  indexLines.push('');
-
-  indexLines.push(`## Constraints (${constraints.length})`, '');
-  for (const c of constraints) {
-    indexLines.push(`- **${c.frontmatter.id}**: ${c.body.split('\n')[0]}`);
-  }
-  indexLines.push('');
-
-  indexLines.push(`## Open Questions (${openQuestions.length})`, '');
-  for (const q of openQuestions) {
-    indexLines.push(`- **${q.frontmatter.id}**: ${q.body.split('\n')[0]}`);
-  }
-  indexLines.push('');
-
-  indexLines.push(`## Entities (${entities.length})`, '');
-  for (const e of entities) {
-    indexLines.push(`- **${e.frontmatter.id}**`);
-  }
-  indexLines.push('');
-
-  writeView(opts.memoryDir, 'INDEX.md', indexLines.join('\n') + '\n');
+  writeView(opts.memoryDir, 'INDEX.md', renderIndex(atoms));
+  writeView(opts.memoryDir, 'DECISIONS.md', renderDecisions(atoms));
+  writeView(opts.memoryDir, 'CONSTRAINTS.md', renderConstraints(atoms));
+  writeView(opts.memoryDir, 'OPEN_QUESTIONS.md', renderOpenQuestions(atoms));
+  writeView(opts.memoryDir, 'HANDOFF.md', renderHandoff(atoms, events));
 }

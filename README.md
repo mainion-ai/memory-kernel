@@ -186,7 +186,8 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ║     → keep newer, archive older                              ║
 ║  3. Promote — beliefs with confidence ≥ 0.9 → facts          ║
 ║  4. Detect conflicts (count active conflict atoms)           ║
-║  5. Regenerate INDEX.md                                      ║
+║  5. Regenerate all views (INDEX, DECISIONS, CONSTRAINTS,     ║
+║     OPEN_QUESTIONS, HANDOFF)                                 ║
 ║  6. Log all actions as events                                ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
@@ -370,6 +371,12 @@ npx mk recall -d ./my-memory --type fact --tags identity
 npx mk reflect -d ./my-memory --agent-id my-agent --session-id session-1
 ```
 
+### Checkpoint (handoff bundle)
+
+```bash
+npx mk checkpoint -d ./my-memory --task "Implement auth" > handoff.md
+```
+
 ### Rebuild index
 
 ```bash
@@ -392,6 +399,7 @@ import {
   archiveAtom,
   recall,
   reflect,
+  checkpoint,
   reindex,
 } from 'memory-kernel';
 
@@ -449,6 +457,16 @@ const result = reflect({
 });
 console.log(`Promoted: ${result.promoted}, Archived: ${result.archived}`);
 
+// Generate a checkpoint for handoff to next session
+const ckpt = checkpoint({
+  memoryDir: './memory',
+  agent_id: 'my-agent',
+  session_id: 'session-2',
+  task: 'Implement authentication',
+  max_tokens: 4000,
+});
+console.log(ckpt.markdown); // Full handoff document
+
 // Build/rebuild SQLite index for fast queries
 reindex('./memory');
 ```
@@ -463,6 +481,7 @@ reindex('./memory');
 | `mk remember -d <dir> --type <type> "body"` | Quick-create an atom from the command line             |
 | `mk recall -d <dir>`                        | Load relevant context (filter by type, tags, paths)    |
 | `mk reflect -d <dir>`                       | Consolidate: deduplicate, expire, promote, regen views |
+| `mk checkpoint -d <dir>`                    | Generate checkpoint/handoff bundle (stdout)             |
 | `mk reindex -d <dir>`                       | Rebuild SQLite index from files                        |
 | `mk gc -d <dir>`                            | Archive expired atoms                                  |
 | `mk doctor -d <dir>`                        | Validate schema, check links, report problems          |
