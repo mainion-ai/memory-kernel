@@ -6,11 +6,14 @@
  * This script exists because I built a memory system and wasn't using it.
  */
 
+import fs from 'fs';
+import path from 'path';
 import {
   listAtoms,
   updateAtom,
   createAtom,
   writeView,
+  writeFileAtomic,
   reflect,
   reindex,
   normalizeTimestamp,
@@ -234,10 +237,6 @@ console.log('  ✓ HANDOFF.md updated');
 // ============================================================================
 
 console.log('\n=== Creating first episode ===\n');
-
-import fs from 'fs';
-import path from 'path';
-import { writeFileAtomic } from '../src/index.js';
 
 const episodePath = path.join(MEMORY_DIR, 'EPISODES', '2026-03-09-session-2.md');
 const episode = `---

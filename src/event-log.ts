@@ -66,7 +66,13 @@ export function readEvents(memoryDir: string): MemoryEvent[] {
   const content = fs.readFileSync(logPath, 'utf-8').trim();
   if (!content) return [];
 
-  return content.split('\n').map((line) => JSON.parse(line) as MemoryEvent);
+  return content.split('\n').flatMap((line) => {
+    try {
+      return [JSON.parse(line) as MemoryEvent];
+    } catch {
+      return []; // Skip corrupted lines
+    }
+  });
 }
 
 /**

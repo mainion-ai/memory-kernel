@@ -52,11 +52,25 @@ export function serializeAtom(atom: Atom): string {
 
 /**
  * Parse a markdown file with YAML frontmatter into an Atom.
+ * Validates that required fields (id, type, status) are present.
  */
 export function parseAtom(content: string, filePath?: string): Atom {
   const parsed = matter(content);
+  const data = parsed.data;
+
+  // Validate required fields to prevent downstream crashes
+  if (!data || typeof data.id !== 'string' || !data.id) {
+    throw new Error(`Missing or invalid 'id' in frontmatter${filePath ? ` (${filePath})` : ''}`);
+  }
+  if (typeof data.type !== 'string' || !data.type) {
+    throw new Error(`Missing or invalid 'type' in frontmatter${filePath ? ` (${filePath})` : ''}`);
+  }
+  if (typeof data.status !== 'string' || !data.status) {
+    throw new Error(`Missing or invalid 'status' in frontmatter${filePath ? ` (${filePath})` : ''}`);
+  }
+
   return {
-    frontmatter: parsed.data as AtomFrontmatter,
+    frontmatter: data as AtomFrontmatter,
     body: parsed.content.trim(),
     filePath,
   };

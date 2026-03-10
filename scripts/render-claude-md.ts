@@ -129,7 +129,8 @@ if (beliefs.length > 0) {
 const content = lines.join('\n') + '\n';
 
 // Write output
-fs.mkdirSync(fs.realpathSync(outputPath + '/..'), { recursive: true });
+import path from 'path';
+fs.mkdirSync(path.dirname(path.resolve(outputPath)), { recursive: true });
 fs.writeFileSync(outputPath, content);
 
 const lineCount = content.split('\n').length;

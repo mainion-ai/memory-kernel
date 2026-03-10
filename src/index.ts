@@ -45,6 +45,7 @@ export {
   listAtoms,
   listAtomFiles,
   atomFilePath,
+  assertWithinDir,
   readView,
   writeView,
 } from './store.js';

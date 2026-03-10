@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
+    "lint:all": "tsc --noEmit -p tsconfig.test.json",
     "mk": "tsx src/cli/mk.ts"
   },
   "keywords": [

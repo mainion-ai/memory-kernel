@@ -71,7 +71,7 @@ describe('createAtom', () => {
       body: '## Decision\nWe will use TypeScript.\n\n## Why\nType safety.',
     });
 
-    expect(atom.frontmatter.id).toMatch(/^DECI-\d{4}-\d{2}-\d{2}-USE-TYPESCRIPT$/);
+    expect(atom.frontmatter.id).toMatch(/^DECI-\d{4}-\d{2}-\d{2}-USE-TYPESCRIPT-[a-z0-9]+$/);
     expect(atom.frontmatter.type).toBe('decision');
     expect(atom.frontmatter.status).toBe('active');
     expect(atom.filePath).toBeTruthy();

@@ -292,9 +292,9 @@ describe('Event validation', () => {
 // ============================================================================
 
 describe('ID generation', () => {
-  it('should generate atom IDs with TYPE-DATE-SLUG format', () => {
+  it('should generate atom IDs with TYPE-DATE-SLUG-COUNTER format', () => {
     const id = generateAtomId('fact', 'my-test-slug');
-    expect(id).toMatch(/^FACT-\d{4}-\d{2}-\d{2}-MY-TEST-SLUG$/);
+    expect(id).toMatch(/^FACT-\d{4}-\d{2}-\d{2}-MY-TEST-SLUG-[a-z0-9]+$/);
   });
 
   it('should uppercase the slug', () => {
@@ -310,13 +310,18 @@ describe('ID generation', () => {
   it('should truncate long slugs to 40 chars', () => {
     const longSlug = 'a'.repeat(100);
     const id = generateAtomId('fact', longSlug);
-    const slugPart = id.split('-').slice(4).join('-'); // After TYPE-YYYY-MM-DD-
+    // Format: TYPE-YYYY-MM-DD-SLUG-COUNTER — extract slug part (between date and counter)
+    const parts = id.split('-');
+    // parts: [TYPE, YYYY, MM, DD, ...SLUG_PARTS..., COUNTER]
+    const slugParts = parts.slice(4, -1); // Skip TYPE-YYYY-MM-DD and trailing counter
+    const slugPart = slugParts.join('-');
     expect(slugPart.length).toBeLessThanOrEqual(40);
   });
 
   it('should handle empty slug', () => {
     const id = generateAtomId('fact', '');
-    expect(id).toMatch(/^FACT-\d{4}-\d{2}-\d{2}-$/);
+    // Empty slug: TYPE-YYYY-MM-DD-COUNTER (no slug portion)
+    expect(id).toMatch(/^FACT-\d{4}-\d{2}-\d{2}-[a-z0-9]+$/);
   });
 
   it('should generate unique event IDs', () => {
@@ -1506,45 +1511,38 @@ describe('Full E2E lifecycle', () => {
 // ============================================================================
 
 describe('Corruption and recovery', () => {
-  it('should handle reading a file with invalid YAML frontmatter gracefully', () => {
+  it('should skip files with invalid YAML frontmatter in listAtoms', () => {
     initMemoryDir(testDir);
     const badFile = path.join(testDir, 'ENTITIES', 'BAD-ATOM.md');
     fs.writeFileSync(badFile, '---\nnot: valid: yaml: [\n---\n\nBody content');
 
-    // listAtoms may throw or return partial results — either is acceptable
-    // The key is it shouldn't crash the entire system silently
-    try {
-      const atoms = listAtoms(testDir);
-      // If it doesn't throw, that's fine — gray-matter is lenient
-      expect(Array.isArray(atoms)).toBe(true);
-    } catch (e) {
-      // Throwing is also acceptable behavior for corrupt data
-      expect(e).toBeDefined();
-    }
+    // Also create a valid atom so we can verify partial results
+    createAtom({ ...base(testDir), type: 'fact', slug: 'valid', body: 'Valid atom' });
+
+    // listAtoms should skip the corrupted file and return the valid one
+    const atoms = listAtoms(testDir);
+    expect(atoms.length).toBe(1);
+    expect(atoms[0].frontmatter.type).toBe('fact');
   });
 
-  it('should handle reading a file with no frontmatter', () => {
+  it('should throw on readAtom with missing required frontmatter fields', () => {
     initMemoryDir(testDir);
     const noFrontmatter = path.join(testDir, 'ENTITIES', 'NO-FM.md');
     fs.writeFileSync(noFrontmatter, 'Just plain markdown without frontmatter');
 
-    // gray-matter treats the whole content as body when no --- delimiters
-    const atom = readAtom(noFrontmatter);
-    expect(atom.body).toContain('Just plain markdown');
-    // Frontmatter will be empty/default
-    expect(atom.frontmatter).toBeDefined();
+    // parseAtom now validates required fields (id, type, status)
+    expect(() => readAtom(noFrontmatter)).toThrow(/Missing or invalid/);
   });
 
-  it('should handle empty file', () => {
+  it('should throw on readAtom with empty file', () => {
     initMemoryDir(testDir);
     const emptyFile = path.join(testDir, 'ENTITIES', 'EMPTY.md');
     fs.writeFileSync(emptyFile, '');
 
-    const atom = readAtom(emptyFile);
-    expect(atom).toBeDefined();
+    expect(() => readAtom(emptyFile)).toThrow(/Missing or invalid/);
   });
 
-  it('writeFileAtomic should survive being called concurrently (no temp file collision)', () => {
+  it('writeFileAtomic should survive rapid sequential writes (last write wins)', () => {
     initMemoryDir(testDir);
     const target = path.join(testDir, 'concurrent.txt');
 

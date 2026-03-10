@@ -67,6 +67,7 @@ export function openIndex(memoryDir: string): Database.Database {
   // WAL mode for better concurrent read performance
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000'); // Wait up to 5s for locks
 
   // Create schema
   db.exec(CREATE_ATOMS_TABLE);
@@ -265,8 +266,8 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}): IndexQue
     // Exclude archived/expired by default
     conditions.push("a.status NOT IN ('archived', 'expired')");
 
-    // Exclude SECRET by default
-    conditions.push("(a.classification IS NULL OR a.classification != 'SECRET')");
+    // Exclude SECRET and PERSONAL by default
+    conditions.push("(a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))");
 
     // Filter by type
     if (query.types && query.types.length > 0) {
@@ -292,14 +293,16 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}): IndexQue
     // Filter by paths (prefix overlap)
     if (query.paths && query.paths.length > 0) {
       const pathConditions = query.paths.map(() =>
-        `a.atom_id IN (SELECT atom_id FROM atom_paths WHERE path LIKE ? || '%' OR ? LIKE path || '%')`,
+        `a.atom_id IN (SELECT atom_id FROM atom_paths WHERE path LIKE ? || '%' ESCAPE '\\' OR ? LIKE path || '%' ESCAPE '\\')`,
       );
       // Unscoped atoms (no paths) always match
       conditions.push(
         `(a.atom_id NOT IN (SELECT atom_id FROM atom_paths) OR ${pathConditions.join(' OR ')})`,
       );
       for (const p of query.paths) {
-        params.push(p, p);
+        // Escape LIKE wildcards in path values
+        const escaped = p.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+        params.push(escaped, escaped);
       }
     }
 

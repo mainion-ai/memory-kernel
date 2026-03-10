@@ -20,6 +20,7 @@ export interface ReflectOptions {
 
 /**
  * Run a full reflect cycle.
+ * Re-reads atoms from disk between phases to avoid stale data.
  */
 export function reflect(opts: ReflectOptions): ReflectResult {
   const result: ReflectResult = {
@@ -31,21 +32,19 @@ export function reflect(opts: ReflectOptions): ReflectResult {
     events_emitted: 0,
   };
 
-  const atoms = listAtoms(opts.memoryDir);
-
   // 1. TTL/Expiry check
-  const { expired, archived } = processExpiry(opts, atoms);
+  const { expired, archived } = processExpiry(opts, listAtoms(opts.memoryDir));
   result.expired = expired;
   result.archived = archived;
 
-  // 2. Dedup (same type + very similar ID prefix = likely duplicate)
-  result.deduped = dedup(opts, atoms);
+  // 2. Dedup — re-read to see post-expiry state
+  result.deduped = dedup(opts, listAtoms(opts.memoryDir));
 
-  // 3. Auto-promotion (high confidence beliefs → facts)
-  result.promoted = autoPromote(opts, atoms);
+  // 3. Auto-promotion — re-read to see post-dedup state
+  result.promoted = autoPromote(opts, listAtoms(opts.memoryDir));
 
-  // 4. Conflict detection (same scope, contradicting statuses)
-  result.conflicts_found = detectConflicts(opts, atoms);
+  // 4. Conflict detection — re-read to see final state
+  result.conflicts_found = detectConflicts(opts, listAtoms(opts.memoryDir));
 
   // 5. Regenerate views
   regenerateViews(opts);
@@ -156,6 +155,7 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
 
 /**
  * Auto-promote beliefs with high confidence to facts.
+ * Renames the file to match the new type for consistency.
  */
 function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
   let count = 0;
@@ -167,12 +167,21 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
       atom.frontmatter.confidence >= 0.9 &&
       atom.filePath
     ) {
+      const oldPath = atom.filePath;
+
       atom.frontmatter.type = 'fact';
       atom.frontmatter.status = 'active';
       atom.frontmatter.updated_at = normalizeTimestamp();
       atom.frontmatter.ttl_days = null; // Facts don't expire
 
-      writeAtom(atom, atom.filePath);
+      // Write to new path matching the promoted type
+      const newPath = atomFilePath(opts.memoryDir, atom.frontmatter.id, 'fact');
+      writeAtom(atom, newPath);
+
+      // Remove old file (if different path)
+      if (oldPath !== newPath && fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
 
       appendEvent(opts.memoryDir, 'atom_promoted', {
         agent_id: opts.agent_id,
@@ -191,16 +200,22 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
 /**
  * Detect potential conflicts: atoms of same type with overlapping scope
  * that have contradicting statuses or recently updated by different agents.
+ *
+ * @todo v0.2 — Implement actual conflict detection (scope overlap analysis,
+ * contradicting statuses, multi-agent divergence). Currently only counts
+ * pre-existing conflict atoms; does not detect or emit new conflicts.
  */
 function detectConflicts(_opts: ReflectOptions, atoms: Atom[]): number {
-  // v0.1: Simple — just count active conflicts
+  // v0.1: Only counts existing conflict atoms — does not detect new ones
   return atoms.filter(
     (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
   ).length;
 }
 
 /**
- * Regenerate INDEX.md and other views from current atoms.
+ * Regenerate INDEX.md from current atoms.
+ * Note: DECISIONS.md, CONSTRAINTS.md, OPEN_QUESTIONS.md are initialized
+ * by `initMemoryDir` but not auto-regenerated — they are manually curated.
  */
 function regenerateViews(opts: ReflectOptions): void {
   const atoms = listAtoms(opts.memoryDir);

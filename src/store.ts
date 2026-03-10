@@ -70,7 +70,12 @@ export function writeFileAtomic(filePath: string, content: string): void {
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(tmpPath, filePath);
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
+    throw err;
+  }
 }
 
 /**
@@ -90,11 +95,12 @@ export function writeAtom(atom: Atom, filePath: string): void {
 }
 
 /**
- * List all atom files in a directory (recursively).
+ * List all atom files in a directory.
+ * Note: Only reads top-level .md files in ENTITIES/ and CONFLICTS/.
+ * Subdirectories are not scanned (flat layout by design).
  */
 export function listAtomFiles(memoryDir: string): string[] {
   const results: string[] = [];
-  const scanDirs = ['ENTITIES', 'CONFLICTS', 'DECISIONS.md', 'CONSTRAINTS.md', 'OPEN_QUESTIONS.md'];
 
   // Scan entity/conflict directories
   for (const dir of ['ENTITIES', 'CONFLICTS']) {
@@ -113,11 +119,19 @@ export function listAtomFiles(memoryDir: string): string[] {
 }
 
 /**
- * List all atoms in memory (parsed).
+ * List all atoms in memory (parsed). Skips files that fail to parse.
  */
 export function listAtoms(memoryDir: string): Atom[] {
   const files = listAtomFiles(memoryDir);
-  return files.map((f) => readAtom(f));
+  const atoms: Atom[] = [];
+  for (const f of files) {
+    try {
+      atoms.push(readAtom(f));
+    } catch {
+      // Skip corrupted/malformed atom files — don't let one bad file break everything
+    }
+  }
+  return atoms;
 }
 
 /**
@@ -131,10 +145,23 @@ export function atomFilePath(memoryDir: string, id: string, type: string): strin
 }
 
 /**
+ * Validate that a resolved path is within the given root directory.
+ * Prevents path traversal attacks.
+ */
+export function assertWithinDir(root: string, target: string): void {
+  const resolvedRoot = path.resolve(root);
+  const resolvedTarget = path.resolve(target);
+  if (!resolvedTarget.startsWith(resolvedRoot + path.sep) && resolvedTarget !== resolvedRoot) {
+    throw new Error(`Path traversal denied: ${target} is outside ${root}`);
+  }
+}
+
+/**
  * Read a view file (INDEX, HANDOFF, etc.).
  */
 export function readView(memoryDir: string, viewName: string): string {
   const filePath = path.join(memoryDir, viewName);
+  assertWithinDir(memoryDir, filePath);
   if (!fs.existsSync(filePath)) return '';
   return fs.readFileSync(filePath, 'utf-8');
 }
@@ -143,7 +170,9 @@ export function readView(memoryDir: string, viewName: string): string {
  * Write a view file (atomic).
  */
 export function writeView(memoryDir: string, viewName: string, content: string): void {
-  writeFileAtomic(path.join(memoryDir, viewName), content);
+  const filePath = path.join(memoryDir, viewName);
+  assertWithinDir(memoryDir, filePath);
+  writeFileAtomic(filePath, content);
 }
 
 // --- Templates ---

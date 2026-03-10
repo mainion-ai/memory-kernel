@@ -12,7 +12,8 @@ import {
   generateAtomId,
   validateAtomFrontmatter,
 } from './schema.js';
-import { atomFilePath, readAtom, writeAtom } from './store.js';
+import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
+import { indexAtom, indexExists, removeFromIndex } from './index-db.js';
 import type { Atom, AtomFrontmatter, AtomType, Classification } from './types.js';
 
 export interface RetainOptions {
@@ -79,6 +80,11 @@ export function createAtom(
     touched_paths: opts.scope?.paths,
   });
 
+  // Keep index in sync if it exists
+  if (indexExists(opts.memoryDir)) {
+    indexAtom(opts.memoryDir, atom);
+  }
+
   return atom;
 }
 
@@ -92,6 +98,12 @@ export function updateAtom(
     body?: string;
   },
 ): Atom {
+  // Early return if nothing to change
+  const hasUpdates = Object.keys(opts.updates).length > 0;
+  if (!hasUpdates && opts.body === undefined) {
+    return readAtom(opts.filePath);
+  }
+
   const atom = readAtom(opts.filePath);
   const now = normalizeTimestamp();
 
@@ -126,6 +138,11 @@ export function updateAtom(
     touched_paths: atom.frontmatter.scope?.paths,
   });
 
+  // Keep index in sync if it exists
+  if (indexExists(opts.memoryDir)) {
+    indexAtom(opts.memoryDir, atom);
+  }
+
   return atom;
 }
 
@@ -135,6 +152,7 @@ export function updateAtom(
 export function archiveAtom(
   opts: RetainOptions & { filePath: string },
 ): Atom {
+  assertWithinDir(opts.memoryDir, opts.filePath);
   const atom = readAtom(opts.filePath);
   atom.frontmatter.status = 'archived';
   atom.frontmatter.updated_at = normalizeTimestamp();
@@ -158,6 +176,11 @@ export function archiveAtom(
     session_id: opts.session_id,
     atom_refs: [atom.frontmatter.id],
   });
+
+  // Remove from index if it exists
+  if (indexExists(opts.memoryDir)) {
+    removeFromIndex(opts.memoryDir, atom.frontmatter.id);
+  }
 
   return atom;
 }

@@ -16,6 +16,10 @@
 import { Command } from 'commander';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'));
 import {
   initMemoryDir,
   listAtoms,
@@ -35,7 +39,7 @@ const program = new Command();
 program
   .name('mk')
   .description('Memory Kernel CLI — manage AI agent memory')
-  .version('0.1.0');
+  .version(pkg.version);
 
 // --- mk init ---
 program
@@ -183,8 +187,11 @@ program
     });
 
     console.log('✓ GC completed:');
-    console.log(`  Expired:  ${result.expired}`);
-    console.log(`  Archived: ${result.archived}`);
+    console.log(`  Expired:    ${result.expired}`);
+    console.log(`  Archived:   ${result.archived}`);
+    console.log(`  Deduped:    ${result.deduped}`);
+    console.log(`  Promoted:   ${result.promoted}`);
+    console.log(`  Conflicts:  ${result.conflicts_found}`);
   });
 
 // --- mk doctor ---

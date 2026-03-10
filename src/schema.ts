@@ -28,7 +28,7 @@ export const AtomFrontmatterSchema = z.object({
       domains: z.array(z.string()).optional(),
     })
     .optional(),
-  classification: z.enum(CLASSIFICATIONS).optional().default('TEAM'),
+  classification: z.enum(CLASSIFICATIONS).optional(),
   provenance: z
     .object({
       episodes: z.array(z.string()).optional(),
@@ -81,17 +81,21 @@ export function generateAtomId(type: string, slug: string): string {
   const clean = slug
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') // Strip leading/trailing dashes
     .slice(0, 40);
-  return `${type.toUpperCase().slice(0, 4)}-${date}-${clean}`;
+  counter = counter + 1;
+  const suffix = clean ? `-${clean}` : '';
+  return `${type.toUpperCase().slice(0, 4)}-${date}${suffix}-${counter.toString(36)}`;
 }
 
 /**
  * Generate a unique event ID (timestamp-based, sortable).
+ * Includes process.pid to prevent collisions across processes.
  */
 export function generateEventId(): string {
   const now = Date.now();
   counter = counter + 1;
-  const hex = now.toString(36) + '-' + counter.toString(36);
+  const hex = now.toString(36) + '-' + process.pid.toString(36) + '-' + counter.toString(36);
   return `evt-${hex}`;
 }
 

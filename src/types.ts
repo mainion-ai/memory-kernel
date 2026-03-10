@@ -114,12 +114,14 @@ export interface MemoryEvent {
 // --- Recall query ---
 
 export interface RecallQuery {
-  task?: string; // Natural language task description
+  /** @todo v0.2 — semantic search over atoms using task description */
+  task?: string; // Natural language task description (not yet implemented)
   paths?: string[]; // Scope paths to match
   types?: AtomType[]; // Filter by atom type
   statuses?: AtomStatus[]; // Filter by status
   tags?: string[]; // Filter by tags
-  include_episodes?: boolean; // Include episodic logs
+  /** @todo v0.2 — load EPISODES/ session summaries into context bundle */
+  include_episodes?: boolean; // Include episodic logs (not yet implemented)
   max_tokens?: number; // Budget for context
 }
 

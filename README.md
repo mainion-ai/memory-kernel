@@ -426,14 +426,16 @@ createAtom({
 const context = recall('./memory', {
   types: ['decision', 'constraint'],
   paths: ['/services/api'],
-  maxTokens: 4000,  // fit into context window
+  max_tokens: 4000,  // fit into context window
 });
 
 // Update confidence as you learn more
-updateAtom('./memory', atom.frontmatter.id, {
-  confidence: 1.0,  // confirmed by production data
+updateAtom({
+  memoryDir: './memory',
+  filePath: atom.filePath!,
   agent_id: 'my-agent',
   session_id: 'session-2',
+  updates: { confidence: 1.0 },  // confirmed by production data
 });
 
 // Consolidate: dedup, expire, promote drafts → active

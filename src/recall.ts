@@ -84,8 +84,8 @@ function filterAtoms(atoms: Atom[], query: RecallQuery): Atom[] {
     // Exclude archived/expired by default
     if (fm.status === 'archived' || fm.status === 'expired') return false;
 
-    // Exclude SECRET by default
-    if (fm.classification === 'SECRET') return false;
+    // Exclude SECRET and PERSONAL by default
+    if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') return false;
 
     // Filter by type
     if (query.types && !query.types.includes(fm.type)) return false;
