@@ -206,6 +206,7 @@ Every mutation (create, update, archive, promote, expire) emits a **V2 event** t
 ║  • Evidence store → content-addressed blobs (SHA-256)        ║
 ║                                                              ║
 ║  Events are append-only. Same events → identical atoms+views.║
+║  compactLog() shrinks the log by keeping latest per atom.    ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
 
@@ -412,6 +413,12 @@ npx mk bootstrap-events -d ./my-memory --agent-id my-agent
 npx mk replay --from ./my-memory/events.ndjson --output-dir ./replayed
 ```
 
+### Compact event log
+
+```bash
+npx mk compact -d ./my-memory
+```
+
 ### Rebuild index
 
 ```bash
@@ -442,6 +449,7 @@ import {
   writeEvidence,
   readEvidence,
   readEvents,
+  compactLog,
   reindex,
 } from 'memory-kernel';
 
@@ -512,6 +520,10 @@ console.log(ckpt.markdown); // Full handoff document
 // Build/rebuild SQLite index for fast queries
 reindex('./memory');
 
+// Compact event log — keep only latest mutation per atom
+const compact = compactLog('./memory');
+console.log(`Removed ${compact.removed} intermediate events`);
+
 // --- Event Sourcing (v0.4.0+) ---
 
 // Replay: reconstruct state from events alone
@@ -552,6 +564,7 @@ const data = readEvidence('./memory', hash);
 | `mk bootstrap-events -d <dir>`              | Migrate existing atoms to V2 event-sourced format      |
 | `mk replay --from <file>`                   | Reconstruct atoms + views from an event log            |
 | `mk reindex -d <dir>`                       | Rebuild SQLite index from files                        |
+| `mk compact -d <dir>`                       | Compact event log — remove intermediate mutation events |
 | `mk gc -d <dir>`                            | Archive expired atoms                                  |
 | `mk doctor -d <dir>`                        | Validate schema, check links, report problems          |
 
