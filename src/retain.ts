@@ -160,6 +160,13 @@ export function archiveAtom(
 ): Atom {
   assertWithinDir(opts.memoryDir, opts.filePath);
   const atom = readAtom(opts.filePath);
+
+  // Guard: already archived — idempotent no-op to prevent data loss
+  // (writing to ARCHIVE/ then unlinking the same path would delete the atom)
+  if (atom.frontmatter.status === 'archived') {
+    return atom;
+  }
+
   atom.frontmatter.status = 'archived';
   atom.frontmatter.updated_at = normalizeTimestamp();
 

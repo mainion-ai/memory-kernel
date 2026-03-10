@@ -323,8 +323,10 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
   const conditions: string[] = [];
   const params: unknown[] = [];
 
-    // Exclude archived/expired by default
-    conditions.push("a.status NOT IN ('archived', 'expired')");
+    // Exclude archived/expired by default — only when no explicit status filter is given
+    if (!query.statuses || query.statuses.length === 0) {
+      conditions.push("a.status NOT IN ('archived', 'expired')");
+    }
 
     // Exclude SECRET and PERSONAL by default
     conditions.push("(a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))");
@@ -336,7 +338,7 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
       params.push(...query.types);
     }
 
-    // Filter by status
+    // Filter by status (explicit filter overrides the default exclusion above)
     if (query.statuses && query.statuses.length > 0) {
       const placeholders = query.statuses.map(() => '?').join(', ');
       conditions.push(`a.status IN (${placeholders})`);
@@ -388,7 +390,7 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
           ELSE 99
         END,
         a.updated_at DESC
-    ${opts?.limit ? `LIMIT ${Math.max(1, Math.floor(opts.limit))}` : ''}
+    ${(opts?.limit != null && Number.isFinite(opts.limit) && opts.limit > 0) ? `LIMIT ${Math.floor(opts.limit)}` : ''}
     `;
 
   return db.prepare(sql).all(...params) as IndexQueryResult[];
