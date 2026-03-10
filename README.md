@@ -2,6 +2,8 @@
 
 A model-agnostic, file-first memory system for AI agents. Gives any LLM-based agent persistent, structured memory that survives context windows, compaction, and session boundaries.
 
+**New here?** Read [STORY.md](STORY.md) first — it explains everything with no jargon.
+
 ## The Problem
 
 AI agents forget. Every time the context window fills up or a session ends, knowledge disappears. Agents re-discover the same things, contradict past decisions, and lose track of what they've learned. The usual fix — dump everything into a giant context — doesn't scale and wastes tokens.
