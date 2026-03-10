@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="Memory Kernel" width="150">
+</p>
+
 # How Memory Kernel Works — A Story for Humans
 
 > *You don't need to be a programmer to understand this. If you've ever written a sticky note, kept a journal, or cleaned out a filing cabinet, you already know how Memory Kernel works.*
@@ -5,6 +9,12 @@
 ---
 
 ## The Problem: Goldfish Agents
+
+<p align="center">
+  <img src="docs/images/goldfish.png" alt="Before and after: an agent without memory vs with Memory Kernel" width="500">
+  <br>
+  <em>Left: your agent today. Right: your agent with Memory Kernel.</em>
+</p>
 
 Imagine you hire an assistant. They're brilliant — fast, articulate, great at solving problems. But every morning they walk in with absolutely no memory of yesterday. You explain the project again. They ask the same questions. They contradict decisions they made last week. They forget your name.
 
@@ -136,6 +146,12 @@ Either way, you get the same results. The index is just a speed trick.
 There are also privacy rules baked in. Atoms classified as `PERSONAL` or `SECRET` are excluded from recall by default. You have to explicitly ask for them.
 
 ### Reflect — "Clean Up and Organize"
+
+<p align="center">
+  <img src="docs/images/lifecycle.png" alt="The lifecycle of knowledge: from raw information to typed atoms to expiry and promotion" width="700">
+  <br>
+  <em>Knowledge flows in as raw information, crystallizes into typed atoms, and evolves over time — some expire, some get promoted.</em>
+</p>
 
 Over time, knowledge accumulates. Some of it expires. Some of it is duplicated. Some beliefs become proven facts. **Reflect** is the cleanup crew.
 
