@@ -19,10 +19,19 @@ function sortByUpdated(atoms: Atom[]): Atom[] {
   );
 }
 
-/** First non-empty line of the body, truncated to maxLen. */
+/** First non-empty line of the body, truncated to maxLen, with markdown sanitization. */
 function firstLine(body: string, maxLen = 80): string {
   const line = body.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
-  return line.length > maxLen ? line.slice(0, maxLen) + '...' : line;
+  const truncated = line.length > maxLen ? line.slice(0, maxLen) + '...' : line;
+  return sanitizeMarkdownLine(truncated);
+}
+
+/**
+ * Sanitize a string for safe interpolation into markdown.
+ * Escapes characters that could create unintended links or formatting.
+ */
+function sanitizeMarkdownLine(text: string): string {
+  return text.replace(/[[\]()]/g, (ch) => `\\${ch}`);
 }
 
 /** Enforce line budget: truncate and add overflow indicator. */
@@ -214,6 +223,9 @@ export function renderOpenQuestions(atoms: Atom[], timestamp?: string, budget?: 
   const resolved = sortByUpdated(questions.filter((a) =>
     a.frontmatter.status === 'resolved',
   ));
+  const rejected = sortByUpdated(questions.filter((a) =>
+    a.frontmatter.status === 'rejected',
+  ));
 
   const lines: string[] = [
     '---',
@@ -248,6 +260,14 @@ export function renderOpenQuestions(atoms: Atom[], timestamp?: string, budget?: 
     lines.push(`## Resolved (${resolved.length})`, '');
     for (const q of resolved) {
       lines.push(`- ~~${q.frontmatter.id}~~ (resolved ${q.frontmatter.updated_at.split('T')[0]})`);
+    }
+    lines.push('');
+  }
+
+  if (rejected.length > 0) {
+    lines.push(`## Rejected (${rejected.length})`, '');
+    for (const q of rejected) {
+      lines.push(`- ~~${q.frontmatter.id}~~ (rejected ${q.frontmatter.updated_at.split('T')[0]})`);
     }
     lines.push('');
   }

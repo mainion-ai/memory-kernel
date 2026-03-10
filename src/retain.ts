@@ -111,13 +111,13 @@ export function updateAtom(
   const atom = readAtom(opts.filePath);
   const now = normalizeTimestamp();
 
-  // Apply updates
+  // Apply updates (use 'in' checks to allow clearing optional fields with undefined)
   if (opts.updates.status) atom.frontmatter.status = opts.updates.status;
   if (opts.updates.confidence !== undefined)
     atom.frontmatter.confidence = opts.updates.confidence;
-  if (opts.updates.scope) atom.frontmatter.scope = opts.updates.scope;
-  if (opts.updates.links) atom.frontmatter.links = opts.updates.links;
-  if (opts.updates.provenance)
+  if ('scope' in opts.updates) atom.frontmatter.scope = opts.updates.scope;
+  if ('links' in opts.updates) atom.frontmatter.links = opts.updates.links;
+  if ('provenance' in opts.updates)
     atom.frontmatter.provenance = opts.updates.provenance;
   if (opts.body !== undefined) atom.body = opts.body;
 

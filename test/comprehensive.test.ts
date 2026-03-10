@@ -55,6 +55,7 @@ import {
   indexExists,
   assertWithinDir,
   checkpoint,
+  replayFromFile,
 } from '../src/index.js';
 
 let testDir: string;
@@ -1176,8 +1177,10 @@ describe('Recall — boundary conditions', () => {
       createAtom({ ...base(testDir), type: 'fact', slug: `budget-${i}`, body: 'x'.repeat(400) }); // ~100 tokens each
     }
 
-    const bundle = recall(testDir, { max_tokens: 200 });
-    // Should have less than all 10 atoms
+    // Use a budget large enough for base views + some atoms, but not all
+    // Base views ~500 tokens, each atom ~100 tokens
+    const bundle = recall(testDir, { max_tokens: 800 });
+    // Should have less than all 10 atoms (budget only allows ~300 tokens for atoms)
     expect(bundle.atoms.length).toBeLessThan(10);
     expect(bundle.atoms.length).toBeGreaterThan(0);
   });
@@ -1907,5 +1910,313 @@ describe('Sprint 1 — promoted atom ID invariant', () => {
     expect(promoted!.frontmatter.type).toBe('fact');
     expect(promoted!.frontmatter.id).toMatch(/^BELI-/); // ID prefix preserved
     expect(promoted!.frontmatter.status).toBe('active');
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — PATH OVERLAP FIX
+// ============================================================================
+
+describe('Sprint 2 — pathOverlaps separator-boundary matching', () => {
+  it('should NOT match paths that share a prefix but not a directory boundary', () => {
+    initMemoryDir(testDir);
+
+    // Create an atom scoped to 'src/comp'
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'path-boundary-test',
+      body: 'Scoped to src/comp',
+      scope: { paths: ['src/comp'] },
+    });
+
+    // Query with 'src/components' should NOT match (not a directory ancestor/child)
+    const bundle = recall(testDir, { paths: ['src/components'] });
+    const matching = bundle.atoms.filter((a) =>
+      a.frontmatter.scope?.paths?.includes('src/comp'),
+    );
+    expect(matching.length).toBe(0);
+  });
+
+  it('should match paths that are genuine ancestors', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'path-ancestor-test',
+      body: 'Scoped to src/comp',
+      scope: { paths: ['src/comp'] },
+    });
+
+    // Query with 'src/comp/foo' SHOULD match (child of src/comp)
+    const bundle = recall(testDir, { paths: ['src/comp/foo'] });
+    const matching = bundle.atoms.filter((a) =>
+      a.frontmatter.scope?.paths?.includes('src/comp'),
+    );
+    expect(matching.length).toBe(1);
+  });
+
+  it('should match identical paths', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'path-exact-test',
+      body: 'Scoped to src/api',
+      scope: { paths: ['src/api'] },
+    });
+
+    const bundle = recall(testDir, { paths: ['src/api'] });
+    expect(bundle.atoms.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — TOKEN BUDGET SUBTRACTS BASE VIEW COST
+// ============================================================================
+
+describe('Sprint 2 — token budget subtracts base view cost', () => {
+  it('tight max_tokens with large views should return zero atoms', () => {
+    initMemoryDir(testDir);
+
+    // Create atoms
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'budget-test',
+      body: 'A fact for budget testing',
+    });
+
+    // Recall with very small token budget (smaller than base views)
+    const bundle = recall(testDir, { max_tokens: 5 });
+    // With budget of 5 tokens, base views alone exceed this, so 0 atoms
+    expect(bundle.atoms.length).toBe(0);
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — DEDUP CLONE MUTATION SAFETY
+// ============================================================================
+
+describe('Sprint 2 — dedup clone mutation safety', () => {
+  it('dedup with 3 identical atoms should archive 2 and keep 1', () => {
+    initMemoryDir(testDir);
+
+    const body = 'Identical content for dedup clone test';
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'dup-a',
+      body,
+    });
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'dup-b',
+      body,
+    });
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'dup-c',
+      body,
+    });
+
+    const result = reflect(base(testDir));
+    expect(result.deduped).toBe(2);
+
+    // Only 1 should remain
+    const remaining = listAtoms(testDir);
+    const activeOnes = remaining.filter(
+      (a) => a.frontmatter.status !== 'archived' && a.frontmatter.status !== 'expired',
+    );
+    expect(activeOnes.length).toBe(1);
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — FIELD CLEARING IN updateAtom
+// ============================================================================
+
+describe('Sprint 2 — updateAtom field clearing', () => {
+  it('should clear scope when set to undefined via in-operator check', () => {
+    initMemoryDir(testDir);
+
+    const atom = createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'field-clear',
+      body: 'Has scope initially',
+      scope: { tags: ['initial'], paths: ['src/'] },
+    });
+
+    // Clear scope by passing undefined
+    const updated = updateAtom({
+      ...base(testDir),
+      filePath: atom.filePath!,
+      updates: { scope: undefined },
+    });
+
+    expect(updated.frontmatter.scope).toBeUndefined();
+  });
+
+  it('should clear links when set to undefined', () => {
+    initMemoryDir(testDir);
+
+    const atom = createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'links-clear',
+      body: 'Has links initially',
+      links: { related: ['FACT-other'] },
+    });
+
+    const updated = updateAtom({
+      ...base(testDir),
+      filePath: atom.filePath!,
+      updates: { links: undefined },
+    });
+
+    expect(updated.frontmatter.links).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — normalizeTimestamp VALIDATION
+// ============================================================================
+
+describe('Sprint 2 — normalizeTimestamp validation', () => {
+  it('should throw meaningful error for invalid date string', () => {
+    expect(() => normalizeTimestamp('garbage')).toThrow(
+      /normalizeTimestamp: invalid timestamp/,
+    );
+  });
+
+  it('should throw for empty string', () => {
+    expect(() => normalizeTimestamp('')).toThrow(
+      /normalizeTimestamp: invalid timestamp/,
+    );
+  });
+
+  it('should work for valid date', () => {
+    const result = normalizeTimestamp('2026-01-15T10:30:00Z');
+    expect(result).toBe('2026-01-15T10:30:00Z');
+  });
+
+  it('should work with no argument (current time)', () => {
+    const result = normalizeTimestamp();
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — countEvents CONSISTENCY
+// ============================================================================
+
+describe('Sprint 2 — countEvents consistency with readEvents', () => {
+  it('countEvents should match readEvents().length even with blank lines', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'count-test',
+      body: 'Count test atom',
+    });
+
+    // Inject blank lines into events.ndjson
+    const logPath = path.join(testDir, 'events.ndjson');
+    const original = fs.readFileSync(logPath, 'utf-8');
+    fs.writeFileSync(logPath, original + '\n\n\n');
+
+    const count = countEvents(testDir);
+    const events = readEvents(testDir);
+    expect(count).toBe(events.length);
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — MARKDOWN SANITIZATION IN RENDERERS
+// ============================================================================
+
+describe('Sprint 2 — markdown sanitization in renderers', () => {
+  it('body with markdown link injection should be escaped in views', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'constraint',
+      slug: 'md-inject',
+      body: 'Click [here](http://evil.com) for details',
+    });
+
+    // Reflect to generate views
+    reflect(base(testDir));
+
+    const constraintsView = readView(testDir, 'CONSTRAINTS.md');
+    // The brackets and parens should be escaped
+    expect(constraintsView).not.toContain('[here]');
+    expect(constraintsView).toContain('\\[here\\]');
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — REJECTED QUESTIONS IN OPEN_QUESTIONS VIEW
+// ============================================================================
+
+describe('Sprint 2 — rejected questions in view', () => {
+  it('rejected questions should appear in the Rejected section', () => {
+    initMemoryDir(testDir);
+
+    const q = createAtom({
+      ...base(testDir),
+      type: 'open_question',
+      slug: 'rejected-q',
+      body: 'Should we use GraphQL?',
+    });
+
+    // Set status to rejected
+    updateAtom({
+      ...base(testDir),
+      filePath: q.filePath!,
+      updates: { status: 'rejected' },
+    });
+
+    reflect(base(testDir));
+
+    const view = readView(testDir, 'OPEN_QUESTIONS.md');
+    expect(view).toContain('Rejected');
+  });
+});
+
+// ============================================================================
+// SPRINT 2 — replayFromFile SURFACES INVALID JSON LINES
+// ============================================================================
+
+describe('Sprint 2 — replayFromFile error surfacing', () => {
+  it('should surface invalid JSON lines in errors', () => {
+    initMemoryDir(testDir);
+
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'replay-error-test',
+      body: 'Valid atom',
+    });
+
+    // Inject corrupted line into events file
+    const logPath = path.join(testDir, 'events.ndjson');
+    const content = fs.readFileSync(logPath, 'utf-8');
+    fs.writeFileSync(logPath, content + 'THIS IS NOT JSON\n');
+
+    const result = replayFromFile(logPath);
+
+    // Should still parse the valid event(s)
+    expect(result.atoms.size).toBeGreaterThanOrEqual(1);
+    // Should report the invalid line
+    expect(result.errors.length).toBeGreaterThanOrEqual(1);
+    expect(result.errors.some((e) => e.includes('invalid JSON'))).toBe(true);
   });
 });

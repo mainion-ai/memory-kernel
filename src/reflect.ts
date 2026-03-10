@@ -155,30 +155,39 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): number {
         // Validate paths before file operations
         assertWithinDir(opts.memoryDir, toArchive.filePath);
 
+        // Clone before mutation to avoid corrupting shared references
+        // (critical when 3+ duplicates exist — the same atom object may
+        //  appear in the `seen` map and be compared again later)
+        const archiveCopy: Atom = {
+          frontmatter: { ...toArchive.frontmatter },
+          body: toArchive.body,
+          filePath: toArchive.filePath,
+        };
+
         const archivePath = path.join(
           opts.memoryDir,
           'ARCHIVE',
-          path.basename(toArchive.filePath),
+          path.basename(archiveCopy.filePath!),
         );
-        toArchive.frontmatter.status = 'archived';
-        toArchive.frontmatter.updated_at = normalizeTimestamp();
-        writeAtom(toArchive, archivePath);
-        if (fs.existsSync(toArchive.filePath)) {
-          fs.unlinkSync(toArchive.filePath);
+        archiveCopy.frontmatter.status = 'archived';
+        archiveCopy.frontmatter.updated_at = normalizeTimestamp();
+        writeAtom(archiveCopy, archivePath);
+        if (fs.existsSync(archiveCopy.filePath!)) {
+          fs.unlinkSync(archiveCopy.filePath!);
         }
 
         appendEvent(opts.memoryDir, 'atom_archived', {
           agent_id: opts.agent_id,
           session_id: opts.session_id,
-          atom_refs: [toArchive.frontmatter.id],
+          atom_refs: [archiveCopy.frontmatter.id],
           schema_version: 2,
-          atom_snapshot: serializeAtom(toArchive),
+          atom_snapshot: serializeAtom(archiveCopy),
           meta: { reason: 'dedup' },
         });
 
         // Keep index in sync
         if (indexExists(opts.memoryDir)) {
-          removeFromIndex(opts.memoryDir, toArchive.frontmatter.id);
+          removeFromIndex(opts.memoryDir, archiveCopy.frontmatter.id);
         }
 
         count++;

@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import type { AtomType } from './types.js';
 import {
   ATOM_STATUSES,
   ATOM_TYPES,
@@ -88,12 +89,20 @@ export function validateEvent(data: unknown) {
 }
 
 // --- ID generators ---
+// Separate counters prevent interleaving between atom and event IDs.
+// Random nonce provides extra collision resistance across module reloads.
 
-let counter = 0;
+let atomCounter = 0;
+let eventCounter = 0;
+
+/** Random 4-char nonce for ID uniqueness across module reloads. */
+function nonce(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
 
 /**
  * Generate a sortable unique ID.
- * Format: TYPE-YYYY-MM-DD-SLUG
+ * Format: TYPE-YYYY-MM-DD-SLUG-COUNTER
  */
 export function generateAtomId(type: string, slug: string): string {
   const date = new Date().toISOString().slice(0, 10);
@@ -102,25 +111,25 @@ export function generateAtomId(type: string, slug: string): string {
     .replace(/[^A-Z0-9]+/g, '-')
     .replace(/^-|-$/g, '') // Strip leading/trailing dashes
     .slice(0, 40);
-  counter = counter + 1;
+  atomCounter = atomCounter + 1;
   const suffix = clean ? `-${clean}` : '';
-  return `${type.toUpperCase().slice(0, 4)}-${date}${suffix}-${counter.toString(36)}`;
+  return `${type.toUpperCase().slice(0, 4)}-${date}${suffix}-${atomCounter.toString(36)}${nonce()}`;
 }
 
 /**
  * Generate a unique event ID (timestamp-based, sortable).
- * Includes process.pid to prevent collisions across processes.
+ * Includes process.pid and random nonce to prevent collisions across processes.
  */
 export function generateEventId(): string {
   const now = Date.now();
-  counter = counter + 1;
-  const hex = now.toString(36) + '-' + process.pid.toString(36) + '-' + counter.toString(36);
+  eventCounter = eventCounter + 1;
+  const hex = now.toString(36) + '-' + process.pid.toString(36) + '-' + eventCounter.toString(36) + nonce();
   return `evt-${hex}`;
 }
 
 // --- Default TTLs by atom type ---
 
-export const DEFAULT_TTLS: Record<string, number | null> = {
+export const DEFAULT_TTLS: Record<AtomType, number | null> = {
   decision: null, // Decisions persist
   constraint: null, // Constraints persist (but need periodic review)
   open_question: 90, // 90 days

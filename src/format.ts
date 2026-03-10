@@ -78,8 +78,12 @@ export function parseAtom(content: string, filePath?: string): Atom {
 
 /**
  * Normalize a timestamp to UTC ISO8601.
+ * Throws a clear error for invalid date inputs instead of propagating RangeError.
  */
 export function normalizeTimestamp(ts?: string | Date): string {
-  const d = ts ? new Date(ts) : new Date();
+  const d = ts !== undefined ? new Date(ts) : new Date();
+  if (isNaN(d.getTime())) {
+    throw new Error(`normalizeTimestamp: invalid timestamp "${String(ts)}"`);
+  }
   return d.toISOString().replace(/\.\d{3}Z$/, 'Z'); // Drop milliseconds for cleaner output
 }

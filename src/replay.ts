@@ -153,15 +153,23 @@ export function replayFromFile(
     };
   }
 
-  const events: MemoryEvent[] = content.split('\n').flatMap((line) => {
+  const parseErrors: string[] = [];
+  const events: MemoryEvent[] = content.split('\n').flatMap((line, idx) => {
+    if (!line.trim()) return []; // Skip blank lines silently
     try {
       return [JSON.parse(line) as MemoryEvent];
     } catch {
+      parseErrors.push(`Line ${idx + 1}: invalid JSON`);
       return [];
     }
   });
 
   const result = replay(events, opts);
+
+  // Surface JSON parse errors alongside replay errors
+  if (parseErrors.length > 0) {
+    result.errors.push(...parseErrors);
+  }
 
   // Optionally write output to disk
   if (opts?.outputDir) {

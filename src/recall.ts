@@ -53,13 +53,14 @@ export function recall(
     });
   }
 
-  // Apply token budget if specified
-  if (query.max_tokens) {
-    filtered = applyTokenBudget(filtered, query.max_tokens);
-  }
-
-  // Estimate tokens (rough: 4 chars per token)
+  // Estimate base view tokens (rough: 4 chars per token)
   const baseTokens = estimateTokens(index + handoff + constraints);
+
+  // Apply token budget if specified (subtract base view cost first)
+  if (query.max_tokens) {
+    const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+    filtered = applyTokenBudget(filtered, atomBudget);
+  }
   const atomTokens = filtered.reduce(
     (sum, a) => sum + estimateTokens(a.body + JSON.stringify(a.frontmatter)),
     0,
@@ -113,10 +114,16 @@ function filterAtoms(atoms: Atom[], query: RecallQuery): Atom[] {
 }
 
 /**
- * Check if two scope paths overlap (prefix matching).
+ * Check if two scope paths overlap (directory-boundary prefix matching).
+ * Uses path separator boundary to prevent false positives:
+ * e.g. 'src/comp' does NOT overlap 'src/components', but
+ * 'src/comp' DOES overlap 'src/comp/foo'.
  */
 function pathOverlaps(a: string, b: string): boolean {
-  return a.startsWith(b) || b.startsWith(a);
+  if (a === b) return true;
+  const aSep = a.endsWith('/') ? a : a + '/';
+  const bSep = b.endsWith('/') ? b : b + '/';
+  return a.startsWith(bSep) || b.startsWith(aSep);
 }
 
 /**

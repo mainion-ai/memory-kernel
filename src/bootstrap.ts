@@ -66,10 +66,12 @@ export function bootstrapEvents(opts: {
     fs.copyFileSync(logPath, backupPath);
   }
 
-  // 5. Write: import events + existing events
+  // 5. Write: import events + existing events (skip if no new imports)
   const allEvents = [...importEvents, ...existingEvents];
-  const ndjson = allEvents.map((e) => JSON.stringify(e)).join('\n') + '\n';
-  writeFileAtomic(logPath, ndjson);
+  if (importEvents.length > 0) {
+    const ndjson = allEvents.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    writeFileAtomic(logPath, ndjson);
+  }
 
   return {
     imported: importEvents.length,
