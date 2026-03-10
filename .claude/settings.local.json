@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build)",
+      "Bash(npx tsc)",
+      "Bash(npm install)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx vitest run)",
+      "Bash(git add README.md package.json package-lock.json scripts/activate-memory.ts scripts/render-claude-md.ts src/cli/mk.ts src/event-log.ts src/format.ts src/index-db.ts src/index.ts src/recall.ts src/reflect.ts src/retain.ts src/schema.ts src/store.ts src/types.ts test/comprehensive.test.ts test/kernel.test.ts vitest.config.ts tsconfig.test.json)",
+      "Bash(git commit:*)",
+      "Bash(git push)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(grep -c \"it\\(\" /Users/nenadpavlovic/Documents/_WORK/Projects/mAInion/github/memory-kernel/test/*.ts)",
+      "Bash(grep -c \"^\\\\s*it\\(\" /Users/nenadpavlovic/Documents/_WORK/Projects/mAInion/github/memory-kernel/test/*.test.ts)",
+      "Bash(wc -l /Users/nenadpavlovic/Documents/_WORK/Projects/mAInion/github/memory-kernel/test/*.ts)",
+      "Bash(npm test)",
+      "Bash(npm run lint)",
+      "Bash(npm run lint:all)",
+      "Bash(git add CHANGELOG.md README.md src/cli/mk.ts src/index.ts src/reflect.ts src/checkpoint.ts src/renderers.ts test/kernel.test.ts test/checkpoint.test.ts test/renderers.test.ts)",
+      "Bash(grep -c \"test\\(\" /Users/nenadpavlovic/Documents/_WORK/Projects/mAInion/github/memory-kernel/test/*.test.ts)",
+      "Bash(grep -h \"it\\(\" /Users/nenadpavlovic/Documents/_WORK/Projects/mAInion/github/memory-kernel/test/*.test.ts)",
+      "Bash(npx vitest run test/schema-v2.test.ts)",
+      "Bash(npx vitest run test/replay.test.ts)",
+      "Bash(npx vitest run test/bootstrap.test.ts)",
+      "Bash(npx vitest run test/milestone-b.test.ts)",
+      "Bash(git add CHANGELOG.md README.md src/cli/mk.ts src/event-log.ts src/index.ts src/reflect.ts src/retain.ts src/schema.ts src/types.ts src/bootstrap.ts src/evidence.ts src/replay.ts test/bootstrap.test.ts test/evidence.test.ts test/milestone-b.test.ts test/replay.test.ts test/schema-v2.test.ts)"
+    ]
+  }
+}

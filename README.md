@@ -255,7 +255,7 @@ New atoms start as `draft`. When confidence reaches 0.9 or higher, `reflect` pro
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│                    memory-kernel                       │
+│                    memory-kernel                      │
 │                                                       │
 │  ┌──────────┐  ┌───────────┐  ┌───────────┐           │
 │  │  retain  │  │   recall  │  │  reflect  │           │
@@ -266,7 +266,7 @@ New atoms start as `draft`. When confidence reaches 0.9 or higher, `reflect` pro
 │  └────┬─────┘  └─────┬─────┘  └─────┬─────┘           │
 │       │              │              │                 │
 │  ┌────▼──────────────▼──────────────▼──────┐          │
-│  │              store + event-log           │          │
+│  │              store + event-log          │          │
 │  │  read / write / list / appendEvent      │          │
 │  └────────────────┬────────────────────────┘          │
 │                   │                                   │
@@ -277,14 +277,15 @@ New atoms start as `draft`. When confidence reaches 0.9 or higher, `reflect` pro
 │  └─────────────────────────────────────────┘          │
 │                   │                                   │
 │  ┌────────────────▼────────────────────────┐          │
-│  │    replay     │  SQLite Index (optional) │          │
-│  │  events →     │  Derived cache — rebuild │          │
-│  │  atoms+views  │  with mk reindex        │          │
-│  └───────────────┴──────────────────────────┘          │
+│  │   replay     │  SQLite Index (optional) │          │
+│  │ events →     │  Derived cache — rebuild │          │
+│  │  atoms+views │  with mk reindex         │          │
+│  └──────────────┴──────────────────────────┘          │
 └───────────────────────────────────────────────────────┘
 ```
 
 **Key principles:**
+
 - **Files are truth, SQLite is cache.** The index speeds up queries but is always rebuildable from files with `mk reindex`.
 - **Events are the system of record.** Every mutation carries an inline atom snapshot (V2 events). The event log can reconstruct the entire state via `replay()`.
 
@@ -547,7 +548,7 @@ const data = readEvidence('./memory', hash);
 | `mk remember -d <dir> --type <type> "body"` | Quick-create an atom from the command line             |
 | `mk recall -d <dir>`                        | Load relevant context (filter by type, tags, paths)    |
 | `mk reflect -d <dir>`                       | Consolidate: deduplicate, expire, promote, regen views |
-| `mk checkpoint -d <dir>`                    | Generate checkpoint/handoff bundle (stdout)             |
+| `mk checkpoint -d <dir>`                    | Generate checkpoint/handoff bundle (stdout)            |
 | `mk bootstrap-events -d <dir>`              | Migrate existing atoms to V2 event-sourced format      |
 | `mk replay --from <file>`                   | Reconstruct atoms + views from an event log            |
 | `mk reindex -d <dir>`                       | Rebuild SQLite index from files                        |
