@@ -93,7 +93,7 @@ describe('Milestone B integration', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('V2 events → replay → views identical to disk views', () => {
+  it('V2 events → replay → views contain expected content', () => {
     // Create some atoms to generate views
     createAtom({
       memoryDir,
@@ -243,7 +243,7 @@ describe('Milestone B integration', () => {
     expect(result.event_id).toBeDefined();
   });
 
-  it('doctor still works after V2 changes', () => {
+  it('listAtoms still works after V2 changes', () => {
     // Create a valid atom
     createAtom({
       memoryDir,
@@ -321,7 +321,7 @@ describe('Milestone B integration', () => {
     expect(entityFiles.length).toBe(2);
   });
 
-  it('all mutation events from retain carry V2 snapshots', () => {
+  it('all mutation events carry V2 snapshots', () => {
     const atom = createAtom({
       memoryDir,
       type: 'belief',
