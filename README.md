@@ -285,6 +285,7 @@ New atoms start as `draft`. When confidence reaches 0.9 or higher, `reflect` pro
 │  ┌────────────────▼────────────────────────┐          │
 │  │             File System                 │          │
 │  │  ENTITIES/  ARCHIVE/  EVIDENCE/         │          │
+│  │  CONFLICTS/  EPISODES/                  │          │
 │  │  events.ndjson  *.md views              │          │
 │  └─────────────────────────────────────────┘          │
 │                   │                                   │

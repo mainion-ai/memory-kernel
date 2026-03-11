@@ -12,3 +12,5 @@ Thumbs.db
 .memory-index.db-shm
 # npm auth (never commit)
 .npmrc
+# Local-only reference docs (not committed)
+docs/memory-kernel-prd-v1.2.md
