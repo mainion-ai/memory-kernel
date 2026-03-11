@@ -117,6 +117,11 @@ export { createAtom, updateAtom, archiveAtom } from './retain.js';
 export { recall } from './recall.js';
 export { reflect } from './reflect.js';
 
+// Merge
+export { mergeEventLogs } from './merge.js';
+export type { MergeOptions } from './merge.js';
+export type { MergeResult } from './types.js';
+
 // Episode store
 export {
   writeEpisode,

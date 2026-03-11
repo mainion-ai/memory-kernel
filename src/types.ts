@@ -96,6 +96,7 @@ export const EVENT_ACTIONS = [
   'gc_completed',
   'session_started',
   'session_ended',
+  'merge_completed',
 ] as const;
 
 export type EventAction = (typeof EVENT_ACTIONS)[number];
@@ -199,6 +200,16 @@ export interface CompactResult {
   events_after: number;
   removed: number;
   backup_path: string;
+}
+
+// --- Merge result ---
+
+export interface MergeResult {
+  events_imported: number; // new remote events added to local
+  events_skipped: number; // remote events already present (dedup by event_id)
+  conflicts_created: number; // conflict atoms created for concurrent updates
+  atoms_updated: number; // atoms written to disk from replay
+  backup_path: string; // timestamped backup of events.ndjson before merge
 }
 
 // --- Memory Kernel config ---
