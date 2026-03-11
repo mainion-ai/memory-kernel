@@ -356,12 +356,12 @@ program
       process.exit(1);
     }
 
-    // Generate slug from body if not provided
-    const slug = opts.slug ?? body
+    // Generate slug from body if not provided; fall back to timestamp if body yields empty string
+    const slug = (opts.slug ?? body
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
-      .slice(0, 40);
+      .slice(0, 40)) || `atom-${Date.now()}`;
 
     const atom = createAtom({
       memoryDir,

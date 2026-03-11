@@ -304,8 +304,6 @@ describe('renderHandoff', () => {
     const output = renderHandoff(atoms, [], FIXED_TS);
     expect(output).toContain('Key Decisions (5 of 8)');
     expect(output).toContain('DECI-0');
-    // Not all 8 should be listed
-    const deciMatches = output.match(/DECI-\d/g);
     // Status section may also mention decision counts, so check section specifically
     expect(output).toContain('5 of 8');
   });
