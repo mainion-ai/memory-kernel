@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import matter from 'gray-matter';
-import { writeFileAtomic } from './store.js';
+import { writeFileAtomic, assertWithinDir } from './store.js';
 import { normalizeTimestamp } from './format.js';
 
 export interface Episode {
@@ -52,11 +52,21 @@ export function writeEpisode(
   const episodesDir = path.join(memoryDir, 'EPISODES');
   fs.mkdirSync(episodesDir, { recursive: true });
 
-  const now = normalizeTimestamp();
+  const filePath = path.join(episodesDir, `${episodeId}.md`);
+
+  // Preserve created_at from an existing episode — only set fresh on first write.
+  let createdAt = normalizeTimestamp();
+  if (fs.existsSync(filePath)) {
+    try {
+      const existing = matter(fs.readFileSync(filePath, 'utf-8'));
+      if (existing.data.created_at) createdAt = existing.data.created_at as string;
+    } catch { /* ignore — fall back to current timestamp */ }
+  }
+
   const frontmatter = {
     id: episodeId,
     session_id: kebab,
-    created_at: now,
+    created_at: createdAt,
   };
 
   const fm = (yaml.dump(frontmatter, {
@@ -68,7 +78,6 @@ export function writeEpisode(
   }) as string).trim();
 
   const content = `---\n${fm}\n---\n\n${summary.trim()}\n`;
-  const filePath = path.join(episodesDir, `${episodeId}.md`);
   writeFileAtomic(filePath, content);
   return episodeId;
 }
@@ -133,7 +142,7 @@ export function listEpisodes(
   // Sort newest first by created_at
   episodes.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
-  if (opts.limit != null && opts.limit > 0) {
+  if (opts.limit !== undefined) {
     return episodes.slice(0, opts.limit);
   }
 
@@ -149,7 +158,7 @@ export function linkEpisodeToAtom(
   atomFilePath: string,
   episodeId: string,
 ): void {
-  void memoryDir; // path guard not needed — write is to the provided filePath
+  assertWithinDir(memoryDir, atomFilePath);
   if (!fs.existsSync(atomFilePath)) return;
 
   try {

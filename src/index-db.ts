@@ -428,7 +428,7 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
  */
 function escapeFtsQuery(query: string): string | null {
   const words = query
-    .replace(/['"()*^{}+\-]/g, ' ') // strip FTS5 special chars
+    .replace(/['"()*^{}+]/g, ' ') // strip FTS5 special chars (hyphens preserved for hyphenated terms)
     .split(/\s+/)
     .filter((w) => w.length > 0 && !/^(AND|OR|NOT)$/i.test(w));
   if (words.length === 0) return null;

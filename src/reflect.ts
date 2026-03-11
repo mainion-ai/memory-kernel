@@ -381,11 +381,14 @@ function detectConflicts(opts: ReflectOptions, atoms: Atom[]): number {
     (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
   );
 
-  // Build set of already-detected pair keys (encoded in conflict atom body)
+  // Build set of already-detected pair keys from structured links.related frontmatter
   const existingPairKeys = new Set<string>();
   for (const c of existingConflicts) {
-    const match = c.body.match(/conflict-pair:\s*([\w-]+\+[\w-]+)/);
-    if (match) existingPairKeys.add(match[1]);
+    const related = c.frontmatter.links?.related ?? [];
+    if (related.length >= 2) {
+      const sorted = [...related].sort();
+      existingPairKeys.add(`${sorted[0]}+${sorted[1]}`);
+    }
   }
 
   // Candidates: active fact/decision atoms with at least one scope path
@@ -398,6 +401,8 @@ function detectConflicts(opts: ReflectOptions, atoms: Atom[]): number {
 
   let newConflicts = 0;
 
+  // O(n²) over candidates — acceptable for typical knowledge bases (<1000 active facts/decisions).
+  // If scale becomes a concern, pre-group by type and build a path-index for faster overlap checks.
   for (let i = 0; i < candidates.length; i++) {
     for (let j = i + 1; j < candidates.length; j++) {
       const a = candidates[i];
@@ -451,7 +456,11 @@ function createConflictAtom(
   pairKey: string,
   diff: number,
 ): void {
-  const id = generateAtomId('conflict', pairKey.slice(0, 40).replace(/[^A-Za-z0-9]/g, '-'));
+  // Use the unique suffix of each atom ID for a readable, short slug.
+  // generateAtomId appends its own counter+nonce, so uniqueness is guaranteed regardless.
+  const suffixA = a.frontmatter.id.split('-').slice(-1)[0] ?? 'a';
+  const suffixB = b.frontmatter.id.split('-').slice(-1)[0] ?? 'b';
+  const id = generateAtomId('conflict', `${suffixA}-vs-${suffixB}`);
   const now = normalizeTimestamp();
 
   const atom: Atom = {
@@ -463,9 +472,9 @@ function createConflictAtom(
       created_at: now,
       updated_at: now,
       ttl_days: null,
+      links: { related: [a.frontmatter.id, b.frontmatter.id] },
     },
     body:
-      `<!-- conflict-pair: ${pairKey} -->\n\n` +
       `Potential conflict between atoms of the same type with overlapping scope:\n\n` +
       `- **${a.frontmatter.id}** (confidence: ${a.frontmatter.confidence})\n` +
       `- **${b.frontmatter.id}** (confidence: ${b.frontmatter.confidence})\n\n` +
