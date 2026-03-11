@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] — 2026-03-11
+
+### Added
+- **FTS5 full-text search** (`searchFts`) — BM25 ranked search over atom bodies via SQLite FTS5 virtual table with Porter stemmer. Returns `null` when index absent; empty array for no matches. Special-char queries sanitized to prevent FTS5 syntax errors. Schema version bumped to 3 (auto-rebuild on open).
+- **Task-aware recall** — `recall(memoryDir, { task })` uses `searchFts` to re-rank atoms by BM25 relevance when a task string is provided. Falls back gracefully when index is absent; empty task string is a no-op.
+- **Episode store** (`src/episodes.ts`) — per-session markdown summary artifacts in `EPISODES/`. `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom` APIs. Session IDs sanitized to kebab-case; last-write-wins for duplicate IDs.
+- **Conflict detection heuristic** in `reflect()` — detects active fact/decision atom pairs with overlapping scope paths and confidence diff > 0.3. Creates a conflict atom in `CONFLICTS/` per pair. Idempotent: re-running reflect does not duplicate conflict atoms. Returns total active conflict atom count.
+
+### Tests
+- **Stress test suite extended** with 16 edge-case tests covering the four new Milestone C features (Blocks 15–18 in `test/stress.test.ts`):
+  - Block 15 (FTS5 edge cases): null before reindex, empty results vs null, special chars, reindex idempotency.
+  - Block 16 (Task-aware recall): deterministic ordering, graceful fallback without index, empty task no-crash.
+  - Block 17 (Episode store): session ID sanitization, last-write-wins, `limit: 0`, link to archived atom, null for missing ID.
+  - Block 18 (Conflict heuristic): pair above threshold creates conflict atom, pair below threshold no conflict, reflect idempotency.
+- Total: **398 tests passing** (up from 382).
+
 ## [0.5.1] — 2026-03-11
 
 ### Tests
