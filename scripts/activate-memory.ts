@@ -239,6 +239,7 @@ console.log('  ✓ HANDOFF.md updated');
 console.log('\n=== Creating first episode ===\n');
 
 const episodePath = path.join(MEMORY_DIR, 'EPISODES', '2026-03-09-session-2.md');
+fs.mkdirSync(path.dirname(episodePath), { recursive: true });
 const episode = `---
 type: episode
 date: 2026-03-09

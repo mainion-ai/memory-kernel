@@ -217,6 +217,7 @@ function dedupById(opts: ReflectOptions, atoms: Atom[]): { count: number; archiv
 
         if (indexExists(opts.memoryDir)) {
           removeFromIndex(opts.memoryDir, archiveCopy.frontmatter.id);
+          indexAtom(opts.memoryDir, toKeep);
         }
 
         archivedIds.add(archiveCopy.frontmatter.id);

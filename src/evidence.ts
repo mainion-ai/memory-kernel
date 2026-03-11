@@ -48,12 +48,17 @@ export function writeEvidence(memoryDir: string, data: Buffer): string {
 
   // Atomic write (tmp → fsync → rename)
   const tmpPath = blobPath + `.tmp.${process.pid}.${++tmpCounter}.${Math.random().toString(36).slice(2, 6)}`;
+  let written = false;
   const fd = fs.openSync(tmpPath, 'w');
   try {
     fs.writeSync(fd, data, 0, data.length);
     fs.fsyncSync(fd);
+    written = true;
   } finally {
     fs.closeSync(fd);
+    if (!written) {
+      try { fs.unlinkSync(tmpPath); } catch { /* ignored */ }
+    }
   }
   try {
     fs.renameSync(tmpPath, blobPath);

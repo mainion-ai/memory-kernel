@@ -92,32 +92,32 @@ export function renderIndex(atoms: Atom[], timestamp?: string, budget?: ViewBudg
   if (conflicts.length > 0) {
     lines.push(`## Active Conflicts (${conflicts.length})`, '');
     for (const c of conflicts) {
-      lines.push(`- **${c.frontmatter.id}**: ${firstLine(c.body)}`);
+      lines.push(`- **${sanitizeId(c.frontmatter.id)}**: ${firstLine(c.body)}`);
     }
     lines.push('');
   }
 
   lines.push(`## Decisions (${decisions.length})`, '');
   for (const d of decisions) {
-    lines.push(`- [${d.frontmatter.status}] **${d.frontmatter.id}** (confidence: ${d.frontmatter.confidence})`);
+    lines.push(`- [${d.frontmatter.status}] **${sanitizeId(d.frontmatter.id)}** (confidence: ${d.frontmatter.confidence})`);
   }
   lines.push('');
 
   lines.push(`## Constraints (${constraints.length})`, '');
   for (const c of constraints) {
-    lines.push(`- **${c.frontmatter.id}**: ${firstLine(c.body)}`);
+    lines.push(`- **${sanitizeId(c.frontmatter.id)}**: ${firstLine(c.body)}`);
   }
   lines.push('');
 
   lines.push(`## Open Questions (${openQuestions.length})`, '');
   for (const q of openQuestions) {
-    lines.push(`- **${q.frontmatter.id}**: ${firstLine(q.body)}`);
+    lines.push(`- **${sanitizeId(q.frontmatter.id)}**: ${firstLine(q.body)}`);
   }
   lines.push('');
 
   lines.push(`## Entities (${entities.length})`, '');
   for (const e of entities) {
-    lines.push(`- **${e.frontmatter.id}**`);
+    lines.push(`- **${sanitizeId(e.frontmatter.id)}**`);
   }
   lines.push('');
 
@@ -170,7 +170,7 @@ export function renderDecisions(atoms: Atom[], timestamp?: string, budget?: View
     if (group.length === 0) return;
     lines.push(`## ${title} (${group.length})`, '');
     for (const d of group) {
-      lines.push(`- **${d.frontmatter.id}** (confidence: ${d.frontmatter.confidence})`);
+      lines.push(`- **${sanitizeId(d.frontmatter.id)}** (confidence: ${d.frontmatter.confidence})`);
       lines.push(`  ${firstLine(d.body)}`);
     }
     lines.push('');
@@ -210,7 +210,7 @@ export function renderConstraints(atoms: Atom[], timestamp?: string, budget?: Vi
 
   lines.push(`## Active (${constraints.length})`, '');
   for (const c of constraints) {
-    lines.push(`- **${c.frontmatter.id}** (confidence: ${c.frontmatter.confidence})`);
+    lines.push(`- **${sanitizeId(c.frontmatter.id)}** (confidence: ${c.frontmatter.confidence})`);
     lines.push(`  ${firstLine(c.body)}`);
   }
   lines.push('');
@@ -258,7 +258,7 @@ export function renderOpenQuestions(atoms: Atom[], timestamp?: string, budget?: 
     for (const q of open) {
       const ageMs = currentTime - new Date(q.frontmatter.created_at).getTime();
       const ageDays = Math.max(0, Math.floor(ageMs / 86_400_000));
-      lines.push(`- **${q.frontmatter.id}** (confidence: ${q.frontmatter.confidence}, age: ${ageDays}d)`);
+      lines.push(`- **${sanitizeId(q.frontmatter.id)}** (confidence: ${q.frontmatter.confidence}, age: ${ageDays}d)`);
       lines.push(`  ${firstLine(q.body)}`);
     }
     lines.push('');
@@ -267,7 +267,7 @@ export function renderOpenQuestions(atoms: Atom[], timestamp?: string, budget?: 
   if (resolved.length > 0) {
     lines.push(`## Resolved (${resolved.length})`, '');
     for (const q of resolved) {
-      lines.push(`- ~~${q.frontmatter.id}~~ (resolved ${q.frontmatter.updated_at.split('T')[0]})`);
+      lines.push(`- ~~${sanitizeId(q.frontmatter.id)}~~ (resolved ${q.frontmatter.updated_at.split('T')[0]})`);
     }
     lines.push('');
   }
@@ -275,7 +275,7 @@ export function renderOpenQuestions(atoms: Atom[], timestamp?: string, budget?: 
   if (rejected.length > 0) {
     lines.push(`## Rejected (${rejected.length})`, '');
     for (const q of rejected) {
-      lines.push(`- ~~${q.frontmatter.id}~~ (rejected ${q.frontmatter.updated_at.split('T')[0]})`);
+      lines.push(`- ~~${sanitizeId(q.frontmatter.id)}~~ (rejected ${q.frontmatter.updated_at.split('T')[0]})`);
     }
     lines.push('');
   }
@@ -359,7 +359,7 @@ export function renderHandoff(
     lines.push('_None._');
   } else {
     for (const c of conflicts) {
-      lines.push(`- **${c.frontmatter.id}**: ${firstLine(c.body)}`);
+      lines.push(`- **${sanitizeId(c.frontmatter.id)}**: ${firstLine(c.body)}`);
     }
   }
   lines.push('');
@@ -370,7 +370,7 @@ export function renderHandoff(
     lines.push('_None._');
   } else {
     for (const d of decisions.slice(0, 5)) {
-      lines.push(`- **${d.frontmatter.id}**: ${firstLine(d.body)}`);
+      lines.push(`- **${sanitizeId(d.frontmatter.id)}**: ${firstLine(d.body)}`);
     }
   }
   lines.push('');
@@ -381,7 +381,7 @@ export function renderHandoff(
     lines.push('_None._');
   } else {
     for (const q of openQuestions.slice(0, 5)) {
-      lines.push(`- **${q.frontmatter.id}**: ${firstLine(q.body)}`);
+      lines.push(`- **${sanitizeId(q.frontmatter.id)}**: ${firstLine(q.body)}`);
     }
   }
   lines.push('');

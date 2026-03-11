@@ -113,6 +113,12 @@ export function readEventsForAtoms(
  * This reduces log size for large stores where many atoms have been updated
  * multiple times. The compacted log is still sufficient for replay — only
  * intermediate snapshots are discarded.
+ *
+ * Concurrency note: a best-effort re-read after backup captures events
+ * appended between the initial read and the backup copy. A small window
+ * remains between the re-read and writeFileAtomic where concurrent appends
+ * may be lost. For full safety, run compactLog when no other writers are
+ * active (e.g., during maintenance windows).
  */
 export function compactLog(memoryDir: string): CompactResult {
   const logPath = path.join(memoryDir, 'events.ndjson');
@@ -173,11 +179,19 @@ export function compactLog(memoryDir: string): CompactResult {
     fs.copyFileSync(logPath, backupPath);
   }
 
+  // Re-read to capture any events appended concurrently since the initial read
+  const latestEvents = readEvents(memoryDir);
+  const originalIds = new Set(events.map((e) => e.event_id));
+  const newEvents = latestEvents.filter((e) => !originalIds.has(e.event_id));
+  const finalCompacted = [...compacted, ...newEvents];
+
   // Write compacted log
-  const ndjson = compacted.map((e) => JSON.stringify(e)).join('\n') + '\n';
+  const ndjson = finalCompacted.map((e) => JSON.stringify(e)).join('\n') + '\n';
   writeFileAtomic(logPath, ndjson);
 
-  return { events_before: eventsBefore, events_after: eventsAfter, removed, backup_path: backupPath };
+  // `removed` counts events eliminated from the original log, not net of concurrent appends.
+  // `events_after` reflects the final file length (original survivors + concurrent appends).
+  return { events_before: eventsBefore, events_after: finalCompacted.length, removed: eventsBefore - compacted.length, backup_path: backupPath };
 }
 
 /**
