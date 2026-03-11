@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] — 2026-03-12
+
+### Added
+- **Multi-agent event-log union merge** (`src/merge.ts`) — `mergeEventLogs({ localDir, remoteDir, agent_id, session_id, dryRun? })` deduplicates events by `event_id`, sorts by `(timestamp, event_id)`, replays the merged log, writes atoms + views, creates `conflict` atoms for atoms mutated in both local-only and remote-only event sets, and emits a `merge_completed` event.
+- **`mk merge` CLI command** — `mk merge -d <dir> --remote <path> [--agent-id <id>] [--session-id <id>] [--dry-run]`. Prints a merge summary (atoms written, conflicts created, events merged).
+- **`MergeOptions` / `MergeResult` / `MergeConflict` types** — exported from the public API (`src/index.ts`).
+
+### Tests
+- 448 tests passing (up from 434).
+- `test/merge.test.ts` — 388-line suite covering: basic merge, dry-run no-write, conflict detection for concurrent updates (same atom mutated in both local-only and remote-only event sets), idempotent re-merge, event deduplication by `event_id`, timestamp sort ordering, and `merge_completed` event emission.
+
 ## [0.6.0] — 2026-03-11
 
 ### Added
