@@ -38,6 +38,7 @@ import { bootstrapEvents } from '../bootstrap.js';
 import { replayFromFile } from '../replay.js';
 import { compactLog } from '../event-log.js';
 import { writeEpisode, listEpisodes } from '../episodes.js';
+import { mergeEventLogs } from '../merge.js';
 
 const program = new Command();
 
@@ -456,6 +457,58 @@ program
       }
     } catch (err) {
       console.error(`✗ Compact failed: ${String(err)}`);
+      process.exit(1);
+    }
+  });
+
+// --- mk merge ---
+program
+  .command('merge')
+  .description('Merge remote agent event log into local memory (event-log union)')
+  .requiredOption('--from <dir>', 'Remote memory directory to merge from')
+  .option('-d, --dir <dir>', 'Local memory directory', './memory')
+  .option('--agent-id <id>', 'Agent ID for the merge event', 'cli')
+  .option('--session-id <id>', 'Session ID for the merge event', 'cli-merge')
+  .option('--dry-run', 'Preview changes without writing anything')
+  .action((opts: { from: string; dir: string; agentId: string; sessionId: string; dryRun?: boolean }) => {
+    const localDir = path.resolve(opts.dir);
+    const remoteDir = path.resolve(opts.from);
+
+    if (!fs.existsSync(localDir)) {
+      console.error(`✗ Local memory directory not found: ${localDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    if (!fs.existsSync(remoteDir)) {
+      console.error(`✗ Remote directory not found: ${remoteDir}`);
+      process.exit(1);
+    }
+
+    if (opts.dryRun) {
+      console.log('Dry run — no changes will be written.\n');
+    }
+
+    try {
+      const result = mergeEventLogs({
+        localDir,
+        remoteDir,
+        agent_id: opts.agentId,
+        session_id: opts.sessionId,
+        dryRun: opts.dryRun,
+      });
+
+      const prefix = opts.dryRun ? '(dry run) ' : '✓ ';
+      console.log(`${prefix}Merge completed:`);
+      console.log(`  Events imported:   ${result.events_imported}`);
+      console.log(`  Events skipped:    ${result.events_skipped}`);
+      console.log(`  Conflicts created: ${result.conflicts_created}`);
+      console.log(`  Atoms updated:     ${result.atoms_updated}`);
+      if (result.backup_path) {
+        console.log(`  Backup:            ${result.backup_path}`);
+      }
+    } catch (err) {
+      console.error(`✗ Merge failed: ${String(err)}`);
       process.exit(1);
     }
   });
