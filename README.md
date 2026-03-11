@@ -470,6 +470,17 @@ npx mk episodes -d ./my-memory --limit 5
 npx mk compact -d ./my-memory
 ```
 
+### Merge remote event log
+
+```bash
+# Preview what would change (no writes)
+npx mk merge -d ./my-memory --remote ./remote-memory --dry-run
+
+# Perform the merge
+npx mk merge -d ./my-memory --remote ./remote-memory \
+  --agent-id my-agent --session-id session-merge-1
+```
+
 ### Rebuild index
 
 ```bash
@@ -508,6 +519,7 @@ import {
   readEpisode,
   listEpisodes,
   linkEpisodeToAtom,
+  mergeEventLogs,
 } from 'memory-kernel';
 
 // Initialize
@@ -651,6 +663,23 @@ const contextWithHistory = recall('./memory', {
   include_episodes: true,  // adds recent session summaries to bundle
 });
 // contextWithHistory.episodes: ['## Episode: EP-session-...', ...]
+
+// --- Multi-Agent Merge (v0.7.0+) ---
+
+// Merge a remote agent's event log into the local memory directory.
+// Events are deduplicated by event_id, sorted by (timestamp, event_id),
+// replayed, and atoms+views are written. Conflict atoms are created for
+// any atom mutated by both agents concurrently.
+const mergeResult = await mergeEventLogs({
+  localDir: './memory',
+  remoteDir: './remote-memory',
+  agent_id: 'my-agent',
+  session_id: 'session-merge-1',
+  dryRun: false,       // true to preview without writing
+});
+// mergeResult.atoms_written   — number of atom files written
+// mergeResult.conflicts_created — number of conflict atoms created
+// mergeResult.events_merged   — total events after deduplication
 ```
 
 ## CLI Commands
@@ -670,6 +699,7 @@ const contextWithHistory = recall('./memory', {
 | `mk replay --from <file>`                                      | Reconstruct atoms + views from an event log                      |
 | `mk reindex -d <dir>`                                          | Rebuild SQLite index (including FTS5) from files                 |
 | `mk compact -d <dir>`                                          | Compact event log — remove intermediate mutation events          |
+| `mk merge -d <dir> --remote <path> [--dry-run]`                | Merge remote event log into local; creates conflict atoms for concurrent updates |
 | `mk gc -d <dir>`                                               | Archive expired atoms                                            |
 | `mk doctor -d <dir>`                                           | Validate schema, check links, report problems                    |
 
