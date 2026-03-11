@@ -42,7 +42,9 @@
       "Bash(npx tsx /tmp/mk-probe2.mts)",
       "Bash(npm test -- stress)",
       "Bash(ls /Users/nenadpavlovic/Documents/_WORK/Projects/mAInion/github/memory-kernel/.claude/worktrees/eloquent-elbakyan/*.md)",
-      "Bash(git push origin claude/eloquent-elbakyan)"
+      "Bash(git push origin claude/eloquent-elbakyan)",
+      "Bash(git push -u origin claude/elegant-carson)",
+      "Bash(gh pr:*)"
     ]
   }
 }
