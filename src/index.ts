@@ -124,3 +124,8 @@ export {
   listEpisodes,
   linkEpisodeToAtom,
 } from './episodes.js';
+export type {
+  WriteEpisodeOpts,
+  WriteOperationOpts,
+  ListEpisodesOptions,
+} from './episodes.js';
