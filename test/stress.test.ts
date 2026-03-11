@@ -29,6 +29,12 @@ import {
   closeAllIndexes,
   replay,
   replayFromFile,
+  searchFts,
+  indexExists,
+  writeEpisode,
+  readEpisode,
+  listEpisodes,
+  linkEpisodeToAtom,
 } from '../src/index.js';
 import type { MemoryEvent } from '../src/index.js';
 
@@ -665,5 +671,235 @@ describe('large-scale performance', () => {
     expect(countEvents(testDir)).toBe(150);
     expect(listAtoms(testDir).length).toBe(0);
     expect(fs.readdirSync(path.join(testDir, 'ARCHIVE')).length).toBe(50);
+  });
+});
+
+// ============================================================================
+// 15. FTS5 EDGE CASES
+// ============================================================================
+
+describe('FTS5 edge cases', () => {
+  it('searchFts returns null before reindex (no index file)', () => {
+    // No reindex called — .memory-index.db does not exist
+    const result = searchFts(testDir, 'anything');
+    expect(result).toBeNull();
+  });
+
+  it('searchFts returns [] (not null) for a query with no matches after reindex', () => {
+    createAtom({ ...base(testDir), type: 'fact', slug: 'redis', body: '## Fact\nRedis is fast.' });
+    reindex(testDir);
+    const result = searchFts(testDir, 'completelymadeupword99999');
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result!.length).toBe(0);
+  });
+
+  it('searchFts handles FTS5 special chars without throwing', () => {
+    createAtom({ ...base(testDir), type: 'fact', slug: 'safe', body: '## Fact\nSafe body text.' });
+    reindex(testDir);
+    // These would normally be FTS5 syntax errors if passed raw
+    expect(() => searchFts(testDir, '"unclosed')).not.toThrow();
+    expect(() => searchFts(testDir, 'AND OR NOT')).not.toThrow();
+    expect(() => searchFts(testDir, '* wildcard *')).not.toThrow();
+    expect(() => searchFts(testDir, '(unbalanced')).not.toThrow();
+  });
+
+  it('reindex called twice is idempotent — same searchFts results on second call', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'pagination',
+      body: '## Fact\nCursor pagination replaces offset.',
+    });
+    reindex(testDir);
+    const first = searchFts(testDir, 'pagination');
+    reindex(testDir);
+    const second = searchFts(testDir, 'pagination');
+    expect(second).not.toBeNull();
+    expect(second!.length).toBe(first!.length);
+    expect(second![0].atom_id).toBe(first![0].atom_id);
+  });
+});
+
+// ============================================================================
+// 16. TASK-AWARE RECALL EDGE CASES
+// ============================================================================
+
+describe('task-aware recall edge cases', () => {
+  it('same recall({ task }) called twice → identical atom ordering (determinism)', () => {
+    for (let i = 0; i < 5; i++) {
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: `fact-${i}`,
+        body: `## Fact\nFact number ${i} about various topics.`,
+      });
+    }
+    createAtom({
+      ...base(testDir),
+      type: 'decision',
+      slug: 'pagination',
+      body: '## Decision\nUse cursor-based pagination for all list endpoints.',
+    });
+    reindex(testDir);
+    const bundle1 = recall(testDir, { task: 'pagination' });
+    const bundle2 = recall(testDir, { task: 'pagination' });
+    expect(bundle1.atoms.map((a) => a.frontmatter.id)).toEqual(
+      bundle2.atoms.map((a) => a.frontmatter.id),
+    );
+  });
+
+  it('recall({ task }) without prior reindex falls back gracefully (no throw)', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'cache',
+      body: '## Fact\nRedis cache improves performance.',
+    });
+    // Deliberately no reindex — index file absent
+    expect(() => recall(testDir, { task: 'redis performance' })).not.toThrow();
+    const bundle = recall(testDir, { task: 'redis performance' });
+    expect(bundle.atoms.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('recall({ task: "" }) does not crash and returns same result as no-task recall', () => {
+    createAtom({ ...base(testDir), type: 'fact', slug: 'f1', body: '## Fact\nSome fact.' });
+    reindex(testDir);
+    expect(() => recall(testDir, { task: '' })).not.toThrow();
+    const withEmptyTask = recall(testDir, { task: '' });
+    const withNoTask = recall(testDir, {});
+    expect(withEmptyTask.atoms.length).toBe(withNoTask.atoms.length);
+  });
+});
+
+// ============================================================================
+// 17. EPISODE STORE EDGE CASES
+// ============================================================================
+
+describe('episode store edge cases', () => {
+  it('session IDs with slashes and spaces are sanitized to kebab-case', () => {
+    const epId = writeEpisode(
+      testDir,
+      'session/with spaces and/slashes',
+      '## Summary\nTest session.',
+    );
+    // ID must be safe as a filename (kebab-case, no slashes or spaces)
+    expect(epId).toMatch(/^EP-/);
+    expect(epId).not.toContain('/');
+    expect(epId).not.toContain(' ');
+    const filePath = path.join(testDir, 'EPISODES', `${epId}.md`);
+    expect(fs.existsSync(filePath)).toBe(true);
+  });
+
+  it('writeEpisode called twice with same session ID → one file in EPISODES/ (last-write-wins)', () => {
+    const sessionId = 'idempotent-session';
+    writeEpisode(testDir, sessionId, '## Summary\nFirst write.');
+    writeEpisode(testDir, sessionId, '## Summary\nSecond write.');
+    const episodesDir = path.join(testDir, 'EPISODES');
+    const files = fs.readdirSync(episodesDir).filter((f) => f.endsWith('.md'));
+    expect(files.length).toBe(1);
+    const ep = readEpisode(testDir, `EP-${sessionId}`);
+    expect(ep?.summary).toContain('Second write');
+  });
+
+  it('listEpisodes({ limit: 0 }) returns empty array', () => {
+    writeEpisode(testDir, 'session-a', '## Summary\nA.');
+    writeEpisode(testDir, 'session-b', '## Summary\nB.');
+    const result = listEpisodes(testDir, { limit: 0 });
+    expect(result).toEqual([]);
+  });
+
+  it('linkEpisodeToAtom on an archived atom filePath does not throw', () => {
+    const a = createAtom({ ...base(testDir), type: 'fact', slug: 'link-test', body: 'body' });
+    archiveAtom({ ...base(testDir), filePath: a.filePath! });
+    const epId = writeEpisode(testDir, 'link-session', '## Summary\nLinked.');
+    // archiveAtom moves the file — find new path
+    const archivedPath = path.join(testDir, 'ARCHIVE', path.basename(a.filePath!));
+    expect(() => linkEpisodeToAtom(testDir, archivedPath, epId)).not.toThrow();
+  });
+
+  it('readEpisode returns null for a non-existent episode ID', () => {
+    const result = readEpisode(testDir, 'EP-does-not-exist-99999');
+    expect(result).toBeNull();
+  });
+});
+
+// ============================================================================
+// 18. CONFLICT DETECTION HEURISTIC
+// ============================================================================
+
+describe('conflict detection heuristic', () => {
+  it('two facts with overlapping scope paths and confidence diff > 0.3 → conflict created', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'high-confidence',
+      body: '## Fact\nServer runs on port 8080.',
+      confidence: 0.95,
+      scope: { paths: ['/services/api'] },
+    });
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'low-confidence',
+      body: '## Fact\nServer runs on port 3000.',
+      confidence: 0.5,
+      scope: { paths: ['/services/api'] },
+    });
+    const r = reflect({ ...base(testDir) });
+    expect(r.conflicts_found).toBeGreaterThanOrEqual(1);
+    const conflictsDir = path.join(testDir, 'CONFLICTS');
+    expect(fs.readdirSync(conflictsDir).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('two facts with same scope paths but confidence diff ≤ 0.3 → no conflict created', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'close-high',
+      body: '## Fact\nLatency is 50ms.',
+      confidence: 0.8,
+      scope: { paths: ['/services/metrics'] },
+    });
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'close-low',
+      body: '## Fact\nLatency is 60ms.',
+      confidence: 0.6,
+      scope: { paths: ['/services/metrics'] },
+    });
+    const r = reflect({ ...base(testDir) });
+    // confidence diff = 0.2, below threshold → no new conflict
+    const conflictsDir = path.join(testDir, 'CONFLICTS');
+    const newConflicts = fs.readdirSync(conflictsDir).filter((f) => f.endsWith('.md'));
+    expect(newConflicts.length).toBe(0);
+    expect(r.conflicts_found).toBe(0);
+  });
+
+  it('reflect twice on same conflicting pair does not duplicate conflict atoms', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'dup-high',
+      body: '## Fact\nPort is 8080.',
+      confidence: 0.95,
+      scope: { paths: ['/services/web'] },
+    });
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'dup-low',
+      body: '## Fact\nPort is 3000.',
+      confidence: 0.5,
+      scope: { paths: ['/services/web'] },
+    });
+    const r1 = reflect({ ...base(testDir) });
+    const countAfterFirst = fs.readdirSync(path.join(testDir, 'CONFLICTS')).filter((f) => f.endsWith('.md')).length;
+    const r2 = reflect({ ...base(testDir) });
+    const countAfterSecond = fs.readdirSync(path.join(testDir, 'CONFLICTS')).filter((f) => f.endsWith('.md')).length;
+    // No new conflict atoms created on second reflect
+    expect(countAfterSecond).toBe(countAfterFirst);
+    expect(r2.conflicts_found).toBe(r1.conflicts_found);
   });
 });
