@@ -236,3 +236,119 @@ All file paths from user/external input must pass `assertWithinDir(memoryDir, re
 - Any new operation that accepts a file path parameter
 
 If you add a new operation that writes files, add the guard and a corresponding path traversal test in `test/stress.test.ts`.
+
+---
+
+## PRD v1.2 — Implementation Status (as of v0.5.0)
+
+Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
+
+### What's DONE ✅
+
+| PRD Requirement | Implementation |
+|---|---|
+| **v0.1 MVP** (§6.1) — all 6 items | Directory layout, checkpoint, context loader, TTL/promotion/GC, CLI (13 cmds), SDK |
+| **FR-1** Evidence Store | `src/evidence.ts` — SHA-256 content-addressed, atomic writes, dedup by hash |
+| **FR-2** Event Log | `src/event-log.ts` — NDJSON, V2 snapshots, fsync, compaction |
+| **FR-3** State Views | `src/renderers.ts` — INDEX, HANDOFF, DECISIONS, CONSTRAINTS, OPEN_QUESTIONS (line budgets enforced) |
+| **FR-4** Retain | `src/retain.ts` — createAtom, updateAtom, archiveAtom (all emit V2 events, auto-index) |
+| **FR-6** Reflect (deterministic) | `src/reflect.ts` — single-pass: expiry, dedup, autoPromote, view regeneration |
+| **FR-7** All 9 atom types | `src/types.ts` — decision, constraint, open_question, belief, fact, procedure, entity_summary, preference, conflict |
+| **FR-13** Data classification | PUBLIC, TEAM, PERSONAL, SECRET — enforced in recall filter + SQLite index query |
+| Atomic writes + crash safety | tmp → fsync → rename in store.ts + evidence.ts; WAL mode in SQLite |
+| Deterministic replay | `src/replay.ts` — same events → identical atoms + views |
+| Event sourcing (§11.1) | V2 events with inline snapshots |
+| Canonicalization (§11.3) | Sorted YAML keys, UTC ISO8601, stable headings |
+| Progressive disclosure (§11.6) | INDEX ≤ 200 lines, HANDOFF ≤ 80 lines |
+| Recall gating (§11.9) | PERSONAL + SECRET excluded by default |
+| SQLite index (§11.5, partial) | Metadata index with connection caching + schema versioning — **no FTS5 yet** |
+
+### What's PARTIAL ⚠️
+
+| Area | What exists | What's missing |
+|---|---|---|
+| **FR-5 Recall — task-aware** | `RecallQuery.task` field defined (`@todo v0.2`). Accepted by CLI `--task`. **Completely ignored by recall().** | FTS5 index + keyword scoring needed (required for v1) |
+| **FR-5 Recall — episodes** | `RecallQuery.include_episodes` field defined (`@todo v0.2`). `ContextBundle.episodes` field exists. **Never populated.** | Episode loading logic needed |
+| **FR-2a Episode Store** | `EPISODES/` directory scaffolded by `initMemoryDir()`. **Zero implementation.** | writeEpisode, readEpisode, listEpisodes, linkEpisodeToAtom |
+| **FR-6 Reflect — conflicts** | Counts pre-existing conflict atoms | Does not detect new conflicts (scope overlap, contradictions) — `@todo v0.2` |
+| **FR-8 TTL + decay** | Hard TTL expiry works | No gradual confidence decay |
+| **FR-9 Promotion** | confidence ≥ 0.9 auto-promote | No corroboration, user confirmation, or evidence triggers |
+| **FR-15 Audit** | All writes logged as events | Read access (recall) not logged |
+| **Provenance** | Fields exist on AtomFrontmatter (`provenance.episodes`, `provenance.evidence`). Accepted in createAtom/updateAtom. | **Never auto-populated** by any system operation |
+
+### What's NOT Started ❌
+
+| Area | PRD Section |
+|---|---|
+| **FR-10** Concurrent writers | §7.5 |
+| **FR-11** Convergent merges (CRDT or event-log union) | §7.5 |
+| **FR-12** Conflict detection + resolution workflow | §7.5 |
+| **FR-14** Encryption at rest (SECRET) | §7.6 |
+| **FR-16** Memory Packet import/export | §7.7 |
+| **FR-19** MCP server | §7.8 |
+| `mk merge` CLI + `merge()` SDK | §7.8 |
+| System/E2E tests (multi-process) | §12.3 |
+| Benchmark harness (LongMemEval, LoCoMo) | §12.4 |
+| Performance benchmarks (p95) | §12.5 |
+
+---
+
+## PRD v1.0 → v1.2 Key Deltas
+
+These are the **new requirements** added in PRD v1.2 that were not in v1.0:
+
+| Delta | PRD Section | Summary |
+|---|---|---|
+| **FR-2a Episode Store** | §7.1 (new) | New store for per-session artifacts. Helpers needed: `writeEpisode()`, `readEpisode()`, `linkEpisodeToAtom()`. |
+| **Task-aware recall (FTS)** | §7.2, §11.5 | `RecallQuery.task` must influence ranking. SQLite FTS5 required for v1. Embeddings optional/v2. |
+| **Episode-aware recall** | §7.2, §11.6a (new) | Recall includes episodes on demand (by provenance, `include_episodes`, or task/keyword match). |
+| **FTS index required** | §11.5 | "Implement SQLite FTS (FTS5) index over atom titles/body" + deterministic lexical fallback. |
+| **Benchmarks relaxed** | §5.2 | v1 goal = "harness runnable + baseline recorded", not competitive scores. |
+| **LoCoMo explicitly vNext** | §3.2 | Full memory reasoning system is non-goal for v1. |
+| **LLM-assisted reflect deferred** | §7.2 FR-6 | "v1 default: deterministic (no LLM calls)" made explicit. |
+| **memory-kernel acknowledged** | §10.8 (new) | npm package listed as near-complete v0.1 MVP baseline. |
+
+---
+
+## Existing Stubs & TODOs in Code
+
+These are wired into the type system but have no implementation. Future milestones should activate them:
+
+| Stub | Location | Notes |
+|---|---|---|
+| `RecallQuery.task` | `src/types.ts:123` | `string \| undefined`, marked `@todo v0.2`. Passed through CLI `--task` and checkpoint but **ignored** by `recall()`. |
+| `RecallQuery.include_episodes` | `src/types.ts:129` | `boolean \| undefined`, marked `@todo v0.2`. Never checked by `recall()`. |
+| `ContextBundle.episodes` | `src/types.ts:140` | `string[] \| undefined`. Field exists but never populated. |
+| `EPISODES/` directory | `src/store.ts:18` | Created by `initMemoryDir()`. Contains no files — no episode write logic exists. |
+| `detectConflicts()` | `src/reflect.ts:296` | Only counts existing conflict atoms. `@todo v0.2` — does not detect new conflicts. |
+| `provenance.episodes` | `src/types.ts:63` | Field on AtomFrontmatter. Accepted but never auto-populated. |
+| `provenance.evidence` | `src/types.ts:64` | Field on AtomFrontmatter. Accepted but never auto-populated. |
+
+---
+
+## Milestone Roadmap (PRD v1.2)
+
+### Milestone C (next): Task-Aware Recall + Episodes → v0.6.0
+- **FR-2a**: Episode Store — `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom`
+- **FR-5**: FTS5 index in `index-db.ts` + task-aware ranking in `recall.ts`
+- **§11.6a**: Episode-aware recall (provenance, `include_episodes`, keyword match)
+- Tests: `test/episodes.test.ts`, `test/fts.test.ts`
+- CLI: `mk episode write/list`, recall `--task`, `--include-episodes`
+
+### Milestone D: Multi-Agent Merge → v0.7.0
+- **FR-10**: Concurrent writers (advisory locks)
+- **FR-11**: Event-log union + deterministic reducer (§11.7 Pattern B)
+- **FR-12**: Conflict detection in reflect (scope overlap, contradictions)
+- `mk merge` CLI + `merge()` SDK
+- Multi-process E2E tests (§12.3)
+
+### Milestone E: MCP Server → v0.8.0
+- **FR-19**: MCP server (remember, recall, reflect, gc, list_conflicts, resolve_conflict)
+- MCP contract tests (§12.2)
+
+### Milestone F: Enterprise + Polish → v1.0
+- **FR-14**: Encryption at rest for SECRET atoms
+- **FR-15**: Read audit logging
+- **FR-16**: Memory Packet import/export (Letta, LangGraph, Mem0)
+- Performance benchmarks (§12.5)
+- Benchmark harness (§12.4) — report-only
