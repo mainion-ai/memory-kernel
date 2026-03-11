@@ -56,6 +56,17 @@ const CREATE_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_paths_path ON atom_paths(path)',
 ];
 
+// FTS5 virtual table for full-text search over atom title + body.
+// Stores its own content (no content= param) so standard DELETE works.
+// porter tokenizer enables stemming (run/runs/running all match).
+const CREATE_FTS_TABLE = `
+CREATE VIRTUAL TABLE IF NOT EXISTS atom_fts USING fts5(
+  atom_id UNINDEXED,
+  title,
+  body,
+  tokenize='porter unicode61'
+)`;
+
 // --- Connection cache ---
 
 const connectionCache = new Map<string, Database.Database>();
@@ -124,10 +135,10 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   const currentVersion = (db.pragma('user_version', { simple: true }) as number) ?? 0;
   if (currentVersion !== SCHEMA_VERSION) {
     // Drop and recreate all tables for clean schema upgrade
+    db.exec('DROP TABLE IF EXISTS atom_fts');
     db.exec('DROP TABLE IF EXISTS atom_paths');
     db.exec('DROP TABLE IF EXISTS atom_tags');
     db.exec('DROP TABLE IF EXISTS atoms');
-    db.exec('DROP TABLE IF EXISTS atom_fts');
   }
 
   // Create schema (idempotent — IF NOT EXISTS)
@@ -137,15 +148,7 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   for (const idx of CREATE_INDEXES) {
     db.exec(idx);
   }
-
-  // FTS5 virtual table for full-text search (BM25 ranking)
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS atom_fts USING fts5(
-      atom_id UNINDEXED,
-      content,
-      tokenize = 'porter unicode61'
-    )
-  `);
+  db.exec(CREATE_FTS_TABLE);
 
   // Set schema version
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -180,6 +183,25 @@ function bodyHash(body: string): string {
   return hash.toString(36);
 }
 
+// --- Helpers ---
+
+/**
+ * Extract a short title from atom body markdown for FTS indexing.
+ * Prefers the text of the first H1/H2 heading; falls back to first 80 chars stripped of markdown.
+ */
+function extractTitle(body: string): string {
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    const match = trimmed.match(/^#{1,2}\s+(.+)/);
+    if (match) return match[1].trim();
+    if (trimmed.length > 0) {
+      // First non-empty non-heading line — strip markdown syntax
+      return trimmed.replace(/[*_`#[\]]/g, '').slice(0, 80);
+    }
+  }
+  return '';
+}
+
 // --- Index operations ---
 
 /**
@@ -194,11 +216,11 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
   const atoms = listAtoms(memoryDir);
 
   const tx = db.transaction(() => {
-    // Clear existing data
+    // Clear existing data (FTS first to avoid FK issues)
+    db.exec('DELETE FROM atom_fts');
     db.exec('DELETE FROM atom_paths');
     db.exec('DELETE FROM atom_tags');
     db.exec('DELETE FROM atoms');
-    db.exec('DELETE FROM atom_fts');
 
     const insertAtom = db.prepare(`
       INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
@@ -213,9 +235,9 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
       INSERT OR IGNORE INTO atom_paths (atom_id, path) VALUES (?, ?)
     `);
 
-    const insertFts = db.prepare(`
-      INSERT INTO atom_fts (atom_id, content) VALUES (?, ?)
-    `);
+    const insertFts = db.prepare(
+      'INSERT INTO atom_fts(atom_id, title, body) VALUES (?, ?, ?)',
+    );
 
     for (const atom of atoms) {
       const fm = atom.frontmatter;
@@ -233,9 +255,6 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
         bodyHash(atom.body),
       );
 
-      // Index FTS (searchable body content)
-      insertFts.run(fm.id, atom.body);
-
       // Index tags
       if (fm.scope?.tags) {
         for (const tag of fm.scope.tags) {
@@ -249,6 +268,9 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
           insertPath.run(fm.id, p);
         }
       }
+
+      // FTS index
+      insertFts.run(fm.id, extractTitle(atom.body), atom.body);
     }
   });
 
@@ -267,10 +289,10 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
   const fm = atom.frontmatter;
 
   const tx = db.transaction(() => {
-    // Remove old data for this atom
+    // Remove old data for this atom (FTS first)
+    db.prepare('DELETE FROM atom_fts WHERE atom_id = ?').run(fm.id);
     db.prepare('DELETE FROM atom_tags WHERE atom_id = ?').run(fm.id);
     db.prepare('DELETE FROM atom_paths WHERE atom_id = ?').run(fm.id);
-    db.prepare('DELETE FROM atom_fts WHERE atom_id = ?').run(fm.id);
 
     db.prepare(`
       INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
@@ -288,9 +310,6 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
       bodyHash(atom.body),
     );
 
-    // Update FTS
-    db.prepare('INSERT INTO atom_fts (atom_id, content) VALUES (?, ?)').run(fm.id, atom.body);
-
     if (fm.scope?.tags) {
       const insertTag = db.prepare('INSERT OR IGNORE INTO atom_tags (atom_id, tag) VALUES (?, ?)');
       for (const tag of fm.scope.tags) {
@@ -304,6 +323,13 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
         insertPath.run(fm.id, p);
       }
     }
+
+    // FTS index — upsert (delete above, insert fresh)
+    db.prepare('INSERT INTO atom_fts(atom_id, title, body) VALUES (?, ?, ?)').run(
+      fm.id,
+      extractTitle(atom.body),
+      atom.body,
+    );
   });
 
   tx();
@@ -316,7 +342,50 @@ export function removeFromIndex(memoryDir: string, atomId: string): void {
   const db = openIndex(memoryDir);
   db.prepare('DELETE FROM atoms WHERE atom_id = ?').run(atomId);
   db.prepare('DELETE FROM atom_fts WHERE atom_id = ?').run(atomId);
-  // Tags and paths cascade-deleted via FK
+  // atom_tags and atom_paths cascade-deleted via FK on atoms table
+}
+
+/**
+ * Full-text search over atom titles and bodies using SQLite FTS5 + BM25 ranking.
+ *
+ * Returns atom IDs ordered by relevance (best match first).
+ * Returns null if the FTS table is unavailable (caller should fall back to unranked results).
+ *
+ * The query string is sanitised — FTS5 special chars are stripped so arbitrary
+ * natural-language task descriptions are safe to pass directly.
+ */
+export function searchFts(
+  memoryDir: string,
+  queryText: string,
+  limit = 50,
+): { atom_id: string; rank: number }[] | null {
+  if (!indexExists(memoryDir)) return null;
+
+  try {
+    const db = openIndex(memoryDir);
+
+    // Strip FTS5 special characters to treat the input as a plain phrase.
+    // We wrap in double-quotes for a quoted phrase query (exact token sequence or stemmed match).
+    const sanitised = queryText
+      .replace(/["*()]/g, ' ')  // remove FTS5 operators/syntax chars
+      .replace(/\b(AND|OR|NOT)\b/g, ' ') // remove boolean operators
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!sanitised) return [];
+
+    // Quoted phrase query: FTS5 matches documents containing all tokens in order (with stemming).
+    const ftsQuery = `"${sanitised}"`;
+
+    const rows = db.prepare(
+      `SELECT atom_id, rank FROM atom_fts WHERE atom_fts MATCH ? ORDER BY rank LIMIT ?`,
+    ).all(ftsQuery, limit) as { atom_id: string; rank: number }[];
+
+    return rows;
+  } catch {
+    // FTS table missing or query error — degrade gracefully
+    return null;
+  }
 }
 
 // --- Query interface ---
@@ -417,58 +486,6 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
     `;
 
   return db.prepare(sql).all(...params) as IndexQueryResult[];
-}
-
-// --- FTS5 search ---
-
-/**
- * Sanitize a user query for FTS5 to prevent syntax errors.
- * Strips special chars and FTS5 reserved words, quotes each token.
- * Returns null if no valid tokens remain.
- */
-function escapeFtsQuery(query: string): string | null {
-  const words = query
-    .replace(/['"()*^{}+]/g, ' ') // strip FTS5 special chars (hyphens preserved for hyphenated terms)
-    .split(/\s+/)
-    .filter((w) => w.length > 0 && !/^(AND|OR|NOT)$/i.test(w));
-  if (words.length === 0) return null;
-  return words.map((w) => `"${w}"`).join(' ');
-}
-
-export interface FtsResult {
-  atom_id: string;
-  rank: number; // FTS5 BM25 rank — more negative = better match
-}
-
-/**
- * Full-text search over indexed atom bodies using FTS5 BM25 ranking.
- *
- * Returns null if no index exists (caller should fall back).
- * Returns an empty array for no matches.
- * Never throws — bad FTS5 queries are sanitized or return [].
- */
-export function searchFts(memoryDir: string, query: string): FtsResult[] | null {
-  if (!indexExists(memoryDir)) return null;
-
-  const escaped = escapeFtsQuery(query);
-  if (escaped === null) return [];
-
-  const db = openIndex(memoryDir);
-
-  // Verify FTS table exists (it might not if schema was stale before this run)
-  const ftsTable = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='atom_fts'")
-    .get();
-  if (!ftsTable) return null;
-
-  try {
-    return db
-      .prepare('SELECT atom_id, rank FROM atom_fts WHERE atom_fts MATCH ? ORDER BY rank')
-      .all(escaped) as FtsResult[];
-  } catch {
-    // FTS5 query error — return empty rather than throw
-    return [];
-  }
 }
 
 /**

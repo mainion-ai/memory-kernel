@@ -5,18 +5,24 @@ All notable changes to this project will be documented in this file.
 ## [0.6.0] — 2026-03-11
 
 ### Added
-- **FTS5 full-text search** (`searchFts`) — BM25 ranked search over atom bodies via SQLite FTS5 virtual table with Porter stemmer. Returns `null` when index absent; empty array for no matches. Special-char queries sanitized to prevent FTS5 syntax errors. Schema version bumped to 3 (auto-rebuild on open).
-- **Task-aware recall** — `recall(memoryDir, { task })` uses `searchFts` to re-rank atoms by BM25 relevance when a task string is provided. Falls back gracefully when index is absent; empty task string is a no-op.
-- **Episode store** (`src/episodes.ts`) — per-session markdown summary artifacts in `EPISODES/`. `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom` APIs. Session IDs sanitized to kebab-case; last-write-wins for duplicate IDs.
-- **Conflict detection heuristic** in `reflect()` — detects active fact/decision atom pairs with overlapping scope paths and confidence diff > 0.3. Creates a conflict atom in `CONFLICTS/` per pair. Idempotent: re-running reflect does not duplicate conflict atoms. Returns total active conflict atom count.
+- **FTS5 full-text search** (`searchFts()`) — SQLite FTS5 virtual table with Porter stemming and Unicode normalization. Returns BM25-ranked `{ atom_id, rank }[]` results. Returns `null` gracefully when the index doesn't exist so callers can fall back to unranked results. New `indexExists()` export checks for the index file.
+- **Task-aware recall** — `recall(dir, { task: '...' })` re-ranks candidates using FTS BM25 scores. Atoms with strong text matches rise to the top; unmatched atoms retain status-priority order. Same query + same store always produces identical atom ordering (deterministic).
+- **Episode Store** (`src/episodes.ts`) — per-session markdown summaries written to `EPISODES/{EP-id}.md`. Session IDs are sanitised to kebab-case. Functions exported from public API: `writeEpisode()`, `readEpisode()`, `listEpisodes()`, `linkEpisodeToAtom()`. Episodes are isolated from `listAtoms()` (not scanned as atoms).
+- **Episode-aware recall** — `recall(dir, { include_episodes: true })` populates `ContextBundle.episodes` with recent session summaries formatted as markdown strings. When combined with `task`, episodes are keyword-filtered by summary text. Episode token cost is included in `token_estimate`.
+- **Active conflict detection heuristic** (`src/reflect.ts`) — `reflect()` now detects potential conflicts between pairs of `fact` and `decision` atoms that share overlapping scope paths and have confidence values differing by more than 0.3. Detected conflicts are written as `conflict` atoms to `CONFLICTS/`, emit `conflict_detected` events, and link back to both source atoms. `result.conflicts_found` reports the total active conflict atom count (pre-existing + newly created this cycle).
+- **`mk episode` CLI command** — `mk episode -d <dir> --session-id <id> --summary "text" [--tags a,b]`. Writes an episode file and prints the episode ID to stdout.
+- **`mk episodes` CLI command** — `mk episodes -d <dir> [--limit N] [--tags a,b]`. Lists episodes newest-first.
+- **`mk recall --task <text>` flag** — passes `task` to `recall()` for FTS-backed re-ranking.
+- **`mk recall --include-episodes` flag** — includes session episodes in recall output.
+- **FTS5 schema version 3** — `PRAGMA user_version` bumped to 3. Databases from earlier schema versions are auto-rebuilt on first open.
+
+### Fixed
+- **`conflicts_found` semantic** — `reflect()` result now reports the total count of active conflict atoms (pre-existing + newly created), not just atoms created in the current cycle. Aligns with test expectations and PRD intent.
 
 ### Tests
-- **Stress test suite extended** with 16 edge-case tests covering the four new Milestone C features (Blocks 15–18 in `test/stress.test.ts`):
-  - Block 15 (FTS5 edge cases): null before reindex, empty results vs null, special chars, reindex idempotency.
-  - Block 16 (Task-aware recall): deterministic ordering, graceful fallback without index, empty task no-crash.
-  - Block 17 (Episode store): session ID sanitization, last-write-wins, `limit: 0`, link to archived atom, null for missing ID.
-  - Block 18 (Conflict heuristic): pair above threshold creates conflict atom, pair below threshold no conflict, reflect idempotency.
-- Total: **398 tests passing** (up from 382).
+- 419 tests passing (up from 383).
+- `test/fts.test.ts` — 15 new tests: `searchFts()` ranking, null when index absent, empty array on no match, BM25 rank property, Porter stemming, limit parameter, injection safety for FTS5 special chars, whitespace-only query, `reindex()` rebuilds FTS, subsequent `searchFts()` returns expected results, task-aware recall ordering, determinism, no-match fallback, fallback without index.
+- `test/episodes.test.ts` — 21 new tests: `writeEpisode()` creates file with correct frontmatter, session ID sanitisation to kebab-case, tags in frontmatter, `session_ended` event emission, idempotent overwrite (last-write-wins), agent_id from opts; `readEpisode()` returns null for non-existent, round-trip; `listEpisodes()` empty/newest-first/limit/tags-filter/all; `linkEpisodeToAtom()` add/idempotent/multiple; episodes excluded from `listAtoms()`; `recall()` populates `bundle.episodes`, hidden by default, keyword filtering, token estimate.
 
 ## [0.5.1] — 2026-03-11
 
@@ -36,7 +42,7 @@ All notable changes to this project will be documented in this file.
   - Special atom types: conflict atoms in `CONFLICTS/`, conflict detection in reflect, empty scope arrays.
   - Replay edge cases: empty event list, V1 archive event, non-existent file, full create→update→update lifecycle.
   - Large-scale performance: 500 atoms reflect < 15 s, 50 × create→update→archive lifecycle.
-- **Replay snapshot validation** — `replay()` / `replayFromFile()` now validate atom snapshots against `AtomFrontmatterSchema` at replay time. Events with invalid `type`, `status`, or out-of-range `confidence` are reported in `errors` and excluded from the reconstructed atom map (not silently accepted). The stress test asserts this validated behavior.
+- **Finding #1 documented** (see `CODING_INSTRUCTIONS.md`): `replay()` / `replayFromFile()` silently accept invalid atom type/status/confidence in snapshots — no Zod validation at the replay layer. The stress test asserts this **actual** (silent) behavior so any future schema-validation addition will be a conscious, visible change.
 - Total: **383 tests passing** (up from 329).
 
 ## [0.5.0] — 2026-03-10

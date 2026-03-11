@@ -20,7 +20,7 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/bootstrap.test.ts` | Event bootstrap migration |
 | `test/milestone-b.test.ts` | Integration: full event-sourced lifecycle |
 | `test/index-db.test.ts` | SQLite index, LIMIT, caching |
-| `test/stress.test.ts` | Edge cases, error paths, invariants |
+| `test/stress.test.ts` | Edge cases, error paths, invariants (blocks 15–18 cover FTS5, task-aware recall, episodes, conflict heuristic) |
 
 ### Standard test boilerplate
 
@@ -115,6 +115,51 @@ queryIndex(dir, { limit: 2 });
 // CORRECT
 queryIndex(dir, {}, { limit: 2 });
 // signature: queryIndex(memoryDir, query, opts?)
+```
+
+### `recall()` — takes two separate arguments, NOT a single object
+
+```typescript
+// WRONG — memoryDir is not inside RecallQuery
+recall({ memoryDir: dir, task: 'pagination' });
+
+// CORRECT
+recall(dir, { task: 'pagination' });
+// signature: recall(memoryDir: string, query: RecallQuery = {})
+```
+
+### `searchFts()` — FTS5 phrase queries require adjacency
+
+`searchFts()` wraps the query in a quoted phrase (`"..."`) which requires all tokens to appear in
+exact sequence in the document. For multi-word queries, prefer single distinctive keywords:
+
+```typescript
+// Multi-word phrase "pagination api" fails if words aren't adjacent in body text
+searchFts(dir, 'pagination api');  // may return [] if not adjacent
+
+// Single keyword is safer and uses stemming (paginat* matches pagination/paginate)
+searchFts(dir, 'pagination');  // returns all atoms containing any form of "pagination"
+```
+
+### `writeEpisode()` — session ID is sanitised to kebab-case
+
+Episode IDs are `EP-{sanitised-session-id}`. The sanitisation lowercases and replaces
+non-alphanumeric characters with hyphens:
+
+```typescript
+writeEpisode(dir, 'My Session 2026/03', 'Summary.');
+// → 'EP-my-session-2026-03'
+```
+
+### `searchFts()` — atom IDs use uppercase slug segments
+
+Atom IDs have the format `TYPE-YYYY-MM-DD-SLUG-suffix` where SLUG is uppercase.
+Use case-insensitive comparison when matching atom IDs from FTS results:
+
+```typescript
+// Atom created with slug 'pagination' gets ID like 'DECI-2026-03-11-PAGINATION-abc12'
+const results = searchFts(dir, 'pagination');
+expect(results![0].atom_id.toLowerCase()).toContain('pagination');  // correct
 ```
 
 ### `ttl_days: 0` is valid (ephemeral atoms)
@@ -239,20 +284,22 @@ If you add a new operation that writes files, add the guard and a corresponding 
 
 ---
 
-## PRD v1.2 — Implementation Status (as of v0.5.0)
+## PRD v1.2 — Implementation Status (as of v0.6.0)
 
-Reference PRD: `docs/memory-kernel-prd-v1.2.md` (2026-03-10, local-only, gitignored).
+Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 
 ### What's DONE ✅
 
 | PRD Requirement | Implementation |
 |---|---|
-| **v0.1 MVP** (§6.1) — all 6 items | Directory layout, checkpoint, context loader, TTL/promotion/GC, CLI (13 cmds), SDK |
+| **v0.1 MVP** (§6.1) — all 6 items | Directory layout, checkpoint, context loader, TTL/promotion/GC, CLI (14 cmds), SDK |
 | **FR-1** Evidence Store | `src/evidence.ts` — SHA-256 content-addressed, atomic writes, dedup by hash |
 | **FR-2** Event Log | `src/event-log.ts` — NDJSON, V2 snapshots, fsync, compaction |
+| **FR-2a** Episode Store | `src/episodes.ts` — writeEpisode, readEpisode, listEpisodes, linkEpisodeToAtom; CLI: mk episode/mk episodes |
 | **FR-3** State Views | `src/renderers.ts` — INDEX, HANDOFF, DECISIONS, CONSTRAINTS, OPEN_QUESTIONS (line budgets enforced) |
 | **FR-4** Retain | `src/retain.ts` — createAtom, updateAtom, archiveAtom (all emit V2 events, auto-index) |
-| **FR-6** Reflect (deterministic) | `src/reflect.ts` — single-pass: expiry, dedup, autoPromote, view regeneration |
+| **FR-5** Task-aware recall | `src/recall.ts` + `src/index-db.ts` — FTS5 BM25 ranking on `query.task`; `--task` and `--include-episodes` in CLI |
+| **FR-6** Reflect (deterministic) | `src/reflect.ts` — expiry, dedup, autoPromote, conflict detection heuristic, view regeneration |
 | **FR-7** All 9 atom types | `src/types.ts` — decision, constraint, open_question, belief, fact, procedure, entity_summary, preference, conflict |
 | **FR-13** Data classification | PUBLIC, TEAM, PERSONAL, SECRET — enforced in recall filter + SQLite index query |
 | Atomic writes + crash safety | tmp → fsync → rename in store.ts + evidence.ts; WAL mode in SQLite |
@@ -261,20 +308,17 @@ Reference PRD: `docs/memory-kernel-prd-v1.2.md` (2026-03-10, local-only, gitigno
 | Canonicalization (§11.3) | Sorted YAML keys, UTC ISO8601, stable headings |
 | Progressive disclosure (§11.6) | INDEX ≤ 200 lines, HANDOFF ≤ 80 lines |
 | Recall gating (§11.9) | PERSONAL + SECRET excluded by default |
-| SQLite index (§11.5, partial) | Metadata index with connection caching + schema versioning — **no FTS5 yet** |
+| SQLite FTS5 index (§11.5) | Schema v3: FTS5 virtual table with porter unicode61 tokenizer; BM25 ranking via `searchFts()` |
 
 ### What's PARTIAL ⚠️
 
 | Area | What exists | What's missing |
 |---|---|---|
-| **FR-5 Recall — task-aware** | `RecallQuery.task` field defined (`@todo v0.2`). Accepted by CLI `--task`. **Completely ignored by recall().** | FTS5 index + keyword scoring needed (required for v1) |
-| **FR-5 Recall — episodes** | `RecallQuery.include_episodes` field defined (`@todo v0.2`). `ContextBundle.episodes` field exists. **Never populated.** | Episode loading logic needed |
-| **FR-2a Episode Store** | `EPISODES/` directory scaffolded by `initMemoryDir()`. **Zero implementation.** | writeEpisode, readEpisode, listEpisodes, linkEpisodeToAtom |
-| **FR-6 Reflect — conflicts** | Counts pre-existing conflict atoms | Does not detect new conflicts (scope overlap, contradictions) — `@todo v0.2` |
+| **FR-6 Reflect — conflicts** | Heuristic: same-type active atoms with overlapping scope and confidence gap > 0.3 | Full MV-Register semantics, user-triggered resolution workflow (Milestone D) |
 | **FR-8 TTL + decay** | Hard TTL expiry works | No gradual confidence decay |
 | **FR-9 Promotion** | confidence ≥ 0.9 auto-promote | No corroboration, user confirmation, or evidence triggers |
 | **FR-15 Audit** | All writes logged as events | Read access (recall) not logged |
-| **Provenance** | Fields exist on AtomFrontmatter (`provenance.episodes`, `provenance.evidence`). Accepted in createAtom/updateAtom. | **Never auto-populated** by any system operation |
+| **Provenance** | Fields exist on AtomFrontmatter (`provenance.episodes`, `provenance.evidence`). Accepted in createAtom/updateAtom. | Not auto-populated by system (caller must pass explicitly) |
 
 ### What's NOT Started ❌
 
@@ -312,23 +356,20 @@ These are the **new requirements** added in PRD v1.2 that were not in v1.0:
 
 ## Existing Stubs & TODOs in Code
 
-These are wired into the type system but have no implementation. Future milestones should activate them:
+All major Milestone C stubs have been implemented. Remaining stubs for future milestones:
 
 | Stub | Location | Notes |
 |---|---|---|
-| `RecallQuery.task` | `src/types.ts:123` | `string \| undefined`, marked `@todo v0.2`. Passed through CLI `--task` and checkpoint but **ignored** by `recall()`. |
-| `RecallQuery.include_episodes` | `src/types.ts:129` | `boolean \| undefined`, marked `@todo v0.2`. Never checked by `recall()`. |
-| `ContextBundle.episodes` | `src/types.ts:140` | `string[] \| undefined`. Field exists but never populated. |
-| `EPISODES/` directory | `src/store.ts:18` | Created by `initMemoryDir()`. Contains no files — no episode write logic exists. |
-| `detectConflicts()` | `src/reflect.ts:296` | Only counts existing conflict atoms. `@todo v0.2` — does not detect new conflicts. |
-| `provenance.episodes` | `src/types.ts:63` | Field on AtomFrontmatter. Accepted but never auto-populated. |
-| `provenance.evidence` | `src/types.ts:64` | Field on AtomFrontmatter. Accepted but never auto-populated. |
+| `provenance.episodes` | `src/types.ts` | Field on AtomFrontmatter. Accepted by createAtom/updateAtom. NOT auto-populated — callers must pass explicitly or use `linkEpisodeToAtom()`. |
+| `provenance.evidence` | `src/types.ts` | Field on AtomFrontmatter. Accepted but not auto-populated. Caller must pass evidence hashes. |
+| `conflicts` (full CRDT) | `src/reflect.ts` | Heuristic only: same-type active atoms + overlapping scope + confidence gap >0.3. Full MV-Register semantics and user-triggered resolution are Milestone D. |
+| `recall` read audit | `src/recall.ts` | FR-15 requires logging `recall_executed` events. Not implemented (Milestone F). |
 
 ---
 
 ## Milestone Roadmap (PRD v1.2)
 
-### Milestone C: ✅ COMPLETE → v0.6.0
+### Milestone C: Task-Aware Recall + Episodes → v0.6.0 ✅ COMPLETE
 - **FR-2a**: Episode Store — `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom` ✅
 - **FR-5**: FTS5 index (schema v3) + task-aware BM25 ranking in `recall()` ✅
 - **§11.6a**: Episode-aware recall (`include_episodes`, keyword match) ✅

@@ -2,7 +2,7 @@
 
 **Started:** 2026-03-09
 **Builder:** mainion-ai (Claude agent on Raspberry Pi 5)
-**Status:** In progress — v0.1 MVP
+**Status:** v0.6.0 — Milestone C complete
 
 ## What this is
 
@@ -87,8 +87,30 @@ memory-kernel/
 
 - TypeScript 5.x + Node.js
 - Zod (schema validation)
-- better-sqlite3 (index)
+- better-sqlite3 (index + FTS5)
 - Commander.js (CLI)
 - Vitest (testing)
 - gray-matter (YAML frontmatter parsing)
 - js-yaml (YAML serialization)
+
+---
+
+## Milestone history
+
+| Version | Milestone | Key deliverables | Tests |
+|---------|-----------|-----------------|-------|
+| v0.1.0 | Foundation | Core retain/recall/reflect, 9 atom types, NDJSON event log, SQLite index, `mk` CLI | 124 |
+| v0.2.0 | Hardening | Path traversal guards, atomic writes, bug fixes, `mk compact`, connection caching | 152 |
+| v0.3.0 | Milestone A | 5 pure view renderers, `checkpoint()` API, `mk checkpoint` CLI | 193 |
+| v0.4.0 | Milestone B | Event log V2 with snapshots, evidence store, replay engine, bootstrap migration | 282 |
+| v0.5.0 | Code review | Security fixes, reflect index sync, reflect single-pass, log compaction, schema versioning | 329 |
+| v0.5.1 | Stress tests | 54 stress/edge-case tests across all subsystems | 383 |
+| **v0.6.0** | **Milestone C** | FTS5 search, task-aware recall, episode store, conflict detection heuristic | **419** |
+
+## Upcoming milestones
+
+| Milestone | Target | Key changes |
+|-----------|--------|-------------|
+| D | v0.7.0 | Multi-agent merge (`src/merge.ts`), event-log union, `mk merge` CLI |
+| E | v0.8.0 | MCP server (`src/mcp/server.ts`), 7 tools, 4 resources, contract tests |
+| F | v1.0.0 | Encryption (SECRET), read audit logging, `mk import`, v1.0 polish |

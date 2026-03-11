@@ -184,8 +184,10 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ║  • Filter by type, status, tags, paths                       ║
 ║  • PERSONAL and SECRET atoms excluded by default             ║
 ║  • Sort by priority (active > draft > deprecated)            ║
+║  • Task-aware re-ranking via FTS BM25 when `task` provided   ║
 ║  • Trim to token budget (fit into context window)            ║
 ║  • Uses SQLite index when available, file scan otherwise     ║
+║  • Episodes included on demand (include_episodes: true)      ║
 ╚══════════════════════════════════════════════════════════════╝
 
 ╔══════════════════════════════════════════════════════════════╗
@@ -196,7 +198,9 @@ Memory Kernel has exactly three operations. Everything the system does is one of
 ║  2. Deduplicate — same-type atoms with identical content     ║
 ║     → keep newer, archive older                              ║
 ║  3. Promote — beliefs with confidence ≥ 0.9 → facts          ║
-║  4. Detect conflicts (count active conflict atoms)           ║
+║  4. Detect conflicts — heuristic: active fact/decision pairs  ║
+║     with overlapping scope and confidence diff > 0.3 create  ║
+║     a conflict atom in CONFLICTS/; events emitted            ║
 ║  5. Regenerate all views (INDEX, DECISIONS, CONSTRAINTS,     ║
 ║     OPEN_QUESTIONS, HANDOFF)                                 ║
 ║  6. Log all actions as events                                ║
@@ -334,7 +338,7 @@ my-memory/
 ### Query Flow
 
 ```
-          recall(dir, { types: ["fact"], tags: ["identity"] })
+   recall(dir, { types: ["fact"], task: "pagination api", max_tokens: 4000 })
                                   │
                                   ▼
                           ┌───────────────┐
@@ -352,11 +356,25 @@ my-memory/
                        └────┬────┘  └──────┬──────┘
                             │              │
                             ▼              ▼
-                     ┌───────────────────────────┐
-                     │  Load atom files         │
-                     │  Sort by status priority │
-                     │  Trim to token budget    │
-                     └────────────┬─────────────┘
+                     ┌────────────────────────┐
+                     │  Load atom files       │
+                     │  Sort: status priority │
+                     └────────────┬───────────┘
+                                  │
+                          task provided?
+                                  │
+                              yes │
+                                  ▼
+                     ┌────────────────────────┐
+                     │  FTS5 BM25 re-ranking  │
+                     │  searchFts(task, ...)  │
+                     │  Matched atoms → top   │
+                     └────────────┬───────────┘
+                                  │
+                                  ▼
+                     ┌────────────────────────┐
+                     │  Trim to token budget  │
+                     └────────────┬───────────┘
                                   │
                                   ▼
                           ┌───────────────┐
@@ -398,7 +416,14 @@ npx mk status -d ./my-memory
 ### Recall context
 
 ```bash
+# Basic recall (filter by type and tags)
 npx mk recall -d ./my-memory --type fact --tags identity
+
+# Task-aware recall (FTS BM25 re-ranking)
+npx mk recall -d ./my-memory --task "cursor pagination API"
+
+# Include recent session episodes
+npx mk recall -d ./my-memory --task "auth bug" --include-episodes
 ```
 
 ### Reflect (consolidate)
@@ -423,6 +448,20 @@ npx mk bootstrap-events -d ./my-memory --agent-id my-agent
 
 ```bash
 npx mk replay --from ./my-memory/events.ndjson --output-dir ./replayed
+```
+
+### Write a session episode
+
+```bash
+npx mk episode -d ./my-memory --session-id "session-42" \
+  --summary "Fixed pagination bug, updated 3 atoms" \
+  --tags api,bugfix
+```
+
+### List recent episodes
+
+```bash
+npx mk episodes -d ./my-memory --limit 5
 ```
 
 ### Compact event log
@@ -463,6 +502,12 @@ import {
   readEvents,
   compactLog,
   reindex,
+  searchFts,
+  indexExists,
+  writeEpisode,
+  readEpisode,
+  listEpisodes,
+  linkEpisodeToAtom,
 } from 'memory-kernel';
 
 // Initialize
@@ -560,25 +605,73 @@ console.log(`Imported ${boot.imported} atoms, backup: ${boot.backup_path}`);
 // Evidence store: content-addressed blobs
 const hash = writeEvidence('./memory', Buffer.from('artifact data'));
 const data = readEvidence('./memory', hash);
+
+// --- Task-Aware Recall (v0.6.0+) ---
+
+// Rebuild the FTS5 index (required after bulk creates or first use)
+reindex('./memory');
+
+// Recall with task — FTS BM25 re-ranks atoms; best matches surface first
+const taskContext = recall('./memory', {
+  task: 'cursor-based pagination API v2',
+  max_tokens: 4000,
+});
+// taskContext.atoms[0] will be the most relevant atom for that task
+
+// Search FTS directly (returns null if index absent, [] if no matches)
+if (indexExists('./memory')) {
+  const hits = searchFts('./memory', 'pagination', 10);
+  // hits: [{ atom_id: 'DECI-...', rank: -0.87 }, ...]  (lower rank = better)
+}
+
+// --- Episode Store (v0.6.0+) ---
+
+// Write a session summary when a session ends
+const epId = writeEpisode(
+  './memory',
+  'session-2026-03-11',
+  '## Session Summary\n\nFixed cursor pagination bug. Updated 3 atoms.',
+  { agent_id: 'my-agent', tags: ['api', 'bugfix'] },
+);
+// epId: 'EP-session-2026-03-11'
+
+// Link the episode to atoms it affected
+linkEpisodeToAtom('./memory', atom.filePath!, epId);
+
+// Read a specific episode
+const ep = readEpisode('./memory', epId);
+console.log(ep?.summary);
+
+// List recent episodes (newest first)
+const recent = listEpisodes('./memory', { limit: 5, tags: ['bugfix'] });
+
+// Recall with episodes included
+const contextWithHistory = recall('./memory', {
+  task: 'pagination',
+  include_episodes: true,  // adds recent session summaries to bundle
+});
+// contextWithHistory.episodes: ['## Episode: EP-session-...', ...]
 ```
 
 ## CLI Commands
 
 
-| Command                                     | Description                                            |
-| ------------------------------------------- | ------------------------------------------------------ |
-| `mk init [dir]`                             | Initialize a memory directory with all subdirectories  |
-| `mk status -d <dir>`                        | Show atom counts, tag stats, index status              |
-| `mk remember -d <dir> --type <type> "body"` | Quick-create an atom from the command line             |
-| `mk recall -d <dir>`                        | Load relevant context (filter by type, tags, paths)    |
-| `mk reflect -d <dir>`                       | Consolidate: deduplicate, expire, promote, regen views |
-| `mk checkpoint -d <dir>`                    | Generate checkpoint/handoff bundle (stdout)            |
-| `mk bootstrap-events -d <dir>`              | Migrate existing atoms to V2 event-sourced format      |
-| `mk replay --from <file>`                   | Reconstruct atoms + views from an event log            |
-| `mk reindex -d <dir>`                       | Rebuild SQLite index from files                        |
-| `mk compact -d <dir>`                       | Compact event log — remove intermediate mutation events |
-| `mk gc -d <dir>`                            | Archive expired atoms                                  |
-| `mk doctor -d <dir>`                        | Validate schema, check links, report problems          |
+| Command                                                        | Description                                                      |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `mk init [dir]`                                                | Initialize a memory directory with all subdirectories            |
+| `mk status -d <dir>`                                           | Show atom counts, tag stats, index status                        |
+| `mk remember -d <dir> --type <type> "body"`                    | Quick-create an atom from the command line                       |
+| `mk recall -d <dir> [--task "text"] [--include-episodes]`      | Load relevant context; `--task` enables FTS BM25 re-ranking      |
+| `mk reflect -d <dir>`                                          | Consolidate: deduplicate, expire, promote, detect conflicts      |
+| `mk checkpoint -d <dir>`                                       | Generate checkpoint/handoff bundle (stdout)                      |
+| `mk episode -d <dir> --session-id <id> --summary "text"`       | Write a session episode summary to EPISODES/                     |
+| `mk episodes -d <dir> [--limit N] [--tags a,b]`                | List session episodes newest-first                               |
+| `mk bootstrap-events -d <dir>`                                 | Migrate existing atoms to V2 event-sourced format                |
+| `mk replay --from <file>`                                      | Reconstruct atoms + views from an event log                      |
+| `mk reindex -d <dir>`                                          | Rebuild SQLite index (including FTS5) from files                 |
+| `mk compact -d <dir>`                                          | Compact event log — remove intermediate mutation events          |
+| `mk gc -d <dir>`                                               | Archive expired atoms                                            |
+| `mk doctor -d <dir>`                                           | Validate schema, check links, report problems                    |
 
 
 ---
@@ -590,7 +683,7 @@ Memory Kernel was built to work with [NanoClaw](https://github.com/nicepkg/nanoc
 ### How it works
 
 ```
-┌─────────────────┐     nightly cron     ┌────────────────────┐
+┌─────────────────┐     nightly cron     ┌──────────────-────┐
 │  memory-kernel  │ ──────────────────►  │    NanoClaw       │
 │                 │                      │                   │
 │  ENTITIES/      │     mk reflect       │  groups/          │
@@ -601,7 +694,7 @@ Memory Kernel was built to work with [NanoClaw](https://github.com/nicepkg/nanoc
 │                 │                      │   session start)  │
 │                 │     git push         │                   │
 │                 │ ──────────────────►  │                   │
-└─────────────────┘                      └────────────────────┘
+└─────────────────┘                      └─────-─────────────┘
 
   Nightly cycle:
   23:00 → reflect → render CLAUDE.md → git push
