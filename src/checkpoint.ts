@@ -82,10 +82,13 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
     };
   }
 
-  // 3. Read fresh views (post-reflect)
-  const index = readView(opts.memoryDir, 'INDEX.md');
-  const handoff = readView(opts.memoryDir, 'HANDOFF.md');
-  const constraints = readView(opts.memoryDir, 'CONSTRAINTS.md');
+  // 3. Read fresh views (post-reflect) — guard against missing view files
+  const safeReadView = (name: string): string => {
+    try { return readView(opts.memoryDir, name); } catch { return ''; }
+  };
+  const index = safeReadView('INDEX.md');
+  const handoff = safeReadView('HANDOFF.md');
+  const constraints = safeReadView('CONSTRAINTS.md');
 
   // Update bundle with fresh views
   bundle.index = index;

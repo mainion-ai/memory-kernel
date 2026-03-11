@@ -29,7 +29,7 @@ export const AtomFrontmatterSchema = z.object({
       domains: z.array(z.string()).optional(),
     })
     .optional(),
-  classification: z.enum(CLASSIFICATIONS).optional(),
+  classification: z.enum(CLASSIFICATIONS).default('TEAM'),
   provenance: z
     .object({
       episodes: z.array(z.string()).optional(),
@@ -97,7 +97,7 @@ let eventCounter = 0;
 
 /** Random 4-char nonce for ID uniqueness across module reloads. */
 function nonce(): string {
-  return Math.random().toString(36).slice(2, 6);
+  return Math.random().toString(36).slice(2, 6).padEnd(4, '0');
 }
 
 /**
