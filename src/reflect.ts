@@ -9,7 +9,6 @@ import fs from 'fs';
 import path from 'path';
 import { appendEvent, readEvents } from './event-log.js';
 import { normalizeTimestamp, serializeAtom } from './format.js';
-import { generateAtomId } from './schema.js';
 import {
   renderIndex,
   renderDecisions,
@@ -19,7 +18,8 @@ import {
 } from './renderers.js';
 import { assertWithinDir, listAtoms, readAtom, writeAtom, atomFilePath, writeView, readView } from './store.js';
 import { indexExists, indexAtom, removeFromIndex } from './index-db.js';
-import type { Atom, ReflectResult } from './types.js';
+import { generateAtomId } from './schema.js';
+import type { Atom, AtomType, ReflectResult } from './types.js';
 
 export interface ReflectOptions {
   agent_id: string;
@@ -79,15 +79,16 @@ export function reflect(opts: ReflectOptions): ReflectResult {
   result.promoted = autoPromote(opts, atoms);
 
   // 4. Conflict detection
-  result.conflicts_found = detectConflicts(opts, atoms);
+  const conflictResult = detectConflicts(opts, atoms);
+  result.conflicts_found = conflictResult.total;
 
   // 5. Regenerate views — re-read from disk for accuracy
   // (views need the absolute latest state including file renames from promotion)
   regenerateViews(opts);
 
   // Count per-atom events emitted by sub-phases
-  // Each expired/deduped/promoted atom generates one event
-  result.events_emitted = result.expired + result.deduped + result.promoted;
+  // Each expired/deduped/promoted atom generates one event; only NEW conflicts emit events
+  result.events_emitted = result.expired + result.deduped + result.promoted + conflictResult.newCount;
 
   // Emit reflect event
   appendEvent(opts.memoryDir, 'reflect_completed', {
@@ -366,139 +367,144 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
 }
 
 /**
- * Detect potential conflicts: fact/decision atoms of the same type with
- * overlapping scope paths and confidence diff > 0.3.
- * Creates a conflict atom in CONFLICTS/ for each new pair detected.
- * Idempotent: skips pairs that already have a conflict atom.
- *
- * Returns total active conflict atoms (pre-existing + newly created).
+ * Types eligible for conflict detection: "factual" types where contradicting
+ * claims between two active atoms are meaningful.
  */
-function detectConflicts(opts: ReflectOptions, atoms: Atom[]): number {
-  const THRESHOLD = 0.3;
-  const CONFLICT_TYPES = ['fact', 'decision'];
+const CONFLICT_ELIGIBLE_TYPES: AtomType[] = ['fact', 'decision', 'constraint'];
 
-  // Pre-existing active conflict atoms (CONFLICTS/ dir is scanned by listAtoms)
-  const existingConflicts = atoms.filter(
+/**
+ * Detect potential conflicts between atoms of the same eligible type.
+ *
+ * Heuristic: two active atoms of the same type with overlapping scope paths
+ * and significantly different confidence values (>0.3 gap) are flagged as a
+ * potential conflict. This catches cases like two active "fact" atoms about
+ * the same scope that disagree in certainty — a common signal of divergence.
+ *
+ * When a conflict is detected:
+ * - A `conflict` atom is created in CONFLICTS/ (if one doesn't already exist
+ *   for this pair, identified by having both atom IDs in its body).
+ * - A `conflict_detected` event is emitted.
+ * - The new conflict atom is indexed if the index exists.
+ *
+ * Returns `{ total, newCount }` where `total` is all active conflict atoms
+ * (pre-existing + newly created) and `newCount` is only those created this cycle.
+ */
+function detectConflicts(opts: ReflectOptions, atoms: Atom[]): { total: number; newCount: number } {
+  const eligible = atoms.filter(
+    (a) =>
+      CONFLICT_ELIGIBLE_TYPES.includes(a.frontmatter.type) &&
+      a.frontmatter.status === 'active',
+  );
+
+  // Count pre-existing active conflict atoms for the total return value
+  const preExistingConflicts = atoms.filter(
     (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
   );
 
-  // Build set of already-detected pair keys from structured links.related frontmatter
-  const existingPairKeys = new Set<string>();
-  for (const c of existingConflicts) {
-    const related = c.frontmatter.links?.related ?? [];
-    if (related.length >= 2) {
-      const sorted = [...related].sort();
-      existingPairKeys.add(`${sorted[0]}+${sorted[1]}`);
-    }
-  }
-
-  // Candidates: active fact/decision atoms with at least one scope path
-  const candidates = atoms.filter(
-    (a) =>
-      CONFLICT_TYPES.includes(a.frontmatter.type) &&
-      a.frontmatter.status === 'active' &&
-      (a.frontmatter.scope?.paths?.length ?? 0) > 0,
-  );
+  // Build existing conflict bodies so we don't create duplicates
+  const existingConflictBodies = new Set(preExistingConflicts.map((a) => a.body));
 
   let newConflicts = 0;
 
-  // O(n²) over candidates — acceptable for typical knowledge bases (<1000 active facts/decisions).
-  // If scale becomes a concern, pre-group by type and build a path-index for faster overlap checks.
-  for (let i = 0; i < candidates.length; i++) {
-    for (let j = i + 1; j < candidates.length; j++) {
-      const a = candidates[i];
-      const b = candidates[j];
+  // Check all pairs of active eligible atoms of the same type
+  for (let i = 0; i < eligible.length; i++) {
+    for (let j = i + 1; j < eligible.length; j++) {
+      const a = eligible[i];
+      const b = eligible[j];
 
-      // Same type only (fact↔fact, decision↔decision)
+      // Must be the same type
       if (a.frontmatter.type !== b.frontmatter.type) continue;
 
-      // Scope path overlap required
+      // Must have overlapping scope paths (if both have paths)
       const aPaths = a.frontmatter.scope?.paths ?? [];
       const bPaths = b.frontmatter.scope?.paths ?? [];
-      const overlaps = aPaths.some((ap) => bPaths.some((bp) => scopePathsOverlap(ap, bp)));
-      if (!overlaps) continue;
+      if (aPaths.length > 0 && bPaths.length > 0) {
+        const overlaps = aPaths.some((ap) => bPaths.some((bp) => pathOverlaps(ap, bp)));
+        if (!overlaps) continue;
+      }
 
-      // Confidence diff must exceed threshold
-      const diff = Math.abs(a.frontmatter.confidence - b.frontmatter.confidence);
-      if (diff <= THRESHOLD) continue;
+      // Confidence gap > 0.3 signals potential disagreement
+      const confidenceGap = Math.abs(a.frontmatter.confidence - b.frontmatter.confidence);
+      if (confidenceGap <= 0.3) continue;
 
-      // Idempotency: skip if conflict already exists for this pair
-      const ids = [a.frontmatter.id, b.frontmatter.id].sort();
-      const pairKey = `${ids[0]}+${ids[1]}`;
-      if (existingPairKeys.has(pairKey)) continue;
+      // Check for duplicate — if both IDs already appear in an existing conflict body, skip
+      const duplicate = [...existingConflictBodies].some(
+        (body) => body.includes(a.frontmatter.id) && body.includes(b.frontmatter.id),
+      );
+      if (duplicate) continue;
 
-      // Create conflict atom and emit event
-      createConflictAtom(opts, a, b, pairKey, diff);
-      existingPairKeys.add(pairKey);
+      // Create a conflict atom
+      const conflictBody = [
+        `## Conflict`,
+        ``,
+        `Two active \`${a.frontmatter.type}\` atoms in the same scope disagree in confidence.`,
+        ``,
+        `### Atom A`,
+        `- ID: ${a.frontmatter.id}`,
+        `- Confidence: ${a.frontmatter.confidence}`,
+        `- Scope paths: ${aPaths.join(', ') || '(unscoped)'}`,
+        ``,
+        `### Atom B`,
+        `- ID: ${b.frontmatter.id}`,
+        `- Confidence: ${b.frontmatter.confidence}`,
+        `- Scope paths: ${bPaths.join(', ') || '(unscoped)'}`,
+        ``,
+        `### Resolution`,
+        `Review both atoms and archive or update the one that is incorrect or outdated.`,
+      ].join('\n');
+
+      const conflictId = generateAtomId('conflict', `${a.frontmatter.id}-vs-${b.frontmatter.id}`);
+      const now = normalizeTimestamp();
+
+      const conflictAtom: Atom = {
+        frontmatter: {
+          id: conflictId,
+          type: 'conflict',
+          status: 'active',
+          confidence: 1.0,
+          created_at: now,
+          updated_at: now,
+          ttl_days: null,
+          classification: a.frontmatter.classification ?? b.frontmatter.classification ?? 'TEAM',
+          links: { related: [a.frontmatter.id, b.frontmatter.id] },
+        },
+        body: conflictBody,
+      };
+
+      const conflictPath = atomFilePath(opts.memoryDir, conflictId, 'conflict');
+      assertWithinDir(opts.memoryDir, conflictPath);
+      writeAtom(conflictAtom, conflictPath);
+      conflictAtom.filePath = conflictPath;
+
+      appendEvent(opts.memoryDir, 'conflict_detected', {
+        agent_id: opts.agent_id,
+        session_id: opts.session_id,
+        atom_refs: [conflictId, a.frontmatter.id, b.frontmatter.id],
+        schema_version: 2,
+        atom_snapshot: JSON.stringify(conflictAtom.frontmatter),
+        meta: { reason: 'confidence-gap', gap: confidenceGap },
+      });
+
+      if (indexExists(opts.memoryDir)) {
+        indexAtom(opts.memoryDir, conflictAtom);
+      }
+
+      existingConflictBodies.add(conflictBody);
       newConflicts++;
     }
   }
 
-  return existingConflicts.length + newConflicts;
+  return { total: preExistingConflicts.length + newConflicts, newCount: newConflicts };
 }
 
 /**
- * Check if two scope paths overlap at a directory boundary.
+ * Check if two scope paths overlap (directory-boundary prefix matching).
  */
-function scopePathsOverlap(a: string, b: string): boolean {
+function pathOverlaps(a: string, b: string): boolean {
   if (a === b) return true;
   const aSep = a.endsWith('/') ? a : a + '/';
   const bSep = b.endsWith('/') ? b : b + '/';
   return a.startsWith(bSep) || b.startsWith(aSep);
-}
-
-/**
- * Create a conflict atom in CONFLICTS/ and emit a conflict_detected event.
- */
-function createConflictAtom(
-  opts: ReflectOptions,
-  a: Atom,
-  b: Atom,
-  pairKey: string,
-  diff: number,
-): void {
-  // Use the unique suffix of each atom ID for a readable, short slug.
-  // generateAtomId appends its own counter+nonce, so uniqueness is guaranteed regardless.
-  const suffixA = a.frontmatter.id.split('-').slice(-1)[0] ?? 'a';
-  const suffixB = b.frontmatter.id.split('-').slice(-1)[0] ?? 'b';
-  const id = generateAtomId('conflict', `${suffixA}-vs-${suffixB}`);
-  const now = normalizeTimestamp();
-
-  const atom: Atom = {
-    frontmatter: {
-      id,
-      type: 'conflict',
-      status: 'active',
-      confidence: 0.8,
-      created_at: now,
-      updated_at: now,
-      ttl_days: null,
-      links: { related: [a.frontmatter.id, b.frontmatter.id] },
-    },
-    body:
-      `Potential conflict between atoms of the same type with overlapping scope:\n\n` +
-      `- **${a.frontmatter.id}** (confidence: ${a.frontmatter.confidence})\n` +
-      `- **${b.frontmatter.id}** (confidence: ${b.frontmatter.confidence})\n\n` +
-      `Confidence difference: ${diff.toFixed(2)} (threshold: 0.30)\n` +
-      `Overlapping scope: ${(a.frontmatter.scope?.paths ?? []).join(', ')}\n`,
-  };
-
-  const filePath = atomFilePath(opts.memoryDir, id, 'conflict');
-  writeAtom(atom, filePath);
-  atom.filePath = filePath;
-
-  appendEvent(opts.memoryDir, 'conflict_detected', {
-    agent_id: opts.agent_id,
-    session_id: opts.session_id,
-    atom_refs: [a.frontmatter.id, b.frontmatter.id, id],
-    schema_version: 2,
-    atom_snapshot: serializeAtom(atom),
-    meta: { pair_key: pairKey, confidence_diff: diff },
-  });
-
-  if (indexExists(opts.memoryDir)) {
-    indexAtom(opts.memoryDir, atom);
-  }
 }
 
 /**

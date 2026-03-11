@@ -37,6 +37,7 @@ import { checkpoint } from '../checkpoint.js';
 import { bootstrapEvents } from '../bootstrap.js';
 import { replayFromFile } from '../replay.js';
 import { compactLog } from '../event-log.js';
+import { writeEpisode, listEpisodes } from '../episodes.js';
 
 const program = new Command();
 
@@ -120,11 +121,19 @@ program
   .command('recall')
   .description('Load relevant context for a task')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
-  .option('-t, --task <task>', 'Task description')
+  .option('-t, --task <task>', 'Task description (enables FTS-based re-ranking)')
   .option('--paths <paths...>', 'Scope paths to match')
   .option('--types <types...>', 'Filter by atom type')
   .option('--max-tokens <n>', 'Token budget', parseInt)
-  .action((opts: { dir: string; task?: string; paths?: string[]; types?: string[]; maxTokens?: number }) => {
+  .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
+  .action((opts: {
+    dir: string;
+    task?: string;
+    paths?: string[];
+    types?: string[];
+    maxTokens?: number;
+    includeEpisodes?: boolean;
+  }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
       console.error(`✗ Memory directory not found: ${memoryDir}`);
@@ -136,6 +145,7 @@ program
       paths: opts.paths,
       types: opts.types as any,
       max_tokens: opts.maxTokens,
+      include_episodes: opts.includeEpisodes,
     });
 
     console.log(`=== Context Bundle (≈${bundle.token_estimate} tokens) ===\n`);
@@ -151,6 +161,13 @@ program
       for (const atom of bundle.atoms) {
         console.log(`\n[${atom.frontmatter.type}] ${atom.frontmatter.id} (${atom.frontmatter.status})`);
         console.log(atom.body.slice(0, 200) + (atom.body.length > 200 ? '...' : ''));
+      }
+    }
+
+    if (bundle.episodes && bundle.episodes.length > 0) {
+      console.log(`\n--- EPISODES (${bundle.episodes.length}) ---`);
+      for (const ep of bundle.episodes) {
+        console.log('\n' + ep);
       }
     }
   });
@@ -475,6 +492,65 @@ program
 
     if (opts.outputDir) {
       console.log(`  Output written to: ${path.resolve(opts.outputDir)}`);
+    }
+  });
+
+// --- mk episode ---
+program
+  .command('episode')
+  .description('Write a session/episode summary to EPISODES/')
+  .requiredOption('--session-id <id>', 'Session ID (used to generate episode file name)')
+  .requiredOption('--summary <text>', 'Episode summary text (markdown)')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--tags <tags...>', 'Tags for this episode')
+  .option('--agent-id <id>', 'Agent ID', 'cli')
+  .action((opts: { dir: string; sessionId: string; summary: string; tags?: string[]; agentId: string }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    const id = writeEpisode(
+      memoryDir,
+      opts.sessionId,
+      opts.summary,
+      { tags: opts.tags },
+      { agent_id: opts.agentId },
+    );
+
+    console.log(`✓ Episode written: ${id}`);
+    console.log(`  File: EPISODES/${id}.md`);
+  });
+
+// --- mk episodes ---
+program
+  .command('episodes')
+  .description('List recent episode summaries from EPISODES/')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--limit <n>', 'Max episodes to show', parseInt)
+  .action((opts: { dir: string; limit?: number }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    const episodes = listEpisodes(memoryDir, { limit: opts.limit });
+    if (episodes.length === 0) {
+      console.log('No episodes found. Use "mk episode --session-id <id> --summary <text>" to add one.');
+      return;
+    }
+
+    console.log(`Episodes (${episodes.length}):\n`);
+    for (const ep of episodes) {
+      const started = ep.metadata.started_at ?? 'unknown';
+      const tags = ep.metadata.tags?.join(', ') ?? '';
+      console.log(`  ${ep.id}  ${started}${tags ? '  [' + tags + ']' : ''}`);
+      const preview = ep.summary.split('\n')[0]?.slice(0, 80) ?? '';
+      if (preview) console.log(`    ${preview}`);
     }
   });
 

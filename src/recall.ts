@@ -10,6 +10,7 @@
 
 import { readView, listAtoms, readAtom } from './store.js';
 import { queryIndex, searchFts } from './index-db.js';
+import { listEpisodes } from './episodes.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 /**
@@ -53,23 +54,25 @@ export function recall(
     });
   }
 
-  // Task-aware re-ranking: use FTS5 BM25 scores to boost relevant atoms
+  // Task-aware re-ranking: if a task is provided, use FTS BM25 scores to re-order.
+  // Atoms with a strong match are surfaced first; unmatched atoms retain their status order.
+  // FTS5 rank is negative (lower = better match in SQLite BM25 convention).
   if (query.task && query.task.trim().length > 0) {
-    const ftsResults = searchFts(memoryDir, query.task);
+    const ftsResults = searchFts(memoryDir, query.task, Math.max(filtered.length, 200));
     if (ftsResults && ftsResults.length > 0) {
-      // Build score map — FTS5 rank: more negative = better match
-      const scoreMap = new Map<string, number>();
-      for (const r of ftsResults) {
-        scoreMap.set(r.atom_id, r.rank);
-      }
-      // Sort: FTS-matched atoms first (by rank), then unmatched in original order
+      // Build score map: atom_id → rank (negative; lower is better)
+      const scoreMap = new Map(ftsResults.map((r) => [r.atom_id, r.rank]));
       filtered.sort((a, b) => {
-        const sa = scoreMap.get(a.frontmatter.id);
-        const sb = scoreMap.get(b.frontmatter.id);
-        if (sa !== undefined && sb !== undefined) return sa - sb; // both matched
-        if (sa !== undefined) return -1; // a matched, b didn't
-        if (sb !== undefined) return 1;  // b matched, a didn't
-        return 0; // neither matched — preserve prior order
+        const rankA = scoreMap.get(a.frontmatter.id) ?? 0; // 0 = no match = worst
+        const rankB = scoreMap.get(b.frontmatter.id) ?? 0;
+        // Both match FTS: sort by rank ascending (lower/more-negative = better)
+        if (rankA !== 0 || rankB !== 0) {
+          if (rankA !== rankB) return rankA - rankB;
+        }
+        // Fallback: status priority, then recency
+        const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
+        if (statusOrder !== 0) return statusOrder;
+        return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
       });
     }
   }
@@ -87,12 +90,32 @@ export function recall(
     0,
   );
 
+  // Episodes — load on demand only (never included in startup context by default)
+  let episodeStrings: string[] | undefined;
+  let episodeTokens = 0;
+  if (query.include_episodes) {
+    const episodes = listEpisodes(memoryDir, { limit: 10 });
+    // If a task is specified, prefer episodes whose summary contains matching keywords
+    const relevant = query.task
+      ? episodes.filter((ep) =>
+          query.task!.toLowerCase().split(/\s+/).some((word) =>
+            ep.summary.toLowerCase().includes(word),
+          ),
+        )
+      : episodes;
+    episodeStrings = relevant.map(
+      (ep) => `## Episode: ${ep.id}\n\n${ep.summary}`,
+    );
+    episodeTokens = episodeStrings.reduce((s, e) => s + estimateTokens(e), 0);
+  }
+
   return {
     index,
     handoff,
     constraints,
     atoms: filtered,
-    token_estimate: baseTokens + atomTokens,
+    ...(episodeStrings !== undefined && { episodes: episodeStrings }),
+    token_estimate: baseTokens + atomTokens + episodeTokens,
   };
 }
 

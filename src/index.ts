@@ -18,6 +18,8 @@ export type {
   BootstrapResult,
   CompactResult,
   KernelConfig,
+  Episode,
+  EpisodeMetadata,
 } from './types.js';
 
 // Schema & validation
@@ -78,7 +80,7 @@ export {
   indexStats,
   searchFts,
 } from './index-db.js';
-export type { IndexQueryResult, FtsResult } from './index-db.js';
+export type { IndexQueryResult } from './index-db.js';
 
 // Renderers
 export {
@@ -110,11 +112,15 @@ export { replay, replayFromFile } from './replay.js';
 // Bootstrap
 export { bootstrapEvents } from './bootstrap.js';
 
-// Episode store
-export { writeEpisode, readEpisode, listEpisodes, linkEpisodeToAtom } from './episodes.js';
-export type { Episode, ListEpisodesOptions } from './episodes.js';
-
 // Operations
 export { createAtom, updateAtom, archiveAtom } from './retain.js';
 export { recall } from './recall.js';
 export { reflect } from './reflect.js';
+
+// Episode store
+export {
+  writeEpisode,
+  readEpisode,
+  listEpisodes,
+  linkEpisodeToAtom,
+} from './episodes.js';

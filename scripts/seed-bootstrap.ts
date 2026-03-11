@@ -1,34 +1,24 @@
 /**
  * Bootstrap seed — populate my real memory with what I know.
  *
- * Configure via environment variables before running:
- *   MEMORY_DIR       — path to memory kernel directory (required)
- *   MAINION_IP       — device IP address
- *   MAINION_EMAIL    — account email
+ * Configure sensitive values via environment variables before running:
+ *   MAINION_IP       — device IP address (default: <IP_ADDRESS>)
+ *   MAINION_EMAIL    — account email (default: <EMAIL>)
  *   MAINION_SSH_PATH — SSH key path (default: ~/.ssh/id_ed25519_github)
  */
 
 import { createAtom } from '../src/index.js';
 
-const MEMORY_DIR = process.env.MEMORY_DIR ?? '';
-if (!MEMORY_DIR) {
-  console.error('Error: MEMORY_DIR environment variable is required.');
-  process.exit(1);
-}
-
+const MEMORY_DIR = '/home/np/repos/memory/kernel';
 const base = {
   memoryDir: MEMORY_DIR,
   agent_id: 'mainion-ai',
   session_id: 'bootstrap-2026-03-09',
 };
 
-const identityIp = process.env.MAINION_IP ?? '';
-const identityEmail = process.env.MAINION_EMAIL ?? '';
+const identityIp = process.env.MAINION_IP ?? '<IP_ADDRESS>';
+const identityEmail = process.env.MAINION_EMAIL ?? '<EMAIL>';
 const identitySshPath = process.env.MAINION_SSH_PATH ?? '~/.ssh/id_ed25519_github';
-
-if (!identityIp || !identityEmail) {
-  console.warn('⚠️  Warning: MAINION_IP and/or MAINION_EMAIL not set — atoms will contain empty values.');
-}
 
 // --- Facts ---
 
