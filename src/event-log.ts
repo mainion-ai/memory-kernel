@@ -189,7 +189,9 @@ export function compactLog(memoryDir: string): CompactResult {
   const ndjson = finalCompacted.map((e) => JSON.stringify(e)).join('\n') + '\n';
   writeFileAtomic(logPath, ndjson);
 
-  return { events_before: eventsBefore, events_after: finalCompacted.length, removed: eventsBefore - finalCompacted.length, backup_path: backupPath };
+  // `removed` counts events eliminated from the original log, not net of concurrent appends.
+  // `events_after` reflects the final file length (original survivors + concurrent appends).
+  return { events_before: eventsBefore, events_after: finalCompacted.length, removed: eventsBefore - compacted.length, backup_path: backupPath };
 }
 
 /**
