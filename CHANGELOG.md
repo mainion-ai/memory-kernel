@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file.
   - Special atom types: conflict atoms in `CONFLICTS/`, conflict detection in reflect, empty scope arrays.
   - Replay edge cases: empty event list, V1 archive event, non-existent file, full create→update→update lifecycle.
   - Large-scale performance: 500 atoms reflect < 15 s, 50 × create→update→archive lifecycle.
-- **Finding #1 documented** (see `CODING_INSTRUCTIONS.md`): `replay()` / `replayFromFile()` silently accept invalid atom type/status/confidence in snapshots — no Zod validation at the replay layer. The stress test asserts this **actual** (silent) behavior so any future schema-validation addition will be a conscious, visible change.
+- **Replay snapshot validation** — `replay()` / `replayFromFile()` now validate atom snapshots against `AtomFrontmatterSchema` at replay time. Events with invalid `type`, `status`, or out-of-range `confidence` are reported in `errors` and excluded from the reconstructed atom map (not silently accepted). The stress test asserts this validated behavior.
 - Total: **383 tests passing** (up from 329).
 
 ## [0.5.0] — 2026-03-10
@@ -50,7 +50,7 @@ All notable changes to this project will be documented in this file.
 - **`schema.ts` separate ID counters** — atom and event ID generators now use independent counters with random nonces to prevent interleaving.
 - **`schema.ts` DEFAULT_TTLS typing** — typed as `Record<AtomType, number | null>` instead of `Record<string, ...>`.
 - **CLI directory guards** — `recall`, `reflect`, `gc` commands now check for directory existence before operating.
-- **`package.json` version** — corrected from `0.1.1` to match actual release version.
+- **`package.json` version** — corrected from `0.1.1` to `0.5.0`.
 
 ### Added
 - **Log compaction** (`compactLog`) — removes intermediate mutation events, keeping only the latest per atom plus all non-mutation events. Creates timestamped backup before writing. Available via `mk compact` CLI command.

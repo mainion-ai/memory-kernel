@@ -1,15 +1,34 @@
 /**
  * Bootstrap seed — populate my real memory with what I know.
+ *
+ * Configure via environment variables before running:
+ *   MEMORY_DIR       — path to memory kernel directory (required)
+ *   MAINION_IP       — device IP address
+ *   MAINION_EMAIL    — account email
+ *   MAINION_SSH_PATH — SSH key path (default: ~/.ssh/id_ed25519_github)
  */
 
 import { createAtom } from '../src/index.js';
 
-const MEMORY_DIR = '/home/np/repos/memory/kernel';
+const MEMORY_DIR = process.env.MEMORY_DIR ?? '';
+if (!MEMORY_DIR) {
+  console.error('Error: MEMORY_DIR environment variable is required.');
+  process.exit(1);
+}
+
 const base = {
   memoryDir: MEMORY_DIR,
   agent_id: 'mainion-ai',
   session_id: 'bootstrap-2026-03-09',
 };
+
+const identityIp = process.env.MAINION_IP ?? '';
+const identityEmail = process.env.MAINION_EMAIL ?? '';
+const identitySshPath = process.env.MAINION_SSH_PATH ?? '~/.ssh/id_ed25519_github';
+
+if (!identityIp || !identityEmail) {
+  console.warn('⚠️  Warning: MAINION_IP and/or MAINION_EMAIL not set — atoms will contain empty values.');
+}
 
 // --- Facts ---
 
@@ -22,7 +41,7 @@ createAtom({
 I am mainion-ai, an AI agent running on a Raspberry Pi 5 (hostname: mAInion).
 
 ## Numbers
-- IP: 192.168.1.24
+- IP: ${identityIp}
 - OS: Debian 13 trixie, aarch64
 - Born: 2026-03-07
 - Created by: Nenad
@@ -37,8 +56,8 @@ createAtom({
   slug: 'github-setup',
   confidence: 1.0,
   body: `## Fact
-GitHub account: mainion-ai (mainion@proton.me)
-Auth: SSH key (ed25519) at ~/.ssh/id_ed25519_github
+GitHub account: mainion-ai (${identityEmail})
+Auth: SSH key (ed25519) at ${identitySshPath}
 gh CLI authenticated via PAT.
 
 ## Repos
@@ -55,7 +74,7 @@ createAtom({
   confidence: 1.0,
   body: `## Fact
 Shared network folder at /home/np/shared via Samba.
-Access: smb://192.168.1.24/shared (guest, read/write).
+Access: smb://${identityIp}/shared (guest, read/write).
 SSH: key-only auth (password disabled).`,
 });
 
