@@ -64,8 +64,10 @@ export function bootstrapEvents(opts: {
 
   if (importEvents.length > 0) {
     // Backup only when we actually have new imports to write
+    let actualBackupPath = '';
     if (fs.existsSync(logPath)) {
       fs.copyFileSync(logPath, backupPath);
+      actualBackupPath = backupPath;
     }
     const allEvents = [...importEvents, ...existingEvents];
     const ndjson = allEvents.map((e) => JSON.stringify(e)).join('\n') + '\n';
@@ -75,7 +77,7 @@ export function bootstrapEvents(opts: {
       imported: importEvents.length,
       skipped,
       events_written: allEvents.length,
-      backup_path: backupPath,
+      backup_path: actualBackupPath,
     };
   }
 

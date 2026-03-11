@@ -76,7 +76,8 @@ if (decisions.length > 0) {
   lines.push('## Decisions');
   lines.push('');
   for (const d of decisions) {
-    lines.push(`### ${d.frontmatter.id} (confidence: ${d.frontmatter.confidence})`);
+    const dConfSuffix = d.frontmatter.confidence !== undefined ? ` (confidence: ${d.frontmatter.confidence})` : '';
+    lines.push(`### ${d.frontmatter.id}${dConfSuffix}`);
     lines.push(d.body.trim());
     lines.push('');
   }
@@ -120,7 +121,8 @@ if (beliefs.length > 0) {
   lines.push('## Beliefs (unverified)');
   lines.push('');
   for (const b of beliefs) {
-    lines.push(`### ${b.frontmatter.id} (confidence: ${b.frontmatter.confidence})`);
+    const bConfSuffix = b.frontmatter.confidence !== undefined ? ` (confidence: ${b.frontmatter.confidence})` : '';
+    lines.push(`### ${b.frontmatter.id}${bConfSuffix}`);
     lines.push(b.body.trim());
     lines.push('');
   }

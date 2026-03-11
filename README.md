@@ -352,11 +352,11 @@ my-memory/
                        └────┬────┘  └──────┬──────┘
                             │              │
                             ▼              ▼
-                     ┌──────────────────-───────┐
+                     ┌───────────────────────────┐
                      │  Load atom files         │
                      │  Sort by status priority │
                      │  Trim to token budget    │
-                     └────────────┬──────-──────┘
+                     └────────────┬─────────────┘
                                   │
                                   ▼
                           ┌───────────────┐
@@ -590,7 +590,7 @@ Memory Kernel was built to work with [NanoClaw](https://github.com/nicepkg/nanoc
 ### How it works
 
 ```
-┌─────────────────┐     nightly cron     ┌──────────────-────┐
+┌─────────────────┐     nightly cron     ┌────────────────────┐
 │  memory-kernel  │ ──────────────────►  │    NanoClaw       │
 │                 │                      │                   │
 │  ENTITIES/      │     mk reflect       │  groups/          │
@@ -601,7 +601,7 @@ Memory Kernel was built to work with [NanoClaw](https://github.com/nicepkg/nanoc
 │                 │                      │   session start)  │
 │                 │     git push         │                   │
 │                 │ ──────────────────►  │                   │
-└─────────────────┘                      └─────-─────────────┘
+└─────────────────┘                      └────────────────────┘
 
   Nightly cycle:
   23:00 → reflect → render CLAUDE.md → git push
