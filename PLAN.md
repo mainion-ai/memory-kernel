@@ -2,13 +2,13 @@
 
 **Started:** 2026-03-09
 **Builder:** mainion-ai (Claude agent on Raspberry Pi 5)
-**Status:** v0.6.0 — Milestone C complete
+**Status:** v0.7.0 — Milestone D complete
 
 ## What this is
 
 A model-agnostic, file-first memory kernel for AI agents. Prevents context degradation, compaction loss, and cross-session amnesia through typed memory atoms with explicit lifecycle controls.
 
-Based on [memory-kernel-prd.md](./docs/memory-kernel-prd.md) with scope trimmed to single-agent MVP.
+Based on [memory-kernel-prd-v1.2.md](./docs/memory-kernel-prd-v1.2.md) with scope trimmed to single-agent MVP.
 
 ## Architecture (v0.1)
 
@@ -62,13 +62,14 @@ memory-kernel/
 
 ## Scoped OUT of v0.1
 
-- Multi-agent merge / CRDTs
 - MCP server
 - Encryption at rest
 - Benchmark eval suites (LongMemEval, LoCoMo)
 - Adapters (Letta, LangGraph, Mem0)
 - Semantic/vector recall
 - Graph-based recall
+
+> Multi-agent merge (event-log union, Pattern B) was originally out-of-scope but was implemented in v0.7.0 (Milestone D).
 
 ## Key decisions made
 
@@ -106,11 +107,11 @@ memory-kernel/
 | v0.5.0 | Code review | Security fixes, reflect index sync, reflect single-pass, log compaction, schema versioning | 329 |
 | v0.5.1 | Stress tests | 54 stress/edge-case tests across all subsystems | 383 |
 | **v0.6.0** | **Milestone C** | FTS5 search, task-aware recall, episode store, conflict detection heuristic | **434** |
+| **v0.7.0** | **Milestone D** | Multi-agent event-log union merge, `mergeEventLogs()` SDK, `mk merge` CLI, conflict atoms for concurrent updates | **448** |
 
 ## Upcoming milestones
 
 | Milestone | Target | Key changes |
 |-----------|--------|-------------|
-| D | v0.7.0 | Multi-agent merge (`src/merge.ts`), event-log union, `mk merge` CLI |
 | E | v0.8.0 | MCP server (`src/mcp/server.ts`), 7 tools, 4 resources, contract tests |
 | F | v1.0.0 | Encryption (SECRET), read audit logging, `mk import`, v1.0 polish |

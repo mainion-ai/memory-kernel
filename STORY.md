@@ -587,4 +587,80 @@ Memory Kernel works because it respects a few simple principles:
 
 5. **Automatic maintenance.** Reflect runs periodically and handles the housekeeping — expiring stale data, removing duplicates, promoting confirmed beliefs. The memory stays clean without manual intervention.
 
+6. **Collaboration without coordination.** When two agents work in parallel, their memories can be merged later without locking or synchronisation during the work. The event log records everything; the merge step reconciles it.
+
+---
+
+## Chapter 14: When Two Agents Meet — Merging Memories
+
+### The Parallel Universe Problem
+
+Imagine your team deploys two AI agents to work on the same codebase over the weekend. Agent A is fixing bugs. Agent B is exploring a refactor. Both have their own memory directories. Both are writing facts, decisions, and constraints as they go.
+
+On Monday, you want to combine their knowledge. What happens?
+
+Without a merge mechanism, you'd have to choose: keep Agent A's memory, or keep Agent B's memory. You'd lose half the work.
+
+With Memory Kernel's merge, you union them — keeping everything both agents learned, automatically detecting where they disagreed.
+
+### The Event Log Is the Key
+
+Here's the clever part: because Memory Kernel is event-sourced, every memory directory tells you *exactly what happened and when*. Each create, update, and archive is a timestamped event in `events.ndjson`.
+
+When you merge two event logs, you're not merging messy state — you're merging a clean, ordered history of facts.
+
+```
+Agent A's events.ndjson:          Agent B's events.ndjson:
+  t=1: create FACT-A1               t=1: create FACT-B1
+  t=3: create FACT-A2               t=2: update FACT-A1 (different value!)
+  t=5: update FACT-A1               t=4: create FACT-B2
+```
+
+### What mk merge Does
+
+```bash
+mk merge -d ./agent-a-memory --remote ./agent-b-memory
+```
+
+The merge algorithm (§11.7 Pattern B from the PRD) does four things:
+
+1. **Union** — Combine all events from both logs, deduplicated by `event_id`. If the same event appears in both (e.g., a shared starting point), it's counted only once.
+
+2. **Sort** — Order all events by `(timestamp, event_id)`. This gives a deterministic, total ordering of every action both agents ever took.
+
+3. **Replay** — Run the merged event sequence through the same deterministic reducer that built each agent's memory from scratch. The result is a new, unified atom set that reflects everything both agents learned.
+
+4. **Conflict detection** — If the same atom was mutated independently by *both* agents (i.e., it appears in Agent A's unique events *and* Agent B's unique events), the merge creates a `conflict` atom flagging the disagreement. This surfaces to `reflect()` for human or automated resolution.
+
+### The Filing Cabinet Analogy
+
+Imagine two assistants both keeping a shared filing cabinet, but working in separate rooms. Agent A files a note: "The database timeout is 30 seconds." Agent B, independently, files a note: "The database timeout is 60 seconds."
+
+When you merge the cabinets, you don't silently pick one and discard the other. Instead, a sticky note appears on top: "CONFLICT: two agents disagree about database timeout — see CONFLICTS/ for details."
+
+The merge never loses information. It surfaces disagreements for resolution.
+
+### Dry-Run Mode
+
+Not sure what will happen? Use `--dry-run` to preview:
+
+```bash
+mk merge -d ./agent-a-memory --remote ./agent-b-memory --dry-run
+```
+
+This shows you how many atoms would be written and how many conflicts would be created — without touching any files.
+
+### When to Merge
+
+- After two agents worked on the same project in parallel
+- When pulling a teammate's memory directory into your own
+- After restoring from a backup: merge the backup's events with the current log to get a complete history
+- In CI: merge the memory from a feature branch run with the main branch memory before deploy
+
+### The Result
+
+After `mk merge`, you have one memory directory that knows everything both agents knew. Run `mk reflect` to clean up any stale or duplicate atoms that surfaced in the merge, and run `mk recall` to load the unified context into your next session.
+
+The two agents' weekend work is combined in seconds, with no data lost and disagreements clearly flagged.
+
 That's it. A filing cabinet for AI agents, built from markdown files, an event log, and three simple operations. No magic, no proprietary formats, no cloud dependencies. Just structured knowledge that persists.
