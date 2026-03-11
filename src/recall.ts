@@ -9,7 +9,7 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex } from './index-db.js';
+import { queryIndex, searchFts } from './index-db.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 /**
@@ -51,6 +51,27 @@ export function recall(
       if (statusOrder !== 0) return statusOrder;
       return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
     });
+  }
+
+  // Task-aware re-ranking: use FTS5 BM25 scores to boost relevant atoms
+  if (query.task && query.task.trim().length > 0) {
+    const ftsResults = searchFts(memoryDir, query.task);
+    if (ftsResults && ftsResults.length > 0) {
+      // Build score map — FTS5 rank: more negative = better match
+      const scoreMap = new Map<string, number>();
+      for (const r of ftsResults) {
+        scoreMap.set(r.atom_id, r.rank);
+      }
+      // Sort: FTS-matched atoms first (by rank), then unmatched in original order
+      filtered.sort((a, b) => {
+        const sa = scoreMap.get(a.frontmatter.id);
+        const sb = scoreMap.get(b.frontmatter.id);
+        if (sa !== undefined && sb !== undefined) return sa - sb; // both matched
+        if (sa !== undefined) return -1; // a matched, b didn't
+        if (sb !== undefined) return 1;  // b matched, a didn't
+        return 0; // neither matched — preserve prior order
+      });
+    }
   }
 
   // Estimate base view tokens (rough: 4 chars per token)

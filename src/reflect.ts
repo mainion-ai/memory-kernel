@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { appendEvent, readEvents } from './event-log.js';
 import { normalizeTimestamp, serializeAtom } from './format.js';
+import { generateAtomId } from './schema.js';
 import {
   renderIndex,
   renderDecisions,
@@ -365,18 +366,139 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
 }
 
 /**
- * Detect potential conflicts: atoms of same type with overlapping scope
- * that have contradicting statuses or recently updated by different agents.
+ * Detect potential conflicts: fact/decision atoms of the same type with
+ * overlapping scope paths and confidence diff > 0.3.
+ * Creates a conflict atom in CONFLICTS/ for each new pair detected.
+ * Idempotent: skips pairs that already have a conflict atom.
  *
- * @todo v0.2 — Implement actual conflict detection (scope overlap analysis,
- * contradicting statuses, multi-agent divergence). Currently only counts
- * pre-existing conflict atoms; does not detect or emit new conflicts.
+ * Returns total active conflict atoms (pre-existing + newly created).
  */
-function detectConflicts(_opts: ReflectOptions, atoms: Atom[]): number {
-  // v0.1: Only counts existing conflict atoms — does not detect new ones
-  return atoms.filter(
+function detectConflicts(opts: ReflectOptions, atoms: Atom[]): number {
+  const THRESHOLD = 0.3;
+  const CONFLICT_TYPES = ['fact', 'decision'];
+
+  // Pre-existing active conflict atoms (CONFLICTS/ dir is scanned by listAtoms)
+  const existingConflicts = atoms.filter(
     (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
-  ).length;
+  );
+
+  // Build set of already-detected pair keys from structured links.related frontmatter
+  const existingPairKeys = new Set<string>();
+  for (const c of existingConflicts) {
+    const related = c.frontmatter.links?.related ?? [];
+    if (related.length >= 2) {
+      const sorted = [...related].sort();
+      existingPairKeys.add(`${sorted[0]}+${sorted[1]}`);
+    }
+  }
+
+  // Candidates: active fact/decision atoms with at least one scope path
+  const candidates = atoms.filter(
+    (a) =>
+      CONFLICT_TYPES.includes(a.frontmatter.type) &&
+      a.frontmatter.status === 'active' &&
+      (a.frontmatter.scope?.paths?.length ?? 0) > 0,
+  );
+
+  let newConflicts = 0;
+
+  // O(n²) over candidates — acceptable for typical knowledge bases (<1000 active facts/decisions).
+  // If scale becomes a concern, pre-group by type and build a path-index for faster overlap checks.
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      const a = candidates[i];
+      const b = candidates[j];
+
+      // Same type only (fact↔fact, decision↔decision)
+      if (a.frontmatter.type !== b.frontmatter.type) continue;
+
+      // Scope path overlap required
+      const aPaths = a.frontmatter.scope?.paths ?? [];
+      const bPaths = b.frontmatter.scope?.paths ?? [];
+      const overlaps = aPaths.some((ap) => bPaths.some((bp) => scopePathsOverlap(ap, bp)));
+      if (!overlaps) continue;
+
+      // Confidence diff must exceed threshold
+      const diff = Math.abs(a.frontmatter.confidence - b.frontmatter.confidence);
+      if (diff <= THRESHOLD) continue;
+
+      // Idempotency: skip if conflict already exists for this pair
+      const ids = [a.frontmatter.id, b.frontmatter.id].sort();
+      const pairKey = `${ids[0]}+${ids[1]}`;
+      if (existingPairKeys.has(pairKey)) continue;
+
+      // Create conflict atom and emit event
+      createConflictAtom(opts, a, b, pairKey, diff);
+      existingPairKeys.add(pairKey);
+      newConflicts++;
+    }
+  }
+
+  return existingConflicts.length + newConflicts;
+}
+
+/**
+ * Check if two scope paths overlap at a directory boundary.
+ */
+function scopePathsOverlap(a: string, b: string): boolean {
+  if (a === b) return true;
+  const aSep = a.endsWith('/') ? a : a + '/';
+  const bSep = b.endsWith('/') ? b : b + '/';
+  return a.startsWith(bSep) || b.startsWith(aSep);
+}
+
+/**
+ * Create a conflict atom in CONFLICTS/ and emit a conflict_detected event.
+ */
+function createConflictAtom(
+  opts: ReflectOptions,
+  a: Atom,
+  b: Atom,
+  pairKey: string,
+  diff: number,
+): void {
+  // Use the unique suffix of each atom ID for a readable, short slug.
+  // generateAtomId appends its own counter+nonce, so uniqueness is guaranteed regardless.
+  const suffixA = a.frontmatter.id.split('-').slice(-1)[0] ?? 'a';
+  const suffixB = b.frontmatter.id.split('-').slice(-1)[0] ?? 'b';
+  const id = generateAtomId('conflict', `${suffixA}-vs-${suffixB}`);
+  const now = normalizeTimestamp();
+
+  const atom: Atom = {
+    frontmatter: {
+      id,
+      type: 'conflict',
+      status: 'active',
+      confidence: 0.8,
+      created_at: now,
+      updated_at: now,
+      ttl_days: null,
+      links: { related: [a.frontmatter.id, b.frontmatter.id] },
+    },
+    body:
+      `Potential conflict between atoms of the same type with overlapping scope:\n\n` +
+      `- **${a.frontmatter.id}** (confidence: ${a.frontmatter.confidence})\n` +
+      `- **${b.frontmatter.id}** (confidence: ${b.frontmatter.confidence})\n\n` +
+      `Confidence difference: ${diff.toFixed(2)} (threshold: 0.30)\n` +
+      `Overlapping scope: ${(a.frontmatter.scope?.paths ?? []).join(', ')}\n`,
+  };
+
+  const filePath = atomFilePath(opts.memoryDir, id, 'conflict');
+  writeAtom(atom, filePath);
+  atom.filePath = filePath;
+
+  appendEvent(opts.memoryDir, 'conflict_detected', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    atom_refs: [a.frontmatter.id, b.frontmatter.id, id],
+    schema_version: 2,
+    atom_snapshot: serializeAtom(atom),
+    meta: { pair_key: pairKey, confidence_diff: diff },
+  });
+
+  if (indexExists(opts.memoryDir)) {
+    indexAtom(opts.memoryDir, atom);
+  }
 }
 
 /**
