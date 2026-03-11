@@ -241,7 +241,7 @@ If you add a new operation that writes files, add the guard and a corresponding 
 
 ## PRD v1.2 — Implementation Status (as of v0.5.0)
 
-Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
+Reference PRD: `docs/memory-kernel-prd-v1.2.md` (2026-03-10, local-only, gitignored).
 
 ### What's DONE ✅
 
@@ -328,12 +328,14 @@ These are wired into the type system but have no implementation. Future mileston
 
 ## Milestone Roadmap (PRD v1.2)
 
-### Milestone C (next): Task-Aware Recall + Episodes → v0.6.0
-- **FR-2a**: Episode Store — `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom`
-- **FR-5**: FTS5 index in `index-db.ts` + task-aware ranking in `recall.ts`
-- **§11.6a**: Episode-aware recall (provenance, `include_episodes`, keyword match)
-- Tests: `test/episodes.test.ts`, `test/fts.test.ts`
-- CLI: `mk episode write/list`, recall `--task`, `--include-episodes`
+### Milestone C: ✅ COMPLETE → v0.6.0
+- **FR-2a**: Episode Store — `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom` ✅
+- **FR-5**: FTS5 index (schema v3) + task-aware BM25 ranking in `recall()` ✅
+- **§11.6a**: Episode-aware recall (`include_episodes`, keyword match) ✅
+- Conflict detection heuristic in `reflect.ts` ✅
+- Tests: `test/stress.test.ts` blocks 15–18 (FTS5, task-aware recall, episode store, conflict heuristic) ✅
+- CLI: `mk episode`, `mk episodes`, recall `--task`, `--include-episodes` ✅
+- Total test count: **398 passing** across 11 test files
 
 ### Milestone D: Multi-Agent Merge → v0.7.0
 - **FR-10**: Concurrent writers (advisory locks)
