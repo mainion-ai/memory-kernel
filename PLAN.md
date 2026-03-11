@@ -105,7 +105,7 @@ memory-kernel/
 | v0.4.0 | Milestone B | Event log V2 with snapshots, evidence store, replay engine, bootstrap migration | 282 |
 | v0.5.0 | Code review | Security fixes, reflect index sync, reflect single-pass, log compaction, schema versioning | 329 |
 | v0.5.1 | Stress tests | 54 stress/edge-case tests across all subsystems | 383 |
-| **v0.6.0** | **Milestone C** | FTS5 search, task-aware recall, episode store, conflict detection heuristic | **419** |
+| **v0.6.0** | **Milestone C** | FTS5 search, task-aware recall, episode store, conflict detection heuristic | **434** |
 
 ## Upcoming milestones
 

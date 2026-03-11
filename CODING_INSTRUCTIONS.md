@@ -20,7 +20,9 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/bootstrap.test.ts` | Event bootstrap migration |
 | `test/milestone-b.test.ts` | Integration: full event-sourced lifecycle |
 | `test/index-db.test.ts` | SQLite index, LIMIT, caching |
-| `test/stress.test.ts` | Edge cases, error paths, invariants (blocks 15–18 cover FTS5, task-aware recall, episodes, conflict heuristic) |
+| `test/fts.test.ts` | Dedicated FTS5: `searchFts()` ranking, BM25, Porter stemming, injection safety, reindex rebuilds FTS, task-aware recall ordering |
+| `test/episodes.test.ts` | Dedicated episodes: `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom`, recall with `include_episodes`, episodes excluded from `listAtoms` |
+| `test/stress.test.ts` | Edge cases, error paths, and invariants across all subsystems (20 describe blocks) |
 
 ### Standard test boilerplate
 
@@ -141,15 +143,22 @@ searchFts(dir, 'pagination api');  // may return [] if not adjacent
 searchFts(dir, 'pagination');  // returns all atoms containing any form of "pagination"
 ```
 
-### `writeEpisode()` — session ID is sanitised to kebab-case
+### `writeEpisode()` — session ID is sanitised to kebab-case; accepts opts
 
 Episode IDs are `EP-{sanitised-session-id}`. The sanitisation lowercases and replaces
-non-alphanumeric characters with hyphens:
+non-alphanumeric characters with hyphens. Full signature:
 
 ```typescript
 writeEpisode(dir, 'My Session 2026/03', 'Summary.');
 // → 'EP-my-session-2026-03'
+
+// With opts (tags, started_at, agent_id) and operationOpts:
+writeEpisode(dir, 'sess-001', 'Summary.', { tags: ['auth'], agent_id: 'claude' });
+writeEpisode(dir, 'sess-001', 'Summary.', { tags: ['auth'] }, { agent_id: 'claude' });
+// agent_id may appear in either opts (4th) or operationOpts (5th); operationOpts takes precedence.
 ```
+
+`writeEpisode` also emits a `session_ended` event to the event log with `meta.episode_id`.
 
 ### `searchFts()` — atom IDs use uppercase slug segments
 
@@ -374,9 +383,9 @@ All major Milestone C stubs have been implemented. Remaining stubs for future mi
 - **FR-5**: FTS5 index (schema v3) + task-aware BM25 ranking in `recall()` ✅
 - **§11.6a**: Episode-aware recall (`include_episodes`, keyword match) ✅
 - Conflict detection heuristic in `reflect.ts` ✅
-- Tests: `test/stress.test.ts` blocks 15–18 (FTS5, task-aware recall, episode store, conflict heuristic) ✅
+- Tests: dedicated `test/fts.test.ts` (FTS5 search, task-aware recall) and `test/episodes.test.ts` (episode store) suites; `test/stress.test.ts` edge-cases ✅
 - CLI: `mk episode`, `mk episodes`, recall `--task`, `--include-episodes` ✅
-- Total test count: **398 passing** across 11 test files
+- Total test count: **434 passing** across 13 test files
 
 ### Milestone D: Multi-Agent Merge → v0.7.0
 - **FR-10**: Concurrent writers (advisory locks)

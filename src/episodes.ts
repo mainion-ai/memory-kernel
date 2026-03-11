@@ -11,17 +11,25 @@ import yaml from 'js-yaml';
 import matter from 'gray-matter';
 import { writeFileAtomic, assertWithinDir } from './store.js';
 import { normalizeTimestamp } from './format.js';
+import { appendEvent } from './event-log.js';
+import type { Episode } from './types.js';
 
-export interface Episode {
-  id: string;         // EP-{kebab-session-id}
-  session_id: string; // sanitized session ID
-  created_at: string; // ISO8601 UTC
-  summary: string;    // Markdown body content
-  filePath: string;   // Full path to episode file
+export type { Episode } from './types.js';
+
+export interface WriteEpisodeOpts {
+  tags?: string[];
+  started_at?: string; // ISO8601 UTC — defaults to write time
+  ended_at?: string;   // ISO8601 UTC — optional
+  agent_id?: string;   // Convenience: also accepted here (operationOpts.agent_id takes precedence)
+}
+
+export interface WriteOperationOpts {
+  agent_id?: string;
 }
 
 export interface ListEpisodesOptions {
   limit?: number; // Max episodes to return (0 = empty array)
+  tags?: string[]; // Filter: only episodes with at least one matching tag
 }
 
 /**
@@ -41,11 +49,14 @@ function sanitizeSessionId(sessionId: string): string {
 /**
  * Write (or overwrite) an episode summary for a session.
  * Returns the episode ID (EP-{sanitized-session-id}).
+ * Emits a session_ended event to the event log.
  */
 export function writeEpisode(
   memoryDir: string,
   sessionId: string,
   summary: string,
+  opts: WriteEpisodeOpts = {},
+  operationOpts: WriteOperationOpts = {},
 ): string {
   const kebab = sanitizeSessionId(sessionId);
   const episodeId = `EP-${kebab}`;
@@ -63,11 +74,19 @@ export function writeEpisode(
     } catch { /* ignore — fall back to current timestamp */ }
   }
 
-  const frontmatter = {
+  const startedAt = opts.started_at ?? normalizeTimestamp();
+
+  const frontmatter: Record<string, unknown> = {
     id: episodeId,
     session_id: kebab,
     created_at: createdAt,
+    started_at: startedAt,
   };
+
+  const agentId = operationOpts.agent_id ?? opts.agent_id;
+  if (opts.ended_at) frontmatter.ended_at = opts.ended_at;
+  if (agentId) frontmatter.agent_id = agentId;
+  if (opts.tags && opts.tags.length > 0) frontmatter.tags = opts.tags;
 
   const fm = (yaml.dump(frontmatter, {
     sortKeys: false,
@@ -79,6 +98,14 @@ export function writeEpisode(
 
   const content = `---\n${fm}\n---\n\n${summary.trim()}\n`;
   writeFileAtomic(filePath, content);
+
+  // Emit a session_ended event so the episode is traceable in the event log.
+  appendEvent(memoryDir, 'session_ended', {
+    agent_id: agentId ?? 'episodestore',
+    session_id: kebab,
+    meta: { episode_id: episodeId },
+  });
+
   return episodeId;
 }
 
@@ -92,10 +119,16 @@ export function readEpisode(memoryDir: string, episodeId: string): Episode | nul
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     const parsed = matter(content);
+    const d = parsed.data as Record<string, unknown>;
     return {
-      id: (parsed.data.id as string) ?? episodeId,
-      session_id: (parsed.data.session_id as string) ?? '',
-      created_at: (parsed.data.created_at as string) ?? '',
+      id: (d.id as string) ?? episodeId,
+      metadata: {
+        session_id: (d.session_id as string) ?? '',
+        agent_id: d.agent_id as string | undefined,
+        tags: d.tags as string[] | undefined,
+        started_at: (d.started_at as string) || (d.created_at as string) || '',
+        ended_at: d.ended_at as string | undefined,
+      },
       summary: parsed.content.trim(),
       filePath,
     };
@@ -105,8 +138,9 @@ export function readEpisode(memoryDir: string, episodeId: string): Episode | nul
 }
 
 /**
- * List episodes, newest first.
+ * List episodes, newest first (by started_at).
  * Pass { limit: 0 } to get an empty array.
+ * Pass { tags: [...] } to filter to episodes with at least one matching tag.
  */
 export function listEpisodes(
   memoryDir: string,
@@ -127,10 +161,16 @@ export function listEpisodes(
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       const parsed = matter(content);
+      const d = parsed.data as Record<string, unknown>;
       episodes.push({
-        id: (parsed.data.id as string) ?? path.basename(filePath, '.md'),
-        session_id: (parsed.data.session_id as string) ?? '',
-        created_at: (parsed.data.created_at as string) ?? '',
+        id: (d.id as string) ?? path.basename(filePath, '.md'),
+        metadata: {
+          session_id: (d.session_id as string) ?? '',
+          agent_id: d.agent_id as string | undefined,
+          tags: d.tags as string[] | undefined,
+          started_at: (d.started_at as string) || (d.created_at as string) || '',
+          ended_at: d.ended_at as string | undefined,
+        },
         summary: parsed.content.trim(),
         filePath,
       });
@@ -139,14 +179,15 @@ export function listEpisodes(
     }
   }
 
-  // Sort newest first by created_at
-  episodes.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Filter by tags if specified (any-match semantics)
+  const filtered = opts.tags?.length
+    ? episodes.filter((ep) => ep.metadata.tags?.some((t) => opts.tags!.includes(t)))
+    : episodes;
 
-  if (opts.limit !== undefined) {
-    return episodes.slice(0, opts.limit);
-  }
+  // Sort newest first by started_at
+  filtered.sort((a, b) => b.metadata.started_at.localeCompare(a.metadata.started_at));
 
-  return episodes;
+  return opts.limit !== undefined ? filtered.slice(0, opts.limit) : filtered;
 }
 
 /**
