@@ -119,15 +119,31 @@ export interface MemoryEvent {
 // --- Recall query ---
 
 export interface RecallQuery {
-  /** @todo v0.2 — semantic search over atoms using task description */
-  task?: string; // Natural language task description (not yet implemented)
+  task?: string; // Natural language task — used for FTS-based re-ranking
   paths?: string[]; // Scope paths to match
   types?: AtomType[]; // Filter by atom type
   statuses?: AtomStatus[]; // Filter by status
   tags?: string[]; // Filter by tags
-  /** @todo v0.2 — load EPISODES/ session summaries into context bundle */
-  include_episodes?: boolean; // Include episodic logs (not yet implemented)
+  include_episodes?: boolean; // Include EPISODES/ session summaries in context bundle
   max_tokens?: number; // Budget for context
+}
+
+// --- Episode types ---
+
+export interface EpisodeMetadata {
+  session_id: string;
+  agent_id?: string;
+  started_at?: string; // ISO8601 UTC
+  ended_at?: string; // ISO8601 UTC
+  tags?: string[];
+  provenance_atoms?: string[]; // atom IDs linked to this episode
+}
+
+export interface Episode {
+  id: string; // e.g. "EP-session-17"
+  metadata: EpisodeMetadata;
+  summary: string; // Markdown body
+  filePath: string; // EPISODES/{id}.md on disk
 }
 
 // --- Context bundle (recall output) ---
@@ -137,7 +153,7 @@ export interface ContextBundle {
   handoff: string; // HANDOFF.md content
   constraints: string; // CONSTRAINTS.md content
   atoms: Atom[]; // Relevant atoms
-  episodes?: string[]; // Episodic log entries (if requested)
+  episodes?: string[]; // Episode summaries (if requested via include_episodes)
   token_estimate: number; // Rough token count
 }
 

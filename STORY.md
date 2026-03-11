@@ -143,6 +143,10 @@ The recall system has a fast path and a slow path:
 
 Either way, you get the same results. The index is just a speed trick.
 
+There's also **task-aware recall**. If you tell recall what you're working on — `task: "fix pagination bug"` — it uses full-text search (FTS5) with BM25 ranking to surface the most relevant atoms first. Atoms that match the task description closely float to the top; unrelated ones stay at the bottom. Same query on the same memory always gives the same order (it's deterministic).
+
+And if you want to include **session episodes** — summaries of past work sessions — you can ask for those too with `include_episodes: true`. The system returns recent episode summaries alongside the atoms, so the agent knows not just *what* it knows but also *what it did* in recent sessions.
+
 There are also privacy rules baked in. Atoms classified as `PERSONAL` or `SECRET` are excluded from recall by default. You have to explicitly ask for them.
 
 ### Reflect — "Clean Up and Organize"
@@ -165,7 +169,7 @@ What happens, in order:
 
 3. **Promote** — Beliefs with confidence >= 0.9 get promoted to facts. Their type changes from `belief` to `fact`, their status changes from `draft` to `active`, and their TTL becomes permanent. The belief has been proven.
 
-4. **Detect conflicts** — Count any active conflict atoms (actual conflict detection is a future feature).
+4. **Detect conflicts** — Look for pairs of `fact` or `decision` atoms that cover the same territory (overlapping scope paths) but have very different confidence scores (more than 0.3 apart). When such a pair is found, a `conflict` atom is created in `CONFLICTS/` and both source atoms are linked to it. This is a heuristic — it catches obvious disagreements but isn't trying to resolve them.
 
 5. **Regenerate views** — Five summary files get rebuilt from the current state:
    - `INDEX.md` — a routing map of all active atoms
@@ -250,7 +254,30 @@ Because it's **content-addressed** (named by its hash), you can never accidental
 
 ---
 
-## Chapter 6: The Views — Your Summary Sheets
+## Chapter 6: Episodes — Your Session Diary
+
+Atoms store *what* you know. **Episodes** store *what you did*. An episode is a written summary of a work session — what happened, what was fixed, what was decided, what still needs attention.
+
+Each episode is a markdown file in the `EPISODES/` folder, named after the session ID. You write one at the end of each session:
+
+```
+mk episode -d ./my-memory --session-id "2026-03-11-morning" \
+  --summary "Resolved pagination bug. Updated 3 atoms. Auth module next." \
+  --tags api,bugfix
+```
+
+Episodes have a few useful properties:
+
+- **Newest-first listing** — `mk episodes` shows recent sessions at the top, so the agent knows what just happened
+- **Linked to atoms** — `linkEpisodeToAtom()` attaches an episode to specific atoms, creating a provenance trail ("this decision was affected by session X")
+- **Searchable via recall** — when you call recall with `include_episodes: true`, recent episode summaries are included alongside the atoms. Combine with `task` and only the episodes matching your task's keywords are returned
+- **Excluded from atom listings** — episodes live in `EPISODES/`, not `ENTITIES/`, so they never show up as atoms and don't pollute the atom store
+
+Think of episodes as a captain's log. The atoms are your charts and instruments — precise and persistent. The episodes are your entries about what voyage you took and what you learned.
+
+---
+
+## Chapter 7: The Views — Your Summary Sheets
 
 Nobody wants to read 500 atom files to understand the current state. Memory Kernel auto-generates five **views** — summary documents that give you the big picture at a glance.
 
@@ -268,7 +295,7 @@ The `HANDOFF.md` is especially useful. When one agent session ends and another b
 
 ---
 
-## Chapter 7: Bootstrap — Onboarding an Existing Memory
+## Chapter 8: Bootstrap — Onboarding an Existing Memory
 
 What if you already have atom files on disk, but your event log is missing or incomplete? Maybe you created atoms before event sourcing was added, or you're migrating from an older version.
 
@@ -284,7 +311,7 @@ Bootstrap is **idempotent** — run it twice, and it won't duplicate anything. I
 
 ---
 
-## Chapter 8: The Checkpoint — Packing for a Trip
+## Chapter 9: The Checkpoint — Packing for a Trip
 
 A **checkpoint** is a self-contained bundle that captures the current state of memory for a specific task. Think of it as packing a travel bag: you don't take the entire filing cabinet, you take the relevant cards.
 
@@ -298,7 +325,7 @@ This is perfect for **handoff** — when one agent session ends and another pick
 
 ---
 
-## Chapter 9: On-Disk Layout — What's Actually on Your Computer
+## Chapter 10: On-Disk Layout — What's Actually on Your Computer
 
 When you run `mk init ./my-memory`, you get this folder structure:
 
@@ -329,7 +356,7 @@ No database server. No cloud service. No vendor lock-in. Just files.
 
 ---
 
-## Chapter 10: A Day in the Life
+## Chapter 11: A Day in the Life
 
 Let's walk through a realistic scenario from start to finish.
 
@@ -413,7 +440,7 @@ The compacted log can still reconstruct the exact same current state via replay.
 
 ---
 
-## Chapter 11: The Safety Net
+## Chapter 12: The Safety Net
 
 Memory Kernel has several safety features built in:
 
@@ -438,7 +465,7 @@ Atoms can be classified as `TEAM`, `PERSONAL`, or `SECRET`. Personal and secret 
 
 ---
 
-## Chapter 12: The CLI — Your Command Line Remote Control
+## Chapter 13: The CLI — Your Command Line Remote Control
 
 You don't need to write code to use Memory Kernel. The `mk` command gives you everything:
 
@@ -453,8 +480,22 @@ mk remember -d ./my-memory --type fact --tags server,setup \
 # Check what's stored
 mk status -d ./my-memory
 
-# Pull relevant context
+# Pull relevant context (basic)
 mk recall -d ./my-memory --type fact --tags server
+
+# Pull context for a specific task (FTS-ranked, most relevant first)
+mk recall -d ./my-memory --task "fix pagination bug"
+
+# Pull context with recent session history included
+mk recall -d ./my-memory --task "auth module" --include-episodes
+
+# Write a session episode when a session ends
+mk episode -d ./my-memory --session-id "session-42" \
+  --summary "Fixed pagination bug, updated 3 atoms" \
+  --tags api,bugfix
+
+# List recent episodes
+mk episodes -d ./my-memory --limit 5
 
 # Clean up and consolidate
 mk reflect -d ./my-memory --agent-id my-agent --session-id s1
