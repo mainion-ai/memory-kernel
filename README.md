@@ -872,6 +872,72 @@ Resources read view files fresh on every request. If a view hasn't been generate
 
 ---
 
+## Performance
+
+Typical performance on a modern workstation (M-series Mac or equivalent x86-64) with a 100-atom workload and SQLite index present:
+
+| Operation | Metric | Typical | PRD Target |
+|---|---|---|---|
+| `recall()` | p50 | ~2ms | — |
+| `recall()` | p95 | ~5ms | < 50ms |
+| `recall()` | p99 | ~10ms | — |
+| `reflect()` | single call | ~100–200ms | — |
+| `replay()` | 100 atoms (~160 events) | ~5ms | — |
+
+Run the benchmark harness on your machine:
+
+```bash
+npm run bench
+```
+
+Pin a baseline for future comparison:
+
+```bash
+npm run bench:baseline
+cat scripts/bench-baseline.json | jq '.recall.p95_ms'
+```
+
+**Notes:**
+- `recall()` degrades gracefully when the SQLite index is absent — it falls back to a full file scan (~3–5× slower). Run `mk reindex` to rebuild.
+- At 500 atoms without an index, `reflect()` completes in < 15 seconds (verified by `test/stress.test.ts`).
+- Encrypted SECRET atoms are excluded from default recall (decryption is skipped).
+
+---
+
+## Troubleshooting
+
+### `Cannot find module` after install
+
+Run `npm run build` to compile TypeScript to `dist/`. The package ships compiled JS, but if you cloned the repo you need to build first.
+
+### FTS search returns `null` / no results
+
+Run `mk reindex -d <dir>` to build (or rebuild) the SQLite index. The index file (`.memory-index.db`) is not committed to git. Without it, `recall()` falls back to a file scan and `searchFts()` returns `null`.
+
+### Encrypted atom shows as skipped in `listAtoms`
+
+Set `MEMORY_ENCRYPTION_KEY` before running. Without the key, SECRET atoms are silently skipped with a warning to stderr. To verify the key is correct: `mk doctor -d <dir>`.
+
+### `reflect()` returns `events_emitted: 1` on a second call
+
+This is correct and expected. `reflect()` is idempotent — if no atoms need expiry, deduplication, or promotion, only the `reflect_completed` event itself is emitted. `events_emitted` will be `1`, not `0`.
+
+### `recall()` returns no atoms after `mergeEventLogs()`
+
+Run `reflect()` (or `mk reflect`) after a merge. The merge operation writes atoms to disk but does not automatically regenerate views or sync the SQLite index.
+
+### Conflict resolution workflow
+
+1. Run `mk reflect -d <dir>` — conflict atoms appear in `CONFLICTS/`
+2. Inspect `CONFLICTS/*.md` to see the conflicting atom IDs and their values
+3. Update or archive the incorrect atom with `updateAtom()` / `archiveAtom()` (or MCP `remember` / the atom file directly)
+4. Call `resolveConflict({ memoryDir, filePath: conflictAtomPath, agent_id, session_id, resolutionNote: '...' })` or use MCP `resolve_conflict`
+5. Run `mk reflect` again — the conflict count should decrease
+
+Conflicts are created by `reflect()` when two active atoms of the same eligible type (`fact`, `decision`, `constraint`) share overlapping scope paths and have a confidence gap > 0.3.
+
+---
+
 ## NanoClaw Integration
 
 Memory Kernel was built to work with [NanoClaw](https://github.com/nicepkg/nanoclaw), but it works with any agent system. Here's how to set it up with NanoClaw so your agent remembers across sessions.
