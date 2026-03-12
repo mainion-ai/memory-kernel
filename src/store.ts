@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseAtom, serializeAtom } from './format.js';
-import { isEncrypted, encryptAtom, decryptAtom, resolveKey } from './crypto.js';
+import { isEncrypted, encryptAtom, decryptAtom, resolveKey, EncryptionKeyMissingError } from './crypto.js';
 import type { Atom } from './types.js';
 
 /** Monotonic counter for unique tmp file names across concurrent writes. */
@@ -91,9 +91,7 @@ export function readAtom(filePath: string): Atom {
   if (isEncrypted(content)) {
     const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
     if (!key) {
-      throw new Error(
-        `Encrypted atom requires MEMORY_ENCRYPTION_KEY to be set: ${filePath}`,
-      );
+      throw new EncryptionKeyMissingError(filePath);
     }
     content = decryptAtom(content, key);
   }
@@ -150,7 +148,7 @@ export function listAtoms(memoryDir: string): Atom[] {
       atoms.push(readAtom(f));
     } catch (err) {
       // Warn about encrypted atoms with no key so the user knows what to do
-      if (String(err).includes('MEMORY_ENCRYPTION_KEY')) {
+      if (err instanceof EncryptionKeyMissingError) {
         process.stderr.write(
           `Warning: encrypted atom skipped (set MEMORY_ENCRYPTION_KEY to access): ${f}\n`,
         );
