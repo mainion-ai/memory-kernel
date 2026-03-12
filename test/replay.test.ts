@@ -18,6 +18,7 @@ import {
   writeEvidence,
 } from '../src/index.js';
 import { replay, replayFromFile } from '../src/replay.js';
+import { encryptAtom, resolveKey } from '../src/crypto.js';
 import type { MemoryEvent, Atom } from '../src/types.js';
 
 let testDir: string;
@@ -511,5 +512,95 @@ describe('replay integration with real operations', () => {
     const result = replay(events, { timestamp: FIXED_TS });
 
     expect(result.atoms.size).toBe(0); // Archived = removed
+  });
+});
+
+describe('replay with encrypted snapshots', () => {
+  const TEST_KEY_HEX = 'c0ffee00'.repeat(8); // 64-char hex (32 bytes)
+  const WRONG_KEY_HEX = 'deadbeef'.repeat(8);
+
+  afterEach(() => {
+    delete process.env.MEMORY_ENCRYPTION_KEY;
+  });
+
+  it('decrypts encrypted snapshot when key is set', () => {
+    const snapshot = makeAtomSnapshot('fact', 'FACT-ENC-1', 'Encrypted fact body');
+    const key = resolveKey(TEST_KEY_HEX)!;
+    const encryptedSnapshot = encryptAtom(snapshot, key);
+
+    const events: MemoryEvent[] = [
+      makeEvent({
+        event_id: 'evt-enc-1',
+        action: 'atom_created',
+        atom_refs: ['FACT-ENC-1'],
+        schema_version: 2,
+        atom_snapshot: encryptedSnapshot,
+      }),
+    ];
+
+    process.env.MEMORY_ENCRYPTION_KEY = TEST_KEY_HEX;
+    const result = replay(events, { timestamp: FIXED_TS });
+
+    expect(result.atoms.size).toBe(1);
+    expect(result.atoms.get('FACT-ENC-1')).toBeDefined();
+    expect(result.atoms.get('FACT-ENC-1')!.body).toContain('Encrypted fact body');
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('pushes error and continues when key is missing', () => {
+    const snapshot = makeAtomSnapshot('fact', 'FACT-ENC-2', 'Needs key');
+    const key = resolveKey(TEST_KEY_HEX)!;
+    const encryptedSnapshot = encryptAtom(snapshot, key);
+
+    const events: MemoryEvent[] = [
+      makeEvent({
+        event_id: 'evt-enc-2',
+        action: 'atom_created',
+        atom_refs: ['FACT-ENC-2'],
+        schema_version: 2,
+        atom_snapshot: encryptedSnapshot,
+      }),
+      makeEvent({
+        event_id: 'evt-plain-1',
+        action: 'atom_created',
+        atom_refs: ['FACT-PLAIN-1'],
+        schema_version: 2,
+        atom_snapshot: makeAtomSnapshot('fact', 'FACT-PLAIN-1', 'Plaintext fact'),
+      }),
+    ];
+
+    // No key set
+    delete process.env.MEMORY_ENCRYPTION_KEY;
+    const result = replay(events, { timestamp: FIXED_TS });
+
+    // Encrypted atom should be skipped; plaintext should succeed
+    expect(result.atoms.size).toBe(1);
+    expect(result.atoms.get('FACT-PLAIN-1')).toBeDefined();
+    expect(result.atoms.get('FACT-ENC-2')).toBeUndefined();
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('MEMORY_ENCRYPTION_KEY');
+  });
+
+  it('pushes error on wrong key', () => {
+    const snapshot = makeAtomSnapshot('fact', 'FACT-ENC-3', 'Wrong key test');
+    const key = resolveKey(TEST_KEY_HEX)!;
+    const encryptedSnapshot = encryptAtom(snapshot, key);
+
+    const events: MemoryEvent[] = [
+      makeEvent({
+        event_id: 'evt-enc-3',
+        action: 'atom_created',
+        atom_refs: ['FACT-ENC-3'],
+        schema_version: 2,
+        atom_snapshot: encryptedSnapshot,
+      }),
+    ];
+
+    process.env.MEMORY_ENCRYPTION_KEY = WRONG_KEY_HEX;
+    const result = replay(events, { timestamp: FIXED_TS });
+
+    expect(result.atoms.size).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('failed to decrypt');
   });
 });

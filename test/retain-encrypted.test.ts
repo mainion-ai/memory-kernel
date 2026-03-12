@@ -12,6 +12,8 @@ import os from 'os';
 import {
   initMemoryDir,
   createAtom,
+  updateAtom,
+  archiveAtom,
   readAtom,
   readEvents,
   listAtoms,
@@ -148,5 +150,115 @@ describe('SECRET atom encryption at rest', () => {
     // Only the TEAM atom should be readable; SECRET atom is skipped with a warning
     expect(atoms).toHaveLength(1);
     expect(atoms[0].frontmatter.classification).toBe('TEAM');
+  });
+
+  it('updateAtom on SECRET atom keeps file encrypted and content correct', () => {
+    const created = createAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'secret-update',
+      body: 'Original secret content.',
+      classification: 'SECRET',
+    });
+    const updated = updateAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      filePath: created.filePath!,
+      updates: { confidence: 0.95 },
+      body: 'Updated secret content.',
+    });
+
+    // File on disk must still be encrypted
+    const rawContent = fs.readFileSync(created.filePath!, 'utf-8');
+    expect(isEncrypted(rawContent)).toBe(true);
+    expect(rawContent).not.toContain('Updated secret content.');
+
+    // readAtom must return the updated content
+    const read = readAtom(created.filePath!);
+    expect(read.body).toBe('Updated secret content.');
+    expect(read.frontmatter.confidence).toBe(0.95);
+  });
+
+  it('updateAtom event snapshot is encrypted for SECRET atoms', () => {
+    const created = createAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'secret-upd-evt',
+      body: 'Before update.',
+      classification: 'SECRET',
+    });
+    updateAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      filePath: created.filePath!,
+      updates: {},
+      body: 'After update.',
+    });
+
+    const events = readEvents(testDir);
+    const updateEvent = events.find((e) => e.action === 'atom_updated');
+    expect(updateEvent).toBeDefined();
+    expect(updateEvent!.atom_snapshot).toBeDefined();
+    expect(isEncrypted(updateEvent!.atom_snapshot!)).toBe(true);
+    expect(updateEvent!.atom_snapshot).not.toContain('After update.');
+  });
+
+  it('archiveAtom on SECRET atom encrypts archive file', () => {
+    const created = createAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'secret-archive',
+      body: 'Will be archived secretly.',
+      classification: 'SECRET',
+    });
+    archiveAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      filePath: created.filePath!,
+    });
+
+    // Original file should be removed
+    expect(fs.existsSync(created.filePath!)).toBe(false);
+
+    // Archive file should exist and be encrypted
+    const archivePath = path.join(testDir, 'ARCHIVE', path.basename(created.filePath!));
+    expect(fs.existsSync(archivePath)).toBe(true);
+    const rawContent = fs.readFileSync(archivePath, 'utf-8');
+    expect(isEncrypted(rawContent)).toBe(true);
+    expect(rawContent).not.toContain('Will be archived secretly.');
+  });
+
+  it('archiveAtom event snapshot is encrypted for SECRET atoms', () => {
+    const created = createAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'secret-arch-evt',
+      body: 'Archive event body.',
+      classification: 'SECRET',
+    });
+    archiveAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      filePath: created.filePath!,
+    });
+
+    const events = readEvents(testDir);
+    const archiveEvent = events.find((e) => e.action === 'atom_archived');
+    expect(archiveEvent).toBeDefined();
+    expect(archiveEvent!.atom_snapshot).toBeDefined();
+    expect(isEncrypted(archiveEvent!.atom_snapshot!)).toBe(true);
+    expect(archiveEvent!.atom_snapshot).not.toContain('Archive event body.');
   });
 });

@@ -65,6 +65,7 @@ export {
   readEventsForAtoms,
   countEvents,
   compactLog,
+  getLastEventId,
 } from './event-log.js';
 
 // SQLite index

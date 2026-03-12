@@ -94,3 +94,14 @@ export function resolveKey(envValue: string | undefined): Buffer | null {
     'sha256',
   );
 }
+
+/**
+ * Typed error for missing encryption key — allows instanceof checks
+ * instead of fragile string matching.
+ */
+export class EncryptionKeyMissingError extends Error {
+  constructor(detail: string) {
+    super(`Encrypted atom requires MEMORY_ENCRYPTION_KEY to be set: ${detail}`);
+    this.name = 'EncryptionKeyMissingError';
+  }
+}

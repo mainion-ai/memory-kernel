@@ -18,6 +18,7 @@ import {
   atomFilePath,
   normalizeTimestamp,
   appendEvent,
+  getLastEventId,
   queryIndex,
   indexExists,
 } from '../index.js';
@@ -37,6 +38,13 @@ interface ProvenanceBlock {
   atom_refs?: string[];
 }
 
+/**
+ * Build a provenance block for tool responses.
+ *
+ * `event_id` is included for single-event mutation tools (remember, resolve_conflict,
+ * get_context_bundle). Multi-event tools (reflect, merge, gc) omit it because there
+ * is no single event to reference. Read-only tools (list_conflicts) don't emit events.
+ */
 function buildProvenance(
   ctx: McpContext,
   agentId: string,
@@ -123,6 +131,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         filePath: atom.filePath,
       },
       provenance: buildProvenance(ctx, agentId, sessionId, {
+        event_id: getLastEventId(ctx.memoryDir),
         atom_refs: [atom.frontmatter.id],
       }),
     };

@@ -39,7 +39,12 @@ const MIN_CHUNK_LENGTH = 20;
  * Returns the list of extracted chunks.
  */
 export function previewImport(filePath: string): Chunk[] {
-  const content = fs.readFileSync(filePath, 'utf-8');
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    throw new Error(`Cannot read import file: ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return extractChunks(content);
 }
 
@@ -48,7 +53,12 @@ export function previewImport(filePath: string): Chunk[] {
  * Creates one atom per extracted chunk.
  */
 export function importFromFile(opts: ImportFromFileOpts): ImportResult {
-  const content = fs.readFileSync(opts.filePath, 'utf-8');
+  let content: string;
+  try {
+    content = fs.readFileSync(opts.filePath, 'utf-8');
+  } catch (err) {
+    throw new Error(`Cannot read import file: ${opts.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   const chunks = extractChunks(content);
 
   const atomIds: string[] = [];
@@ -182,7 +192,7 @@ function extractBullets(content: string): string[] {
  */
 function inferType(body: string): AtomType {
   if (/\b(decided|decision|chose|use|adopt|selected)\b/i.test(body)) return 'decision';
-  if (/\b(must|never|always|constraint|forbidden|required|do not|do not)\b/i.test(body)) return 'constraint';
+  if (/\b(must|never|always|constraint|forbidden|required|do not|shall not)\b/i.test(body)) return 'constraint';
   if (/\b(question|unknown|unclear|open|unresolved|why|how do)\b/i.test(body)) return 'open_question';
   if (/\b(believe|think|assume|probably|should be|might be)\b/i.test(body)) return 'belief';
   return 'fact';

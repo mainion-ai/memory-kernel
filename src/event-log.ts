@@ -210,3 +210,26 @@ export function countEvents(memoryDir: string): number {
   }
   return count;
 }
+
+/**
+ * Read the event_id of the last event in the log.
+ * Efficient: reads only the tail of the file rather than parsing all events.
+ */
+export function getLastEventId(memoryDir: string): string | undefined {
+  const logPath = path.join(memoryDir, 'events.ndjson');
+  if (!fs.existsSync(logPath)) return undefined;
+
+  const content = fs.readFileSync(logPath, 'utf-8').trimEnd();
+  if (!content) return undefined;
+
+  // Read from end to find the last non-empty line
+  const lastNewline = content.lastIndexOf('\n');
+  const lastLine = lastNewline === -1 ? content : content.slice(lastNewline + 1);
+
+  try {
+    const event = JSON.parse(lastLine) as MemoryEvent;
+    return event.event_id;
+  } catch {
+    return undefined;
+  }
+}
