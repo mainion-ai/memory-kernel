@@ -501,6 +501,7 @@ import {
   createAtom,
   updateAtom,
   archiveAtom,
+  resolveConflict,
   recall,
   reflect,
   checkpoint,
@@ -680,6 +681,88 @@ const mergeResult = await mergeEventLogs({
 // mergeResult.atoms_written   — number of atom files written
 // mergeResult.conflicts_created — number of conflict atoms created
 // mergeResult.events_merged   — total events after deduplication
+
+// --- Conflict Resolution (v0.8.0+) ---
+
+// Resolve a conflict atom: sets status to 'resolved', archives it,
+// emits a conflict_resolved event. Idempotent.
+import { atomFilePath } from 'memory-kernel';
+const { atom: resolved, event_id } = resolveConflict({
+  memoryDir: './memory',
+  agent_id: 'my-agent',
+  session_id: 'session-resolve-1',
+  filePath: atomFilePath('./memory', 'CONF-2026-03-12-TIMEOUT-a1b2', 'conflict'),
+  resolutionNote: 'Chose 30-second timeout as confirmed by ops team.',
+});
+// resolved.frontmatter.status === 'resolved'
+// File moved to ARCHIVE/
+```
+
+## MCP Server (v0.8.0+)
+
+Memory Kernel exposes all operations as an MCP server so any MCP-capable agent can use it without spawning a child process.
+
+### Start the MCP server
+
+```bash
+MEMORY_DIR=/path/to/memory node dist/mcp/server.js
+
+# Or with the dev runner:
+MEMORY_DIR=./my-memory npm run mcp
+
+# Or via global install:
+MEMORY_DIR=./my-memory mk-mcp
+```
+
+Environment variables:
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MEMORY_DIR` | **yes** | — | Absolute path to the memory directory |
+| `MCP_AGENT_ID` | no | `mcp-server` | Agent ID written to the event log |
+| `MCP_SESSION_ID` | no | `mcp-<uuid8>` | Session ID written to the event log |
+
+### MCP Tools
+
+All tools accept optional `agent_id` and `session_id` fields to override server defaults per-call. All responses include a `provenance` block.
+
+| Tool | Maps to | Description |
+|---|---|---|
+| `remember` | `createAtom()` | Create a new memory atom |
+| `recall` | `recall()` | Load relevant context (types, tags, task, episodes) |
+| `reflect` | `reflect()` | Expire, dedup, promote, detect conflicts, regenerate views |
+| `gc` | `reflect()` | Archive expired atoms (GC-focused alias for reflect) |
+| `merge` | `mergeEventLogs()` | Merge a remote memory directory into local |
+| `list_conflicts` | `listAtoms` / `queryIndex` | List all active conflict atoms |
+| `resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved and archive it |
+| `get_context_bundle` | `checkpoint()` | Generate a full markdown handoff bundle |
+
+### MCP Resources (read-only)
+
+Resources read view files fresh on every request. If a view hasn't been generated yet, the resource returns a placeholder prompting you to run `reflect` first.
+
+| Resource URI | View file |
+|---|---|
+| `memory://decisions` | `DECISIONS.md` |
+| `memory://constraints` | `CONSTRAINTS.md` |
+| `memory://handoff` | `HANDOFF.md` |
+| `memory://open-questions` | `OPEN_QUESTIONS.md` |
+
+### Claude Desktop configuration
+
+```json
+{
+  "mcpServers": {
+    "memory-kernel": {
+      "command": "node",
+      "args": ["/path/to/memory-kernel/dist/mcp/server.js"],
+      "env": {
+        "MEMORY_DIR": "/path/to/your/memory",
+        "MCP_AGENT_ID": "claude-desktop"
+      }
+    }
+  }
+}
 ```
 
 ## CLI Commands

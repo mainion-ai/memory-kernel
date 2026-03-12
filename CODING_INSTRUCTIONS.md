@@ -22,7 +22,10 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/index-db.test.ts` | SQLite index, LIMIT, caching |
 | `test/fts.test.ts` | Dedicated FTS5: `searchFts()` ranking, BM25, Porter stemming, injection safety, reindex rebuilds FTS, task-aware recall ordering |
 | `test/episodes.test.ts` | Dedicated episodes: `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom`, recall with `include_episodes`, episodes excluded from `listAtoms` |
-| `test/stress.test.ts` | Edge cases, error paths, and invariants across all subsystems (20 describe blocks) |
+| `test/merge.test.ts` | Multi-agent event-log union merge: dry-run, conflict detection, idempotency, event deduplication |
+| `test/mcp.test.ts` | MCP contract tests for all 8 tools (handlers called directly, no transport needed) |
+| `test/mcp-resources.test.ts` | MCP contract tests for all 4 resources (URI, mimeType, placeholder vs real content) |
+| `test/stress.test.ts` | Edge cases, error paths, and invariants across all subsystems |
 
 ### Standard test boilerplate
 
@@ -293,7 +296,7 @@ If you add a new operation that writes files, add the guard and a corresponding 
 
 ---
 
-## PRD v1.2 — Implementation Status (as of v0.6.0)
+## PRD v1.2 — Implementation Status (as of v0.8.0)
 
 Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 
@@ -319,6 +322,7 @@ Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 | Recall gating (§11.9) | PERSONAL + SECRET excluded by default |
 | SQLite FTS5 index (§11.5) | Schema v3: FTS5 virtual table with porter unicode61 tokenizer; BM25 ranking via `searchFts()` |
 | **FR-11** Convergent merges (event-log union) | `src/merge.ts` — `mergeEventLogs()` Pattern B; `mk merge` CLI; conflict atoms for concurrent updates |
+| **FR-19** MCP server | `src/mcp/` — 8 tools + 4 resources; `resolveConflict()` kernel function; `mk-mcp` bin; contract tests in `test/mcp.test.ts` and `test/mcp-resources.test.ts` |
 
 ### What's PARTIAL ⚠️
 
@@ -338,7 +342,7 @@ Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 | **FR-12** Conflict resolution workflow | §7.5 |
 | **FR-14** Encryption at rest (SECRET) | §7.6 |
 | **FR-16** Memory Packet import/export | §7.7 |
-| **FR-19** MCP server | §7.8 |
+| ~~**FR-19** MCP server~~ | ~~§7.8~~ — **Done in v0.8.0** |
 | System/E2E tests (multi-process) | §12.3 |
 | Benchmark harness (LongMemEval, LoCoMo) | §12.4 |
 | Performance benchmarks (p95) | §12.5 |
@@ -395,9 +399,12 @@ All major Milestone D stubs have been implemented. Remaining stubs for future mi
 
 > Note: FR-10 advisory locks and multi-process E2E tests (§12.3) deferred to a later milestone.
 
-### Milestone E: MCP Server → v0.8.0
-- **FR-19**: MCP server (remember, recall, reflect, gc, list_conflicts, resolve_conflict)
-- MCP contract tests (§12.2)
+### Milestone E: MCP Server → v0.8.0 ✅ COMPLETE
+- **FR-19**: MCP server (`src/mcp/`) — 8 tools + 4 resources via StdioServerTransport ✅
+- `resolveConflict()` kernel function in `src/retain.ts`; exported from `src/index.ts` ✅
+- `mk-mcp` bin entry + `mcp` dev script ✅
+- Contract tests: `test/mcp.test.ts` (19 tests) + `test/mcp-resources.test.ts` (9 tests) ✅
+- Total test count: **476 passing** across 16 test files
 
 ### Milestone F: Enterprise + Polish → v1.0
 - **FR-14**: Encryption at rest for SECRET atoms

@@ -2,7 +2,7 @@
 
 **Started:** 2026-03-09
 **Builder:** mainion-ai (Claude agent on Raspberry Pi 5)
-**Status:** v0.7.0 — Milestone D complete
+**Status:** v0.8.0 — Milestone E complete
 
 ## What this is
 
@@ -62,7 +62,7 @@ memory-kernel/
 
 ## Scoped OUT of v0.1
 
-- MCP server
+- ~~MCP server~~ (implemented in v0.8.0)
 - Encryption at rest
 - Benchmark eval suites (LongMemEval, LoCoMo)
 - Adapters (Letta, LangGraph, Mem0)
@@ -108,10 +108,10 @@ memory-kernel/
 | v0.5.1 | Stress tests | 54 stress/edge-case tests across all subsystems | 383 |
 | **v0.6.0** | **Milestone C** | FTS5 search, task-aware recall, episode store, conflict detection heuristic | **434** |
 | **v0.7.0** | **Milestone D** | Multi-agent event-log union merge, `mergeEventLogs()` SDK, `mk merge` CLI, conflict atoms for concurrent updates | **448** |
+| **v0.8.0** | **Milestone E** | MCP server (`src/mcp/server.ts`), 8 tools, 4 resources, `resolveConflict()` kernel function, contract tests | **476** |
 
 ## Upcoming milestones
 
 | Milestone | Target | Key changes |
 |-----------|--------|-------------|
-| E | v0.8.0 | MCP server (`src/mcp/server.ts`), 7 tools, 4 resources, contract tests |
 | F | v1.0.0 | Encryption (SECRET), read audit logging, `mk import`, v1.0 polish |
