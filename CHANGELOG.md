@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] — 2026-03-12
+
+### Added
+- **Compaction-loss test suite** (`test/compaction-loss.test.ts`) — 13 torture tests as PR gates per PRD §12.4.
+  - **5 section-survival tests** — each of the five compaction-resistant body sections (Numbers, Conditional Logic, Rationale/Why, Cross-links, Open Questions) is asserted to survive one reflect cycle verbatim; Open Questions section also asserted across two successive reflect cycles.
+  - **2 multi-cycle stability tests** — full rich-atom body asserted byte-identical after 5 reflect cycles; all 5 view files verified to contain expected section headings after 5 reflect cycles.
+  - **2 replay-determinism tests** — `replayFromFile(path, { timestamp })` produces byte-identical views on back-to-back calls; compact-then-replay produces state-derived views identical to pre-compact replay (HANDOFF excluded: its Recent Activity section is event-history-based).
+  - **2 reflect-idempotence tests** — `reflect(reflect(x))` body-stripped views equal `reflect(x)` views; second reflect on unchanged atoms produces zero promotions, deduplication, and expiry events.
+  - **2 recall-correctness tests** — belief promoted to fact (confidence ≥ 0.9) is returned by `recall({ types: ['fact'] })`; atom IDs returned by `recall` are identical before and after `compactLog + reflect`.
+- **Benchmark harness** (`scripts/bench.ts`) — reproducible performance report per PRD §5.2 / §8.
+  - 100-atom workload; 50 recall iterations; single reflect and replay call.
+  - Outputs JSON report to stdout: `recall` p50/p95/p99 (target: p95 < 50ms), `reflect` elapsed, `replay` elapsed with event count.
+  - Warns to stderr when p95 target is exceeded.
+  - `npm run bench` — print report; `npm run bench:baseline` — pin to `scripts/bench-baseline.json`.
+- **Pinned baseline** (`scripts/bench-baseline.json`) — recorded on Node v20, darwin; recall p95 ≈ 2.97ms (target: 50ms).
+- **README: Performance section** — latency table, `npm run bench` usage, note on SQLite index fallback, 500-atom stress test reference.
+- **README: Troubleshooting section** — 6 entries covering `Cannot find module`, FTS null returns, encrypted-atom skip, reflect idempotence, recall-after-merge, and conflict-resolution workflow.
+
+### Modified
+- **`package.json`** — version `1.0.0`; added `bench` and `bench:baseline` npm scripts.
+
+### Tests
+- 551 tests passing across 21 files (up from 531 across 20 files).
+
 ## [0.9.0] — 2026-03-12
 
 ### Added
