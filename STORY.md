@@ -664,3 +664,372 @@ After `mk merge`, you have one memory directory that knows everything both agent
 The two agents' weekend work is combined in seconds, with no data lost and disagreements clearly flagged.
 
 That's it. A filing cabinet for AI agents, built from markdown files, an event log, and three simple operations. No magic, no proprietary formats, no cloud dependencies. Just structured knowledge that persists.
+
+---
+
+## Chapter 15: Keeping Secrets — Encryption at Rest
+
+Your filing cabinet sits on a disk. Anyone with access to that disk can read your index cards — open the files in a text editor, browse them in a terminal, grep through them. For most knowledge that's fine. But what if some cards contain API keys, personal health data, passwords, or confidential business decisions?
+
+Memory Kernel has a way to lock those cards.
+
+### The Lock: SECRET Classification + Encryption Key
+
+Every atom has a **classification** field. Most atoms are `TEAM` — readable by anyone working on the project. But if you set an atom's classification to `SECRET`, Memory Kernel will encrypt its file on disk.
+
+Here's what a SECRET atom looks like *with* the key:
+
+```
+---
+id: FACT-2026-03-10-API-KEY-a1b2
+type: fact
+status: active
+classification: SECRET
+---
+
+The production Stripe API key is sk_live_AbCdEf1234567890...
+```
+
+And here's what that same file looks like *without* the key (what an attacker sees on disk):
+
+```
+MKENC:v1:dGhpcyBpcyBhIHRlc3Q=:7Bx9mK3nQ2pR8sT1uV6wY0zA4bC5dE6fG7hI8jK9lM...
+```
+
+One line. Unreadable. The `MKENC:v1:` prefix tells the system "this file is encrypted" — so even if you forget to set the key, it won't try to parse the encrypted blob as markdown and silently return garbage.
+
+### Setting Up Encryption
+
+Set an environment variable before running:
+
+```bash
+# Option 1: 64-character hex key (most secure — use a password manager)
+export MEMORY_ENCRYPTION_KEY="a3f9b2e1d4c7f0a8b3e6d9c2f5a8b1e4d7c0f3a6b9e2d5c8f1a4b7e0d3c6f9a2"
+
+# Option 2: A passphrase (easier to remember — internally converted to a key via PBKDF2)
+export MEMORY_ENCRYPTION_KEY="my-super-secret-passphrase"
+```
+
+That's it. From that point on:
+- Any atom you create with `classification: SECRET` is automatically encrypted when saved
+- `readAtom()` automatically decrypts it when you read it back
+- The encryption/decryption happens transparently — your code doesn't need to change at all
+
+### What Happens Without the Key
+
+If someone tries to read a SECRET atom without the key set:
+- `listAtoms()` prints a warning to stderr and **skips** the encrypted atom — it doesn't crash, it doesn't return corrupted data, it just quietly moves on
+- `recall()` never returns encrypted atoms without the key — they're invisible to the agent
+
+If you set the wrong key, `readAtom()` will fail with a decryption error. To verify your key is correct:
+
+```bash
+mk doctor -d ./my-memory
+```
+
+This checks that all encrypted atoms can be decrypted with the current key.
+
+### The Encryption Details (For the Curious)
+
+- **Algorithm:** AES-256-GCM — the same algorithm used in HTTPS, Signal, and most modern security systems
+- **Key derivation:** Short passphrases → PBKDF2 with 100,000 iterations and a fixed salt (`memory-kernel-v1`) → 256-bit key. Long hex strings → used directly.
+- **Scope:** The atom file body is encrypted. The frontmatter (id, type, status) remains readable — so the system can reason about the atom's existence without decrypting it.
+- **Event log:** The `atom_snapshot` in the event log is also encrypted for SECRET atoms. The event log is append-only and readable without the key for non-SECRET events.
+
+The bottom line: you can keep sensitive knowledge in the same filing cabinet as everything else, with a lock on the drawer that contains it.
+
+---
+
+## Chapter 16: Talking to Claude — The MCP Server
+
+You've built a filing cabinet. But every time you want the agent to use it, you have to write code: import the SDK, call `recall()`, pass the results to the agent. What if the agent could open the filing cabinet itself?
+
+That's what the MCP server does.
+
+### What Is MCP?
+
+MCP stands for **Model Context Protocol** — a standard that lets AI assistants (Claude, Cursor, and others) talk to local servers on your computer. Think of it as a USB plug for tools: you connect a tool to the AI, and the AI can use it without any custom integration code.
+
+Memory Kernel ships an MCP server that you can connect to Claude Desktop, Claude Code, or any other MCP-compatible AI tool in minutes.
+
+### Setting It Up
+
+Install and configure once:
+
+```json
+// In your Claude Desktop config file (claude_desktop_config.json)
+{
+  "mcpServers": {
+    "memory-kernel": {
+      "command": "npx",
+      "args": ["mk-mcp"],
+      "env": {
+        "MEMORY_DIR": "/path/to/your/memory",
+        "MCP_AGENT_ID": "claude",
+        "MCP_SESSION_ID": "session-001"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. Memory Kernel is now a tool Claude can call. No code required.
+
+### What Claude Can Do With It
+
+The MCP server exposes **8 tools** — actions Claude can take:
+
+| Tool | What it does | Equivalent to |
+|---|---|---|
+| `remember` | Store a new atom | `createAtom()` |
+| `recall` | Fetch relevant atoms for a task | `recall()` |
+| `reflect` | Run cleanup and consolidation | `reflect()` |
+| `merge` | Merge another agent's memory | `mergeEventLogs()` |
+| `gc` | Archive expired atoms | `reflect()` (GC mode) |
+| `list_conflicts` | Show conflicting atoms | `listAtoms({ type: 'conflict' })` |
+| `resolve_conflict` | Mark a conflict as resolved | `resolveConflict()` |
+| `get_context_bundle` | Get a full handoff snapshot | `checkpoint()` |
+
+And **4 resources** — documents Claude can read directly:
+
+- `memory://decisions` — all active decisions
+- `memory://constraints` — all active rules
+- `memory://handoff` — the cross-session handoff document
+- `memory://open-questions` — all unresolved questions
+
+### A Concrete Example
+
+You're working with Claude on a backend project. You ask:
+
+> *"What do we know about the authentication module?"*
+
+Claude calls the `recall` tool with `task: "authentication module"`. Memory Kernel searches its FTS5 index, finds 4 relevant atoms, and returns them to Claude. Claude reads them and answers:
+
+> *"Based on memory: the auth module uses JWT tokens (decision from March 10), the token TTL is 24 hours (fact, confidence 1.0), and there's an open question about refresh token rotation that hasn't been resolved."*
+
+All of that came from the filing cabinet — not from the current conversation, not from the model's training data. It came from persistent, structured knowledge that survived across sessions.
+
+Later, Claude creates a new atom:
+
+> *"I'll remember that we decided to use PKCE for the OAuth flow."*
+
+Claude calls the `remember` tool. An atom gets created. The decision persists.
+
+### Provenance on Every Call
+
+Every tool response includes a `provenance` block:
+
+```json
+{
+  "provenance": {
+    "memoryDir": "/path/to/memory",
+    "agent_id": "claude",
+    "session_id": "session-001",
+    "executed_at": "2026-03-10T14:00:00Z",
+    "atoms_returned": 4
+  }
+}
+```
+
+This tells you exactly when the call was made, who made it, and which atoms were involved. Every `recall` call is also logged as an `atom_read` event in the event log — a complete audit trail of what the agent read and when.
+
+---
+
+## Chapter 17: Importing the Past — mk import
+
+You've been keeping notes for months. A README full of architectural decisions. Meeting notes with action items. A design doc with constraints. Can Memory Kernel absorb all of that existing knowledge without you manually copying each piece into an atom?
+
+Yes. That's what `mk import` is for.
+
+### How It Works
+
+```bash
+# Preview what would be created (no files written)
+mk import --from ARCHITECTURE.md --dir ./my-memory --dry-run
+
+# Actually import it
+mk import --from ARCHITECTURE.md --dir ./my-memory \
+  --agent-id my-agent --session-id session-import-1
+```
+
+Memory Kernel reads the file, chops it into chunks, figures out what type of atom each chunk should be, and creates one atom per chunk. The whole document becomes part of your structured memory.
+
+### Chunk Extraction
+
+The file is split into chunks using a cascade of strategies:
+
+1. **H2/H3 headings first** — If your document has `## Section Name` headings, each section becomes one chunk. This works beautifully for design docs and READMEs.
+
+2. **Bullet points as fallback** — If there are no headings but there are bullet lists, each bullet becomes a chunk.
+
+3. **Whole file as last resort** — If there's no structure at all, the entire file becomes a single atom.
+
+Chunks shorter than 20 characters are dropped — they're too short to be useful ("TODO:", "Notes:", etc.).
+
+### Type Inference
+
+Memory Kernel reads each chunk and infers what type of atom it should be based on keywords:
+
+| If the text contains… | The atom becomes… |
+|---|---|
+| "decided", "chose", "we will", "agreed" | `decision` |
+| "must", "never", "required", "prohibited" | `constraint` |
+| "question", "how do we", "should we", ends with "?" | `open_question` |
+| "believe", "probably", "might", "I think" | `belief` |
+| anything else | `fact` |
+
+### Confidence Inference
+
+The confidence score is also inferred from the content:
+
+- Contains a URL or `backtick code` → confidence 0.9 (citable, specific)
+- Contains "believe", "probably", "might" → confidence 0.5 (uncertain)
+- Everything else → confidence 0.75 (default)
+
+### A Concrete Example
+
+Say you have this `ARCHITECTURE.md`:
+
+```markdown
+## Database Choice
+
+We decided to use PostgreSQL 16 as the primary database.
+See benchmark results at https://benchmarks.example.com.
+
+## Open Questions
+
+Should we use read replicas for the reporting queries?
+How do we handle schema migrations in production?
+
+## Constraints
+
+We must maintain < 100ms p95 query latency.
+Never expose internal database IDs in API responses.
+```
+
+Running `mk import` on this creates 4 atoms:
+- `decision`: "We decided to use PostgreSQL 16..." → confidence 0.9 (has a URL)
+- `open_question`: "Should we use read replicas..." → confidence 0.75
+- `open_question`: "How do we handle schema migrations..." → confidence 0.75
+- `constraint`: "We must maintain < 100ms p95..." → confidence 0.75
+- `constraint`: "Never expose internal database IDs..." → confidence 0.75
+
+Five years of notes, imported in seconds.
+
+---
+
+## Chapter 18: The Test Bench — How We Know It Works
+
+Memory Kernel stores knowledge that AI agents rely on to make decisions. If a key fact gets corrupted, mangled, or silently dropped during routine maintenance, the agent might make the wrong call. How do we know the system is reliable?
+
+We test it. A lot.
+
+### 551 Tests, 21 Files
+
+Every time a change is made to Memory Kernel, 551 automated checks run. Each check is a small program that says: *"given this situation, I expect this result."* If any of them disagree, the change is rejected before it can reach users.
+
+These tests cover every layer of the system — from individual functions ("does `percentile([1,2,3], 95)` return the right value?") all the way up to full end-to-end scenarios ("create 100 atoms, run reflect 5 times, then merge with a remote memory — does everything come out right?").
+
+### Compaction-Loss Torture Tests
+
+Here's the scenario that keeps us up at night: the cleanup cycle (`reflect`) runs and accidentally truncates the body of an atom. A rule like "use TLS v1.3+ in production" gets shortened to just "use TLS". The port number "8080" disappears. The cross-reference "see AUTH-CONFIG" gets dropped.
+
+The agent reads the atom later and gets incomplete or wrong information. Silently. With no error.
+
+To prevent this, we have **compaction-loss torture tests**. These tests write atoms with specific content — exact numbers, specific rules, cross-references, conditional logic, open questions — and then run the reflect cycle 5 times in a row. After all 5 cycles, every test checks that the content is still there, character by character.
+
+Here's what one such test checks after 5 cleanup cycles:
+
+```
+✓ Port: 8080 — still there
+✓ Timeout: 30s — still there
+✓ If production: use TLS — still there
+✓ If retries exhausted: circuit-break for 60s — still there
+✓ Rationale: cursor pagination chosen after benchmarking — still there
+✓ Related: FACT-2026-AUTH-CONFIG — still there
+✓ Does the approach handle IPv6? — still there
+```
+
+If any line is missing or changed, the test fails and the change is blocked.
+
+### Replay Determinism
+
+The event log is the source of truth. `replay()` is the function that rebuilds atom state from events. For this to be reliable, it must be **deterministic**: given the exact same sequence of events, you must get the exact same output — always, on any machine, at any time.
+
+We verify this by replaying the same event log twice in a row and comparing the results character by character:
+
+```
+replay(events) → result1
+replay(events) → result2
+assert result1 === result2  // byte-identical
+```
+
+If there's any non-determinism — a random ordering, a wall-clock timestamp sneaking into content, a set iteration order — this test catches it.
+
+### Reflect Idempotence
+
+Running cleanup once on a tidy memory should produce the same result as running it twice. The second pass shouldn't invent new work to do, shouldn't change atoms that are already correct, and shouldn't emit extra events.
+
+We verify this explicitly:
+
+```
+reflect(memory) → views_v1
+reflect(memory) → views_v2  // same memory, second pass
+assert views_v1 === views_v2  // identical output
+assert second_reflect.deduped === 0
+assert second_reflect.expired === 0
+assert second_reflect.promoted === 0
+```
+
+This matters because reflect runs automatically on a schedule. If each run modified things slightly, the system would drift over time.
+
+### Stress Tests
+
+Normal tests use 3–5 atoms. The stress test suite uses **500 atoms** — 5× the scale that a typical session would accumulate. All the operations run: create, update, archive, merge with a second agent's memory, search, reflect.
+
+At 500 atoms without a SQLite index, the entire reflect cycle completes in under 15 seconds. With the SQLite index, recall p95 is under 100ms.
+
+The stress tests also hammer the error paths: corrupted event log lines, atom files with invalid frontmatter, path traversal attempts (`../evil`), concurrent archive operations. The system must handle all of these gracefully — no crashes, no silent data corruption.
+
+### The Benchmark Harness
+
+Speed matters. An agent that waits 5 seconds for a recall can't have a real conversation.
+
+The benchmark harness creates 100 atoms, runs 50 recall queries, and records how long each one takes:
+
+```bash
+npm run bench
+```
+
+Output:
+
+```json
+{
+  "recall": {
+    "p50_ms": 2.2,
+    "p95_ms": 2.97,
+    "p99_ms": 3.92,
+    "samples": 50,
+    "target_p95_ms": 50,
+    "meets_target": true
+  },
+  "reflect": { "elapsed_ms": 150.37 },
+  "replay": { "elapsed_ms": 1.65, "events_count": 161 }
+}
+```
+
+The PRD target is p95 < 50ms. The actual result is 3ms — **16× better than required**.
+
+You can pin a baseline for your own machine:
+
+```bash
+npm run bench:baseline      # saves result to scripts/bench-baseline.json
+```
+
+If a future change makes recall significantly slower, you'll see it immediately when you re-run the benchmark. No surprises in production.
+
+### Why This Level of Testing?
+
+Because memory is load-bearing. An agent that makes decisions based on corrupted facts is worse than an agent with no memory — at least with no memory, you know it's working from scratch. A corrupted fact is invisible damage.
+
+Every test is a promise: *this invariant holds, on every machine, after every change.* The 551 tests are 551 such promises.

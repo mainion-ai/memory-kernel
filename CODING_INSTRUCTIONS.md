@@ -25,6 +25,9 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/merge.test.ts` | Multi-agent event-log union merge: dry-run, conflict detection, idempotency, event deduplication |
 | `test/mcp.test.ts` | MCP contract tests for all 8 tools (handlers called directly, no transport needed) |
 | `test/mcp-resources.test.ts` | MCP contract tests for all 4 resources (URI, mimeType, placeholder vs real content) |
+| `test/crypto.test.ts` | AES-256-GCM encryption: encrypt/decrypt SECRET atoms, key derivation (PBKDF2), `isEncrypted()`, event snapshot encryption |
+| `test/import.test.ts` | `importFromFile()`, `previewImport()`, `extractChunks()`: heading extraction, type/confidence inference, dry-run mode |
+| `test/compaction-loss.test.ts` | 13 PR-gate torture tests: section survival (Numbers, Conditional Logic, Rationale, Cross-links, Open Questions), multi-cycle stability, replay determinism, reflect idempotence, recall correctness |
 | `test/stress.test.ts` | Edge cases, error paths, and invariants across all subsystems |
 
 ### Standard test boilerplate
@@ -296,7 +299,7 @@ If you add a new operation that writes files, add the guard and a corresponding 
 
 ---
 
-## PRD v1.2 — Implementation Status (as of v0.8.0)
+## PRD v1.2 — Implementation Status (as of v1.0.0)
 
 Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 
@@ -331,7 +334,7 @@ Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 | **FR-6 Reflect — conflicts** | Heuristic: same-type active atoms with overlapping scope and confidence gap > 0.3 | Full MV-Register semantics, user-triggered resolution workflow (future milestone) |
 | **FR-8 TTL + decay** | Hard TTL expiry works | No gradual confidence decay |
 | **FR-9 Promotion** | confidence ≥ 0.9 auto-promote | No corroboration, user confirmation, or evidence triggers |
-| **FR-15 Audit** | All writes logged as events | Read access (recall) not logged |
+| **FR-15 Audit** | `atom_read` event emitted by `recall()` when `agent_id`/`session_id` provided (v0.9.0); includes `atom_refs`, `meta.query_task`, `meta.atoms_returned`, `meta.token_estimate` | Passive recall (no agent_id) is not audited — by design |
 | **Provenance** | Fields exist on AtomFrontmatter (`provenance.episodes`, `provenance.evidence`). Accepted in createAtom/updateAtom. | Not auto-populated by system (caller must pass explicitly) |
 
 ### What's NOT Started ❌
@@ -340,12 +343,12 @@ Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
 |---|---|
 | **FR-10** Concurrent writers (advisory locks) | §7.5 |
 | **FR-12** Conflict resolution workflow | §7.5 |
-| **FR-14** Encryption at rest (SECRET) | §7.6 |
-| **FR-16** Memory Packet import/export | §7.7 |
+| ~~**FR-14** Encryption at rest (SECRET)~~ | ~~§7.6~~ — **Done in v0.9.0** |
+| ~~**FR-16** Memory Packet import/export~~ | ~~§7.7~~ — **`mk import` done in v0.9.0** (Letta/LangGraph/Mem0 adapters deferred) |
 | ~~**FR-19** MCP server~~ | ~~§7.8~~ — **Done in v0.8.0** |
-| System/E2E tests (multi-process) | §12.3 |
-| Benchmark harness (LongMemEval, LoCoMo) | §12.4 |
-| Performance benchmarks (p95) | §12.5 |
+| ~~Benchmark harness~~ | ~~§12.4~~ — **Done in v1.0.0** (`scripts/bench.ts`, compaction-loss torture tests) |
+| ~~Performance benchmarks (p95)~~ | ~~§12.5~~ — **Done in v1.0.0** (p95 ≈ 3ms, target < 50ms ✓) |
+| System/E2E tests (multi-process) | §12.3 — deferred |
 
 ---
 
@@ -375,7 +378,7 @@ All major Milestone D stubs have been implemented. Remaining stubs for future mi
 | `provenance.episodes` | `src/types.ts` | Field on AtomFrontmatter. Accepted by createAtom/updateAtom. NOT auto-populated — callers must pass explicitly or use `linkEpisodeToAtom()`. |
 | `provenance.evidence` | `src/types.ts` | Field on AtomFrontmatter. Accepted but not auto-populated. Caller must pass evidence hashes. |
 | `conflicts` (full CRDT) | `src/reflect.ts` | Heuristic only: same-type active atoms + overlapping scope + confidence gap >0.3. Full MV-Register semantics and user-triggered resolution workflow are future milestones. |
-| `recall` read audit | `src/recall.ts` | FR-15 requires logging `recall_executed` events. Not implemented (Milestone F). |
+| Letta/LangGraph/Mem0 adapters | future | `mk import` handles generic markdown; provider-specific adapters deferred. |
 
 ---
 
@@ -406,9 +409,16 @@ All major Milestone D stubs have been implemented. Remaining stubs for future mi
 - Contract tests: `test/mcp.test.ts` (19 tests) + `test/mcp-resources.test.ts` (9 tests) ✅
 - Total test count: **476 passing** across 16 test files
 
-### Milestone F: Enterprise + Polish → v1.0
-- **FR-14**: Encryption at rest for SECRET atoms
-- **FR-15**: Read audit logging
-- **FR-16**: Memory Packet import/export (Letta, LangGraph, Mem0)
-- Performance benchmarks (§12.5)
-- Benchmark harness (§12.4) — report-only
+### Milestone F: Enterprise + Polish → v0.9.0 ✅ COMPLETE
+- **FR-14**: AES-256-GCM encryption for SECRET atoms (`src/crypto.ts`, `MEMORY_ENCRYPTION_KEY`) ✅
+- **FR-15**: Read audit logging (`atom_read` event when `agent_id`/`session_id` provided) ✅
+- **FR-16**: `mk import` / `importFromFile()` — markdown → typed atoms with type/confidence inference ✅
+- `test/crypto.test.ts`, `test/import.test.ts` added ✅
+- Total test count: **531 passing** across 20 test files
+
+### Milestone G: v1.0 Final Release → v1.0.0 ✅ COMPLETE
+- **§12.4** Compaction-loss PR gates: 13 torture tests in `test/compaction-loss.test.ts` ✅
+- **§5.2 / §12.4** Benchmark harness: `scripts/bench.ts` + `scripts/bench-baseline.json` (p95 ≈ 3ms ✓) ✅
+- README Performance + Troubleshooting sections ✅
+- `package.json` version → `1.0.0` ✅
+- Total test count: **551 passing** across 21 test files
