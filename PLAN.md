@@ -2,7 +2,7 @@
 
 **Started:** 2026-03-09
 **Builder:** mainion-ai (Claude agent on Raspberry Pi 5)
-**Status:** v0.9.0 — Milestone F complete
+**Status:** v1.0.0 — Milestone G complete — **RELEASED** ✅
 
 ## What this is
 
@@ -110,9 +110,8 @@ memory-kernel/
 | **v0.7.0** | **Milestone D** | Multi-agent event-log union merge, `mergeEventLogs()` SDK, `mk merge` CLI, conflict atoms for concurrent updates | **448** |
 | **v0.8.0** | **Milestone E** | MCP server (`src/mcp/server.ts`), 8 tools, 4 resources, `resolveConflict()` kernel function, contract tests | **476** |
 | **v0.9.0** | **Milestone F** | AES-256-GCM encryption for SECRET atoms, read audit logging (`atom_read` event), `mk import` / `importFromFile()` | **531** |
+| **v1.0.0** | **Milestone G** | Compaction-loss torture tests (13 PR gates), benchmark harness (`scripts/bench.ts`), README Performance + Troubleshooting | **551** |
 
 ## Upcoming milestones
 
-| Milestone | Target | Key changes |
-|-----------|--------|-------------|
-| v1.0 | v1.0.0 | Final docs polish, benchmark evals |
+> v1.0.0 has shipped. All PRD v1.2 acceptance criteria are met. Future work tracked separately.
