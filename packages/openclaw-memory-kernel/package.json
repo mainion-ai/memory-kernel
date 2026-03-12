@@ -1,0 +1,34 @@
+{
+  "name": "openclaw-memory-kernel",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin — structured typed memory via memory-kernel",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "memory-kernel": "^1.0.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.7"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "keywords": ["openclaw", "memory", "plugin", "memory-kernel"],
+  "license": "MIT"
+}
