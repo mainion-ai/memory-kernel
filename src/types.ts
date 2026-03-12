@@ -88,6 +88,7 @@ export const EVENT_ACTIONS = [
   'atom_promoted',
   'atom_expired',
   'atom_imported',
+  'atom_read',
   'checkpoint_created',
   'conflict_detected',
   'conflict_resolved',
@@ -127,6 +128,9 @@ export interface RecallQuery {
   tags?: string[]; // Filter by tags
   include_episodes?: boolean; // Include EPISODES/ session summaries in context bundle
   max_tokens?: number; // Budget for context
+  // Read audit: if both set, an 'atom_read' event is emitted after recall completes
+  agent_id?: string;
+  session_id?: string;
 }
 
 // --- Episode types ---

@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseAtom, serializeAtom } from './format.js';
+import { isEncrypted, encryptAtom, decryptAtom, resolveKey, EncryptionKeyMissingError } from './crypto.js';
 import type { Atom } from './types.js';
 
 /** Monotonic counter for unique tmp file names across concurrent writes. */
@@ -83,17 +84,32 @@ export function writeFileAtomic(filePath: string, content: string): void {
 
 /**
  * Read and parse an atom from a markdown file.
+ * Decrypts SECRET atoms if MEMORY_ENCRYPTION_KEY is set in the environment.
  */
 export function readAtom(filePath: string): Atom {
-  const content = fs.readFileSync(filePath, 'utf-8');
+  let content = fs.readFileSync(filePath, 'utf-8');
+  if (isEncrypted(content)) {
+    const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
+    if (!key) {
+      throw new EncryptionKeyMissingError(filePath);
+    }
+    content = decryptAtom(content, key);
+  }
   return parseAtom(content, filePath);
 }
 
 /**
  * Write an atom to its file path (atomic).
+ * Encrypts SECRET-classified atoms if MEMORY_ENCRYPTION_KEY is set in the environment.
  */
 export function writeAtom(atom: Atom, filePath: string): void {
-  const content = serializeAtom(atom);
+  let content = serializeAtom(atom);
+  if (atom.frontmatter.classification === 'SECRET') {
+    const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
+    if (key) {
+      content = encryptAtom(content, key);
+    }
+  }
   writeFileAtomic(filePath, content);
 }
 
@@ -130,8 +146,14 @@ export function listAtoms(memoryDir: string): Atom[] {
   for (const f of files) {
     try {
       atoms.push(readAtom(f));
-    } catch {
-      // Skip corrupted/malformed atom files — don't let one bad file break everything
+    } catch (err) {
+      // Warn about encrypted atoms with no key so the user knows what to do
+      if (err instanceof EncryptionKeyMissingError) {
+        process.stderr.write(
+          `Warning: encrypted atom skipped (set MEMORY_ENCRYPTION_KEY to access): ${f}\n`,
+        );
+      }
+      // Skip corrupted/malformed/encrypted-without-key atom files
     }
   }
   return atoms;

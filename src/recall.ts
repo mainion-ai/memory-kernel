@@ -11,6 +11,7 @@
 import { readView, listAtoms, readAtom } from './store.js';
 import { queryIndex, searchFts } from './index-db.js';
 import { listEpisodes } from './episodes.js';
+import { appendEvent } from './event-log.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 /**
@@ -109,7 +110,7 @@ export function recall(
     episodeTokens = episodeStrings.reduce((s, e) => s + estimateTokens(e), 0);
   }
 
-  return {
+  const bundle: ContextBundle = {
     index,
     handoff,
     constraints,
@@ -117,6 +118,23 @@ export function recall(
     ...(episodeStrings !== undefined && { episodes: episodeStrings }),
     token_estimate: baseTokens + atomTokens + episodeTokens,
   };
+
+  // Emit read audit event if caller supplied provenance fields
+  if (query.agent_id && query.session_id) {
+    appendEvent(memoryDir, 'atom_read', {
+      agent_id: query.agent_id,
+      session_id: query.session_id,
+      atom_refs: filtered.map((a) => a.frontmatter.id),
+      meta: {
+        operation: 'recall',
+        query_task: query.task,
+        atoms_returned: filtered.length,
+        token_estimate: bundle.token_estimate,
+      },
+    });
+  }
+
+  return bundle;
 }
 
 /**

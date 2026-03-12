@@ -17,6 +17,8 @@ import {
   checkpoint,
   atomFilePath,
   normalizeTimestamp,
+  appendEvent,
+  getLastEventId,
   queryIndex,
   indexExists,
 } from '../index.js';
@@ -36,6 +38,13 @@ interface ProvenanceBlock {
   atom_refs?: string[];
 }
 
+/**
+ * Build a provenance block for tool responses.
+ *
+ * `event_id` is included for single-event mutation tools (remember, resolve_conflict,
+ * get_context_bundle). Multi-event tools (reflect, merge, gc) omit it because there
+ * is no single event to reference. Read-only tools (list_conflicts) don't emit events.
+ */
 function buildProvenance(
   ctx: McpContext,
   agentId: string,
@@ -122,6 +131,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         filePath: atom.filePath,
       },
       provenance: buildProvenance(ctx, agentId, sessionId, {
+        event_id: getLastEventId(ctx.memoryDir),
         atom_refs: [atom.frontmatter.id],
       }),
     };
@@ -169,6 +179,8 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
       tags: input.tags,
       include_episodes: input.include_episodes,
       max_tokens: input.max_tokens,
+      agent_id: agentId,
+      session_id: sessionId,
     });
     const result = {
       index: bundle.index,
@@ -413,6 +425,17 @@ export async function handleGetContextBundle(
       task: input.task,
       max_tokens: input.max_tokens,
       skipReflect: input.skip_reflect,
+    });
+    appendEvent(ctx.memoryDir, 'atom_read', {
+      agent_id: agentId,
+      session_id: sessionId,
+      atom_refs: checkpointResult.bundle.atoms.map((a) => a.frontmatter.id),
+      meta: {
+        operation: 'get_context_bundle',
+        query_task: input.task,
+        atoms_returned: checkpointResult.bundle.atoms.length,
+        token_estimate: checkpointResult.bundle.token_estimate,
+      },
     });
     const result = {
       markdown: checkpointResult.markdown,
