@@ -17,6 +17,7 @@ import {
   checkpoint,
   atomFilePath,
   normalizeTimestamp,
+  appendEvent,
   queryIndex,
   indexExists,
 } from '../index.js';
@@ -169,6 +170,8 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
       tags: input.tags,
       include_episodes: input.include_episodes,
       max_tokens: input.max_tokens,
+      agent_id: agentId,
+      session_id: sessionId,
     });
     const result = {
       index: bundle.index,
@@ -413,6 +416,17 @@ export async function handleGetContextBundle(
       task: input.task,
       max_tokens: input.max_tokens,
       skipReflect: input.skip_reflect,
+    });
+    appendEvent(ctx.memoryDir, 'atom_read', {
+      agent_id: agentId,
+      session_id: sessionId,
+      atom_refs: checkpointResult.bundle.atoms.map((a) => a.frontmatter.id),
+      meta: {
+        operation: 'get_context_bundle',
+        query_task: input.task,
+        atoms_returned: checkpointResult.bundle.atoms.length,
+        token_estimate: checkpointResult.bundle.token_estimate,
+      },
     });
     const result = {
       markdown: checkpointResult.markdown,
