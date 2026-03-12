@@ -1,12 +1,13 @@
 {
   "name": "memory-kernel",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "mk": "dist/cli/mk.js"
+    "mk": "dist/cli/mk.js",
+    "mk-mcp": "dist/mcp/server.js"
   },
   "files": [
     "dist",
@@ -20,7 +21,8 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
     "lint:all": "tsc --noEmit -p tsconfig.test.json",
-    "mk": "tsx src/cli/mk.ts"
+    "mk": "tsx src/cli/mk.ts",
+    "mcp": "tsx src/mcp/server.ts"
   },
   "keywords": [
     "memory",
@@ -36,6 +38,7 @@
     "url": "git+ssh://git@github.com/mainion-ai/memory-kernel.git"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "better-sqlite3": "^12.6.2",
     "commander": "^14.0.3",
     "gray-matter": "^4.0.3",

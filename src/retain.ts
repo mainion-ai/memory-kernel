@@ -152,6 +152,64 @@ export function updateAtom(
   return atom;
 }
 
+export interface ResolveConflictOptions extends RetainOptions {
+  filePath: string;
+  resolutionNote?: string;
+}
+
+export interface ResolveConflictResult {
+  atom: Atom;
+  event_id: string;
+}
+
+/**
+ * Resolve a conflict atom — set status to 'resolved', archive it, emit conflict_resolved event.
+ * Idempotent: already-archived atoms return early.
+ */
+export function resolveConflict(opts: ResolveConflictOptions): ResolveConflictResult {
+  assertWithinDir(opts.memoryDir, opts.filePath);
+  const atom = readAtom(opts.filePath);
+
+  if (atom.frontmatter.type !== 'conflict') {
+    throw new Error(`Atom is not a conflict type: ${atom.frontmatter.id}`);
+  }
+
+  // Idempotent: already archived
+  if (atom.frontmatter.status === 'archived') {
+    return { atom, event_id: '' };
+  }
+
+  atom.frontmatter.status = 'resolved';
+  atom.frontmatter.updated_at = normalizeTimestamp();
+  if (opts.resolutionNote) {
+    atom.body = `${atom.body}\n\n### Resolution Note\n\n${opts.resolutionNote}`;
+  }
+
+  const archivePath = path.join(
+    opts.memoryDir,
+    'ARCHIVE',
+    path.basename(opts.filePath),
+  );
+  assertWithinDir(opts.memoryDir, archivePath);
+  writeAtom(atom, archivePath);
+  if (fs.existsSync(opts.filePath)) fs.unlinkSync(opts.filePath);
+
+  const event = appendEvent(opts.memoryDir, 'conflict_resolved', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    atom_refs: [atom.frontmatter.id],
+    schema_version: 2,
+    atom_snapshot: serializeAtom(atom),
+    meta: opts.resolutionNote ? { resolution_note: opts.resolutionNote } : undefined,
+  });
+
+  if (indexExists(opts.memoryDir)) {
+    removeFromIndex(opts.memoryDir, atom.frontmatter.id);
+  }
+
+  return { atom, event_id: event.event_id };
+}
+
 /**
  * Archive an atom (move to ARCHIVE/, emit event).
  */

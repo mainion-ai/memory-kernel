@@ -185,7 +185,9 @@ export function listEpisodes(
     : episodes;
 
   // Sort newest first by started_at
-  filtered.sort((a, b) => b.metadata.started_at.localeCompare(a.metadata.started_at));
+  filtered.sort((a, b) =>
+    (b.metadata.started_at ?? '').localeCompare(a.metadata.started_at ?? ''),
+  );
 
   return opts.limit !== undefined ? filtered.slice(0, opts.limit) : filtered;
 }

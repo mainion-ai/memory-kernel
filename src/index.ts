@@ -113,7 +113,12 @@ export { replay, replayFromFile } from './replay.js';
 export { bootstrapEvents } from './bootstrap.js';
 
 // Operations
-export { createAtom, updateAtom, archiveAtom } from './retain.js';
+export { createAtom, updateAtom, archiveAtom, resolveConflict } from './retain.js';
+export type {
+  RetainOptions,
+  ResolveConflictOptions,
+  ResolveConflictResult,
+} from './retain.js';
 export { recall } from './recall.js';
 export { reflect } from './reflect.js';
 
