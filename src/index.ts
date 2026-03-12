@@ -65,6 +65,7 @@ export {
   readEventsForAtoms,
   countEvents,
   compactLog,
+  getLastEventId,
 } from './event-log.js';
 
 // SQLite index
@@ -139,3 +140,7 @@ export type {
   WriteOperationOpts,
   ListEpisodesOptions,
 } from './episodes.js';
+
+// Import
+export { importFromFile, previewImport } from './import.js';
+export type { ImportFromFileOpts, ImportResult } from './import.js';

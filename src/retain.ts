@@ -14,7 +14,21 @@ import {
 } from './schema.js';
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
 import { indexAtom, indexExists, removeFromIndex } from './index-db.js';
+import { encryptAtom, resolveKey } from './crypto.js';
 import type { Atom, AtomFrontmatter, AtomType, Classification } from './types.js';
+
+/**
+ * Serialize an atom snapshot, encrypting it if the atom is SECRET and a key is available.
+ * Keeps the event log free of plaintext content for SECRET atoms.
+ */
+function snapshotAtom(atom: Atom): string {
+  const raw = serializeAtom(atom);
+  if (atom.frontmatter.classification === 'SECRET') {
+    const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
+    if (key) return encryptAtom(raw, key);
+  }
+  return raw;
+}
 
 export interface RetainOptions {
   agent_id: string;
@@ -72,14 +86,14 @@ export function createAtom(
   writeAtom(atom, fp);
   atom.filePath = fp;
 
-  // Emit event (v2 with snapshot)
+  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
   appendEvent(opts.memoryDir, 'atom_created', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [id],
     touched_paths: opts.scope?.paths,
     schema_version: 2,
-    atom_snapshot: serializeAtom(atom),
+    atom_snapshot: snapshotAtom(atom),
   });
 
   // Keep index in sync if it exists
@@ -134,14 +148,14 @@ export function updateAtom(
   // Write
   writeAtom(atom, opts.filePath);
 
-  // Emit event (v2 with snapshot)
+  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
   appendEvent(opts.memoryDir, 'atom_updated', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [atom.frontmatter.id],
     touched_paths: atom.frontmatter.scope?.paths,
     schema_version: 2,
-    atom_snapshot: serializeAtom(atom),
+    atom_snapshot: snapshotAtom(atom),
   });
 
   // Keep index in sync if it exists
@@ -199,7 +213,7 @@ export function resolveConflict(opts: ResolveConflictOptions): ResolveConflictRe
     session_id: opts.session_id,
     atom_refs: [atom.frontmatter.id],
     schema_version: 2,
-    atom_snapshot: serializeAtom(atom),
+    atom_snapshot: snapshotAtom(atom),
     meta: opts.resolutionNote ? { resolution_note: opts.resolutionNote } : undefined,
   });
 
@@ -242,13 +256,13 @@ export function archiveAtom(
     fs.unlinkSync(opts.filePath);
   }
 
-  // Emit event (v2 with snapshot)
+  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
   appendEvent(opts.memoryDir, 'atom_archived', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [atom.frontmatter.id],
     schema_version: 2,
-    atom_snapshot: serializeAtom(atom),
+    atom_snapshot: snapshotAtom(atom),
   });
 
   // Remove from index if it exists

@@ -2,7 +2,7 @@
 
 **Started:** 2026-03-09
 **Builder:** mainion-ai (Claude agent on Raspberry Pi 5)
-**Status:** v0.8.0 — Milestone E complete
+**Status:** v0.9.0 — Milestone F complete
 
 ## What this is
 
@@ -63,7 +63,7 @@ memory-kernel/
 ## Scoped OUT of v0.1
 
 - ~~MCP server~~ (implemented in v0.8.0)
-- Encryption at rest
+- ~~Encryption at rest~~ (implemented in v0.9.0)
 - Benchmark eval suites (LongMemEval, LoCoMo)
 - Adapters (Letta, LangGraph, Mem0)
 - Semantic/vector recall
@@ -109,9 +109,10 @@ memory-kernel/
 | **v0.6.0** | **Milestone C** | FTS5 search, task-aware recall, episode store, conflict detection heuristic | **434** |
 | **v0.7.0** | **Milestone D** | Multi-agent event-log union merge, `mergeEventLogs()` SDK, `mk merge` CLI, conflict atoms for concurrent updates | **448** |
 | **v0.8.0** | **Milestone E** | MCP server (`src/mcp/server.ts`), 8 tools, 4 resources, `resolveConflict()` kernel function, contract tests | **476** |
+| **v0.9.0** | **Milestone F** | AES-256-GCM encryption for SECRET atoms, read audit logging (`atom_read` event), `mk import` / `importFromFile()` | **531** |
 
 ## Upcoming milestones
 
 | Milestone | Target | Key changes |
 |-----------|--------|-------------|
-| F | v1.0.0 | Encryption (SECRET), read audit logging, `mk import`, v1.0 polish |
+| v1.0 | v1.0.0 | Final docs polish, benchmark evals |

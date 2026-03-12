@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] — 2026-03-12
+
+### Added
+- **Encryption at rest for SECRET atoms** (`src/crypto.ts`) — AES-256-GCM using Node.js built-in `crypto`. No new npm dependencies. Encrypted file format: `MKENC:v1:<base64(12-byte IV)>:<base64(ciphertext + 16-byte auth tag)>`.
+  - `MEMORY_ENCRYPTION_KEY` env var: 64-char hex (32 bytes direct) or passphrase (PBKDF2, salt=`memory-kernel-v1`, 100 000 iterations).
+  - `isEncrypted()`, `encryptAtom()`, `decryptAtom()`, `resolveKey()` exported from `src/crypto.ts`.
+  - `writeAtom()` in `src/store.ts` encrypts `classification === 'SECRET'` atoms when key is set.
+  - `readAtom()` in `src/store.ts` auto-decrypts MKENC:v1 content; throws a clear error when key is absent.
+  - `listAtoms()` skips encrypted atoms without key and emits a stderr warning.
+  - `createAtom()` / `updateAtom()` / `archiveAtom()` / `resolveConflict()` in `src/retain.ts` encrypt `atom_snapshot` in the event log for SECRET atoms (via `snapshotAtom()` helper).
+  - `replay()` in `src/replay.ts` decrypts encrypted snapshots before `parseAtom()`; gracefully pushes errors and continues when key is absent.
+- **Read audit logging** — `recall()` now emits an `atom_read` event when `agent_id` and `session_id` are present in `RecallQuery`. Fully backward-compatible (no event when fields are absent).
+  - `'atom_read'` added to `EVENT_ACTIONS` in `src/types.ts` and propagated to `MemoryEventSchema` automatically.
+  - `agent_id?` and `session_id?` added to `RecallQuery` interface.
+  - `handleRecall` and `handleGetContextBundle` in `src/mcp/tools.ts` pass agent/session ids through for audit.
+- **`mk import` command** — imports a markdown file as memory atoms.
+  - `src/import.ts` — `importFromFile(opts)`, `previewImport(filePath)`, `extractChunks(content)`. Extraction strategy: H2/H3 heading sections → bullet fallback → whole-file fallback. Chunks < 20 chars are skipped.
+  - Type inference from keywords: `decision`, `constraint`, `open_question`, `belief`, `fact`.
+  - Confidence inference from content signals: URL/inline-code → 0.9; uncertain language → 0.5; default prose → 0.75.
+  - CLI: `mk import --from <file> [--dir <dir>] [--type <type>] [--classification <c>] [--agent-id <id>] [--session-id <id>] [--dry-run]`
+
+### Modified
+- **`src/index.ts`** — exports `importFromFile`, `previewImport`, `ImportFromFileOpts`, `ImportResult`.
+- **`package.json`** — version `0.9.0`.
+
+### Tests
+- 531 tests passing (up from 476).
+- `test/crypto.test.ts` — 17 unit tests: `isEncrypted`, `resolveKey` (hex / passphrase / undefined / deterministic), round-trip encrypt/decrypt, random IV, wrong key throws, tampered ciphertext throws, non-MKENC input throws, unicode/multi-line content.
+- `test/retain-encrypted.test.ts` — 8 integration tests: SECRET atom file starts with `MKENC:v1:`, TEAM atom is plaintext, `readAtom` decrypts, event log snapshot encrypted for SECRET, TEAM snapshot plaintext, `listAtoms` returns both with key set, `readAtom` throws without key, `listAtoms` skips SECRET with warning when key absent.
+- `test/recall-audit.test.ts` — 7 tests: `atom_read` emitted with correct fields when agent/session provided; NOT emitted when fields absent (multiple cases); separate events per call.
+- `test/import.test.ts` — 17 tests: `extractChunks` unit tests (heading, bullet, plain, too-short), `previewImport` dry-run, `importFromFile` (atoms created, event log, bullet files, defaultType/defaultClassification overrides, TEAM default), type inference (decision/constraint/open_question/belief/fact), confidence inference (URL, code, uncertain).
+
 ## [0.8.0] — 2026-03-12
 
 ### Added

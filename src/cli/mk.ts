@@ -39,6 +39,8 @@ import { replayFromFile } from '../replay.js';
 import { compactLog } from '../event-log.js';
 import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
+import { importFromFile, previewImport } from '../import.js';
+import type { Classification } from '../types.js';
 
 const program = new Command();
 
@@ -604,6 +606,78 @@ program
       console.log(`  ${ep.id}  ${started}${tags ? '  [' + tags + ']' : ''}`);
       const preview = ep.summary.split('\n')[0]?.slice(0, 80) ?? '';
       if (preview) console.log(`    ${preview}`);
+    }
+  });
+
+// --- mk import ---
+program
+  .command('import')
+  .description('Import a markdown file as memory atoms (heuristic extraction)')
+  .requiredOption('--from <file>', 'Source markdown file to import')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('-t, --type <type>', 'Force atom type for all imported atoms (default: auto-detect)')
+  .option('--classification <c>', 'Classification for all atoms (default: TEAM)')
+  .option('--agent-id <id>', 'Agent ID', 'cli')
+  .option('--session-id <id>', 'Session ID', 'cli-import')
+  .option('--dry-run', 'Preview what would be imported without creating atoms')
+  .action((opts: {
+    from: string;
+    dir: string;
+    type?: string;
+    classification?: string;
+    agentId: string;
+    sessionId: string;
+    dryRun?: boolean;
+  }) => {
+    const filePath = path.resolve(opts.from);
+    const memoryDir = path.resolve(opts.dir);
+
+    if (!fs.existsSync(filePath)) {
+      console.error(`✗ Source file not found: ${filePath}`);
+      process.exit(1);
+    }
+
+    if (opts.dryRun) {
+      const chunks = previewImport(filePath);
+      const viable = chunks.filter((c) => c.body.trim().length >= 20);
+      console.log(`Dry run — would import from: ${filePath}`);
+      console.log(`  Chunks found:  ${chunks.length}`);
+      console.log(`  Would create:  ${viable.length} atom(s)`);
+      console.log(`  Would skip:    ${chunks.length - viable.length} (too short)`);
+      return;
+    }
+
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    try {
+      const result = importFromFile({
+        filePath,
+        memoryDir,
+        agent_id: opts.agentId,
+        session_id: opts.sessionId,
+        defaultType: opts.type as any,
+        defaultClassification: (opts.classification as Classification) ?? 'TEAM',
+      });
+
+      console.log(`✓ Import completed:`);
+      console.log(`  Source:        ${result.source_file}`);
+      console.log(`  Atoms created: ${result.atoms_created}`);
+      if (result.atoms_skipped > 0) {
+        console.log(`  Skipped:       ${result.atoms_skipped} (too short)`);
+      }
+      if (result.atom_ids.length > 0) {
+        console.log(`  IDs:`);
+        for (const id of result.atom_ids) {
+          console.log(`    ${id}`);
+        }
+      }
+    } catch (err) {
+      console.error(`✗ Import failed: ${String(err)}`);
+      process.exit(1);
     }
   });
 

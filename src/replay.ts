@@ -16,6 +16,7 @@ import {
   renderHandoff,
 } from './renderers.js';
 import { assertWithinDir, writeFileAtomic, writeAtom, atomFilePath } from './store.js';
+import { isEncrypted, decryptAtom, resolveKey } from './crypto.js';
 import type { Atom, MemoryEvent, ReplayResult } from './types.js';
 
 /**
@@ -70,6 +71,25 @@ export function replay(
         `Event ${event.event_id}: no snapshot for ${event.action}`,
       );
       continue;
+    }
+
+    // Decrypt snapshot if encrypted (SECRET atoms)
+    if (isEncrypted(snapshot)) {
+      const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
+      if (!key) {
+        errors.push(
+          `Event ${event.event_id}: encrypted snapshot requires MEMORY_ENCRYPTION_KEY`,
+        );
+        continue;
+      }
+      try {
+        snapshot = decryptAtom(snapshot, key);
+      } catch (err) {
+        errors.push(
+          `Event ${event.event_id}: failed to decrypt snapshot: ${String(err)}`,
+        );
+        continue;
+      }
     }
 
     try {
