@@ -23,8 +23,9 @@ if (!memoryDir || !outputPath) {
 
 import fs from 'fs';
 
-// Recall everything relevant
-const bundle = recall(memoryDir);
+// Recall with token budget — keeps CLAUDE.md from bloating as atoms grow.
+// 8000 tokens ≈ 32KB, ~5% of a 200K context window. Enough for ~100 atoms.
+const bundle = recall(memoryDir, { max_tokens: 8000 });
 const atoms = listAtoms(memoryDir);
 const active = atoms.filter(
   (a) => a.frontmatter.status !== 'archived' && a.frontmatter.status !== 'expired',
