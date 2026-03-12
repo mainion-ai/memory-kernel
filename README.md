@@ -879,10 +879,12 @@ Typical performance on a modern workstation (M-series Mac or equivalent x86-64) 
 | Operation | Metric | Typical | PRD Target |
 |---|---|---|---|
 | `recall()` | p50 | ~2ms | — |
-| `recall()` | p95 | ~5ms | < 50ms |
-| `recall()` | p99 | ~10ms | — |
+| `recall()` | p95 | ~3ms | < 50ms |
+| `recall()` | p99 | ~5ms | — |
 | `reflect()` | single call | ~100–200ms | — |
-| `replay()` | 100 atoms (~160 events) | ~5ms | — |
+| `replay()` | 100 atoms (~160 events) | ~2ms | — |
+
+For the reference measurement used in CI, see `scripts/bench-baseline.json`.
 
 Run the benchmark harness on your machine:
 
