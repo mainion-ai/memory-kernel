@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] — 2026-03-12
+
+### Added
+- **MCP server** (`src/mcp/server.ts`) — StdioServerTransport entry point; configured via `MEMORY_DIR` (required), `MCP_AGENT_ID`, and `MCP_SESSION_ID` environment variables. Exposed as the `mk-mcp` bin.
+- **8 MCP tools** (`src/mcp/tools.ts`) — thin adapter over the existing kernel API. All tool outputs include a `provenance` block (`memoryDir`, `agent_id`, `session_id`, `executed_at`, optional `event_id` / `atom_refs`).
+  - `remember` → `createAtom()`
+  - `recall` → `recall()`
+  - `reflect` → `reflect()`
+  - `gc` → `reflect()` (GC-focused alias)
+  - `merge` → `mergeEventLogs()` (validates `remote_dir` exists first)
+  - `list_conflicts` → `queryIndex` / `listAtoms` filtered by `type === 'conflict'`
+  - `resolve_conflict` → `resolveConflict()`
+  - `get_context_bundle` → `checkpoint()`
+- **4 MCP resources** (`src/mcp/resources.ts`) — read view files fresh per request, fall back to placeholder if not yet generated.
+  - `memory://decisions` → `DECISIONS.md`
+  - `memory://constraints` → `CONSTRAINTS.md`
+  - `memory://handoff` → `HANDOFF.md`
+  - `memory://open-questions` → `OPEN_QUESTIONS.md`
+- **`resolveConflict()` kernel function** (`src/retain.ts`) — sets conflict atom status to `resolved`, archives it to `ARCHIVE/`, emits `conflict_resolved` V2 event, removes from SQLite index. Idempotent: already-archived atoms return early.
+- **`McpContext` type** (`src/mcp/context.ts`) — shared context (`memoryDir`, `defaultAgentId`, `defaultSessionId`) threaded through all handlers; `resolveAgentId` / `resolveSessionId` helpers support per-call overrides.
+
+### Modified
+- **`src/index.ts`** — exports `resolveConflict`, `RetainOptions`, `ResolveConflictOptions`, `ResolveConflictResult`.
+- **`package.json`** — version `0.8.0`; added `@modelcontextprotocol/sdk ^1.12.0` dependency; added `mk-mcp` bin entry; added `mcp` dev script (`tsx src/mcp/server.ts`).
+
+### Fixed
+- **`src/episodes.ts`** — pre-existing TypeScript strict-null error in episode sort comparator (`started_at` is optional; added `?? ''` guards).
+
+### Tests
+- 476 tests passing (up from 448).
+- `test/mcp.test.ts` — 19 contract tests for all 8 tools (no transport needed; handlers called directly).
+- `test/mcp-resources.test.ts` — 9 contract tests for all 4 resources (URI, mimeType, placeholder before reflect, real content after reflect).
+
 ## [0.7.0] — 2026-03-12
 
 ### Added
