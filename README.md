@@ -487,6 +487,38 @@ npx mk merge -d ./my-memory --remote ./remote-memory \
 npx mk reindex -d ./my-memory
 ```
 
+### Import a markdown file
+
+```bash
+# Preview what would be extracted (no writes)
+npx mk import --from NOTES.md --dir ./my-memory --dry-run
+
+# Import — one atom per heading section; bullet fallback if no headings
+npx mk import --from NOTES.md --dir ./my-memory \
+  --agent-id my-agent --session-id session-import-1
+
+# Force all atoms to a specific type
+npx mk import --from CONSTRAINTS.md --dir ./my-memory --type constraint
+```
+
+### Encrypt SECRET atoms
+
+```bash
+# Set the encryption key (64-char hex or a passphrase)
+export MEMORY_ENCRYPTION_KEY="your-passphrase-or-64-char-hex"
+
+# SECRET atoms are automatically encrypted at rest
+npx mk remember -d ./my-memory --type fact --classification SECRET \
+  "API key rotation schedule: first Monday of every month"
+
+# Recall works transparently when the key is set
+npx mk recall -d ./my-memory
+
+# Without the key, SECRET atoms are skipped (other atoms still readable)
+unset MEMORY_ENCRYPTION_KEY
+npx mk recall -d ./my-memory
+```
+
 ### Validate everything
 
 ```bash
@@ -521,6 +553,8 @@ import {
   listEpisodes,
   linkEpisodeToAtom,
   mergeEventLogs,
+  importFromFile,
+  previewImport,
 } from 'memory-kernel';
 
 // Initialize
@@ -682,6 +716,53 @@ const mergeResult = await mergeEventLogs({
 // mergeResult.conflicts_created — number of conflict atoms created
 // mergeResult.events_merged   — total events after deduplication
 
+// --- Import (v0.9.0+) ---
+
+// Preview chunks that would be extracted from a markdown file
+const chunks = previewImport('./NOTES.md');
+// chunks: [{ heading: 'Architecture Decision', body: '...' }, ...]
+
+// Import the file as atoms — one per heading section (bullet fallback if no headings)
+const imported = importFromFile({
+  filePath: './NOTES.md',
+  memoryDir: './memory',
+  agent_id: 'my-agent',
+  session_id: 'session-import-1',
+  // defaultType: 'fact',         // override type inference
+  // defaultClassification: 'TEAM', // default
+});
+console.log(`Created: ${imported.atoms_created}, Skipped: ${imported.atoms_skipped}`);
+
+// --- Encryption (v0.9.0+) ---
+
+// Set MEMORY_ENCRYPTION_KEY env var before creating SECRET atoms.
+// 64-char hex (32 bytes) or any passphrase (PBKDF2-derived).
+// process.env.MEMORY_ENCRYPTION_KEY = 'my-passphrase';
+
+// SECRET atoms are automatically encrypted at rest — no API change needed.
+createAtom({
+  memoryDir: './memory',
+  agent_id: 'my-agent',
+  session_id: 'session-1',
+  type: 'fact',
+  slug: 'api-key-rotation',
+  body: 'API key rotation schedule: first Monday of every month.',
+  classification: 'SECRET',   // stored as MKENC:v1:... on disk
+});
+
+// recall() and readAtom() decrypt transparently when key is set.
+// listAtoms() skips SECRET atoms with a stderr warning when key is absent.
+
+// --- Read Audit Logging (v0.9.0+) ---
+
+// Pass agent_id + session_id to recall() to emit an 'atom_read' event.
+const auditedContext = recall('./memory', {
+  task: 'cursor pagination API',
+  agent_id: 'my-agent',   // if both provided,
+  session_id: 'session-3', // an atom_read event is appended to events.ndjson
+});
+// Omit agent_id/session_id to skip audit (fully backward-compatible).
+
 // --- Conflict Resolution (v0.8.0+) ---
 
 // Resolve a conflict atom: sets status to 'resolved', archives it,
@@ -721,6 +802,7 @@ Environment variables:
 | `MEMORY_DIR` | **yes** | — | Absolute path to the memory directory |
 | `MCP_AGENT_ID` | no | `mcp-server` | Agent ID written to the event log |
 | `MCP_SESSION_ID` | no | `mcp-<uuid8>` | Session ID written to the event log |
+| `MEMORY_ENCRYPTION_KEY` | no | — | Encrypt/decrypt `SECRET` atoms at rest (64-char hex or passphrase) |
 
 ### MCP Tools
 
@@ -768,23 +850,24 @@ Resources read view files fresh on every request. If a view hasn't been generate
 ## CLI Commands
 
 
-| Command                                                        | Description                                                      |
-| -------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `mk init [dir]`                                                | Initialize a memory directory with all subdirectories            |
-| `mk status -d <dir>`                                           | Show atom counts, tag stats, index status                        |
-| `mk remember -d <dir> --type <type> "body"`                    | Quick-create an atom from the command line                       |
-| `mk recall -d <dir> [--task "text"] [--include-episodes]`      | Load relevant context; `--task` enables FTS BM25 re-ranking      |
-| `mk reflect -d <dir>`                                          | Consolidate: deduplicate, expire, promote, detect conflicts      |
-| `mk checkpoint -d <dir>`                                       | Generate checkpoint/handoff bundle (stdout)                      |
-| `mk episode -d <dir> --session-id <id> --summary "text"`       | Write a session episode summary to EPISODES/                     |
-| `mk episodes -d <dir> [--limit N] [--tags a,b]`                | List session episodes newest-first                               |
-| `mk bootstrap-events -d <dir>`                                 | Migrate existing atoms to V2 event-sourced format                |
-| `mk replay --from <file>`                                      | Reconstruct atoms + views from an event log                      |
-| `mk reindex -d <dir>`                                          | Rebuild SQLite index (including FTS5) from files                 |
-| `mk compact -d <dir>`                                          | Compact event log — remove intermediate mutation events          |
-| `mk merge -d <dir> --remote <path> [--dry-run]`                | Merge remote event log into local; creates conflict atoms for concurrent updates |
-| `mk gc -d <dir>`                                               | Archive expired atoms                                            |
-| `mk doctor -d <dir>`                                           | Validate schema, check links, report problems                    |
+| Command                                                                                   | Description                                                      |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `mk init [dir]`                                                                           | Initialize a memory directory with all subdirectories            |
+| `mk status -d <dir>`                                                                      | Show atom counts, tag stats, index status                        |
+| `mk remember -d <dir> --type <type> "body"`                                               | Quick-create an atom from the command line                       |
+| `mk recall -d <dir> [--task "text"] [--include-episodes]`                                 | Load relevant context; `--task` enables FTS BM25 re-ranking      |
+| `mk reflect -d <dir>`                                                                     | Consolidate: deduplicate, expire, promote, detect conflicts      |
+| `mk checkpoint -d <dir>`                                                                  | Generate checkpoint/handoff bundle (stdout)                      |
+| `mk import --from <file> [-d <dir>] [--type <t>] [--classification <c>] [--dry-run]`     | Import a markdown file as memory atoms (heading/bullet extraction) |
+| `mk episode -d <dir> --session-id <id> --summary "text"`                                  | Write a session episode summary to EPISODES/                     |
+| `mk episodes -d <dir> [--limit N] [--tags a,b]`                                           | List session episodes newest-first                               |
+| `mk bootstrap-events -d <dir>`                                                            | Migrate existing atoms to V2 event-sourced format                |
+| `mk replay --from <file>`                                                                 | Reconstruct atoms + views from an event log                      |
+| `mk reindex -d <dir>`                                                                     | Rebuild SQLite index (including FTS5) from files                 |
+| `mk compact -d <dir>`                                                                     | Compact event log — remove intermediate mutation events          |
+| `mk merge -d <dir> --remote <path> [--dry-run]`                                           | Merge remote event log into local; creates conflict atoms for concurrent updates |
+| `mk gc -d <dir>`                                                                          | Archive expired atoms                                            |
+| `mk doctor -d <dir>`                                                                      | Validate schema, check links, report problems                    |
 
 
 ---
