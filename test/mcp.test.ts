@@ -56,7 +56,7 @@ afterEach(() => {
 // remember
 // ---------------------------------------------------------------------------
 
-describe('remember tool', () => {
+describe('mk_remember tool', () => {
   it('creates an atom and returns id + provenance', async () => {
     const result = await handleRemember(ctx, {
       type: 'fact',
@@ -103,7 +103,7 @@ describe('remember tool', () => {
 // recall
 // ---------------------------------------------------------------------------
 
-describe('recall tool', () => {
+describe('mk_recall tool', () => {
   beforeEach(async () => {
     await handleRemember(ctx, { type: 'fact', slug: 'recall-test', body: 'Test fact for recall.' });
     await handleReflect(ctx, {});
@@ -142,7 +142,7 @@ describe('recall tool', () => {
 // reflect
 // ---------------------------------------------------------------------------
 
-describe('reflect tool', () => {
+describe('mk_reflect tool', () => {
   it('returns numeric counts and provenance', async () => {
     await handleRemember(ctx, { type: 'fact', slug: 'reflect-test', body: 'A fact.' });
     const result = await handleReflect(ctx, {});
@@ -166,7 +166,7 @@ describe('reflect tool', () => {
 // merge
 // ---------------------------------------------------------------------------
 
-describe('merge tool', () => {
+describe('mk_merge tool', () => {
   let remoteDir: string;
 
   beforeEach(() => {
@@ -224,7 +224,7 @@ describe('merge tool', () => {
 // gc
 // ---------------------------------------------------------------------------
 
-describe('gc tool', () => {
+describe('mk_gc tool', () => {
   it('archives expired atoms', async () => {
     createAtom({
       memoryDir: testDir,
@@ -249,7 +249,7 @@ describe('gc tool', () => {
 // list_conflicts
 // ---------------------------------------------------------------------------
 
-describe('list_conflicts tool', () => {
+describe('mk_list_conflicts tool', () => {
   it('returns empty list on clean store', async () => {
     const result = await handleListConflicts(ctx, {});
     const data = parseResult(result);
@@ -298,7 +298,7 @@ describe('list_conflicts tool', () => {
 // resolve_conflict
 // ---------------------------------------------------------------------------
 
-describe('resolve_conflict tool', () => {
+describe('mk_resolve_conflict tool', () => {
   it('resolves an active conflict atom', async () => {
     // Create conditions for a conflict then detect it
     createAtom({
@@ -373,7 +373,7 @@ describe('resolve_conflict tool', () => {
 // get_context_bundle
 // ---------------------------------------------------------------------------
 
-describe('get_context_bundle tool', () => {
+describe('mk_get_context_bundle tool', () => {
   it('returns markdown, token_estimate, atom_count, event_id, and provenance', async () => {
     await handleRemember(ctx, { type: 'fact', slug: 'bundle-fact', body: 'A bundled fact.' });
     const result = await handleGetContextBundle(ctx, { skip_reflect: false });
