@@ -457,7 +457,7 @@ export async function handleGetContextBundle(
 
 export function registerTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
-    'remember',
+    'mk_remember',
     {
       title: 'Remember',
       description: 'Create a new memory atom (fact, decision, constraint, belief, etc.).',
@@ -467,7 +467,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'recall',
+    'mk_recall',
     {
       title: 'Recall',
       description: 'Load relevant context atoms from memory, optionally scoped by task, paths, or type.',
@@ -477,7 +477,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'reflect',
+    'mk_reflect',
     {
       title: 'Reflect',
       description: 'Consolidate memory: dedup, TTL expiry, auto-promote beliefs, detect conflicts, regenerate views.',
@@ -487,7 +487,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'merge',
+    'mk_merge',
     {
       title: 'Merge',
       description: 'Merge a remote agent\'s event log into local memory (event-log union, conflict detection).',
@@ -497,7 +497,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'gc',
+    'mk_gc',
     {
       title: 'Garbage Collect',
       description: 'Archive TTL-expired and duplicate atoms, regenerate views.',
@@ -507,7 +507,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'list_conflicts',
+    'mk_list_conflicts',
     {
       title: 'List Conflicts',
       description: 'List all active conflict atoms currently in the memory store.',
@@ -517,7 +517,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'resolve_conflict',
+    'mk_resolve_conflict',
     {
       title: 'Resolve Conflict',
       description: 'Resolve (archive) a conflict atom and record a resolution note.',
@@ -527,7 +527,7 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
   );
 
   server.registerTool(
-    'get_context_bundle',
+    'mk_get_context_bundle',
     {
       title: 'Get Context Bundle',
       description: 'Generate a full handoff checkpoint: run reflect, load context, return assembled markdown bundle.',
