@@ -10,7 +10,8 @@
 </p>
 
 <p align="center">
-  <strong>New here?</strong> Read <a href="STORY.md">STORY.md</a> first — it explains everything with no jargon.
+  <strong>New here?</strong> Read <a href="STORY.md">STORY.md</a> first — it explains everything with no jargon.<br>
+  <a href="docs/when-to-choose-memory-kernel.md">When to choose memory-kernel</a> · <a href="docs/migration.md">Migration guide</a>
 </p>
 
 ## The Problem
