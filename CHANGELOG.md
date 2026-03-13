@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- **MCP tool names renamed** — All 8 MCP server tool names now carry the `mk_` prefix for namespace clarity and consistency with the native OpenClaw plugin. Update any MCP client config that references the old names:
+
+  | Old name | New name |
+  |---|---|
+  | `remember` | `mk_remember` |
+  | `recall` | `mk_recall` |
+  | `reflect` | `mk_reflect` |
+  | `merge` | `mk_merge` |
+  | `gc` | `mk_gc` |
+  | `list_conflicts` | `mk_list_conflicts` |
+  | `resolve_conflict` | `mk_resolve_conflict` |
+  | `get_context_bundle` | `mk_get_context_bundle` |
+
+  **Migration**: Edit any MCP client config (e.g., `claude_desktop_config.json`, `.cursor/mcp.json`, `~/.openclaw/openclaw.json`) that calls the old tool names.
+
+### Added
+
+- **`docs/openclaw-mcp.md`** — Zero-code MCP quick-start for OpenClaw.
+- **`docs/migration.md`** — Migration guide covering 5 paths: raw markdown, pre-v1.0 upgrade, external memory systems, from scratch, multi-agent merge.
+- **`docs/when-to-choose-memory-kernel.md`** — Decision guide: when memory-kernel is the right tool vs. overkill.
+- **`packages/openclaw-memory-kernel/`** — Native OpenClaw plugin (`openclaw-memory-kernel@0.1.0`): 4 tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`), TypeBox schemas, SKILL.md routing guide, INSTALL.md.
+
+---
+
 ## [1.0.0] — 2026-03-12
 
 ### Added
