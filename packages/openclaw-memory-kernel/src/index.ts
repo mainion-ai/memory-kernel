@@ -66,8 +66,6 @@ function ok(text: string, details?: Record<string, unknown>) {
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
-const AtomTypeEnum = Type.Union(ATOM_TYPES.map((t) => Type.Literal(t)))
-
 const RememberParams = Type.Object({
   type: Type.Union(ATOM_TYPES.map((t) => Type.Literal(t)), {
     description: 'Atom type: fact | decision | constraint | belief | open_question',
@@ -103,7 +101,9 @@ const RecallParams = Type.Object({
     Type.String({ description: 'What you are doing — enables FTS5 re-ranking' }),
   ),
   types: Type.Optional(
-    Type.Array(AtomTypeEnum, { description: 'Filter by atom type (e.g. ["decision","constraint"])' }),
+    Type.Array(Type.Union(ATOM_TYPES.map((t) => Type.Literal(t))), {
+      description: 'Filter by atom type (e.g. ["decision","constraint"])',
+    }),
   ),
   tags: Type.Optional(Type.Array(Type.String(), { description: 'Filter by scope tags' })),
   include_episodes: Type.Optional(Type.Boolean({ description: 'Include session episode summaries' })),
@@ -115,7 +115,7 @@ const ReflectParams = Type.Object({})
 const ContextBundleParams = Type.Object({
   task: Type.Optional(Type.String({ description: 'Task description — scopes the recall' })),
   max_tokens: Type.Optional(Type.Number({ description: 'Token budget. Default: 4000' })),
-  skip_reflect: Type.Optional(Type.Boolean({ description: 'Skip reflect if just ran. Default: false' })),
+  skipReflect: Type.Optional(Type.Boolean({ description: 'Skip reflect if just ran. Default: false' })),
 })
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
@@ -133,7 +133,9 @@ const memoryKernelPlugin = {
     const cfg = pluginConfigSchema.parse(api.pluginConfig)
     const { memoryDir } = cfg
 
-    // Expose encryption key to memory-kernel (reads from process.env at call time)
+    // memory-kernel reads MEMORY_ENCRYPTION_KEY from process.env at call time.
+    // Setting it here at plugin registration is intentional; a per-call override API
+    // is not yet exposed. Note: this makes the key visible to all code in this process.
     if (cfg.encryptionKey) process.env.MEMORY_ENCRYPTION_KEY = cfg.encryptionKey
 
     // ── mk_remember ──────────────────────────────────────────────────────────
@@ -148,18 +150,23 @@ const memoryKernelPlugin = {
           'open_question (unresolved). Always pick the most specific type.',
         parameters: RememberParams,
         async execute(_id, params) {
-          const p = params as Static<typeof RememberParams>
-          const atom = await createAtom({
-            memoryDir,
-            type: p.type as AtomType,
-            slug: p.slug,
-            body: p.body,
-            confidence: p.confidence,
-            classification: p.classification as Classification | undefined,
-            ttl_days: p.ttl_days,
-            scope_tags: p.scope_tags,
-          })
-          return ok(`Stored ${atom.type} atom: ${atom.id}`, { atomId: atom.id, type: atom.type })
+          try {
+            const p = params as Static<typeof RememberParams>
+            const atom = await createAtom({
+              memoryDir,
+              type: p.type as AtomType,
+              slug: p.slug,
+              body: p.body,
+              confidence: p.confidence,
+              classification: p.classification as Classification | undefined,
+              ttl_days: p.ttl_days,
+              scope_tags: p.scope_tags,
+            })
+            return ok(`Stored ${atom.type} atom: ${atom.id}`, { atomId: atom.id, type: atom.type })
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return ok(`Error: ${msg}`)
+          }
         },
       },
       { name: 'mk_remember' },
@@ -177,30 +184,35 @@ const memoryKernelPlugin = {
           'semantic recall over unstructured notes.',
         parameters: RecallParams,
         async execute(_id, params) {
-          const p = params as Static<typeof RecallParams>
-          const result = await recall(memoryDir, {
-            task: p.task,
-            types: p.types as AtomType[] | undefined,
-            tags: p.tags,
-            include_episodes: p.include_episodes,
-            max_tokens: p.max_tokens,
-          })
-          const sections: string[] = []
-          if (result.index) sections.push(result.index)
-          if (result.constraints) sections.push(result.constraints)
-          if (result.atoms?.length) {
-            sections.push(
-              `## Atoms (${result.atoms.length})\n` +
-                result.atoms
-                  .map((a) => `- [${a.type}] **${a.id}** (conf: ${a.confidence})\n  ${a.body}`)
-                  .join('\n'),
-            )
+          try {
+            const p = params as Static<typeof RecallParams>
+            const result = await recall(memoryDir, {
+              task: p.task,
+              types: p.types as AtomType[] | undefined,
+              tags: p.tags,
+              include_episodes: p.include_episodes,
+              max_tokens: p.max_tokens,
+            })
+            const sections: string[] = []
+            if (result.index) sections.push(result.index)
+            if (result.constraints) sections.push(result.constraints)
+            if (result.atoms?.length) {
+              sections.push(
+                `## Atoms (${result.atoms.length})\n` +
+                  result.atoms
+                    .map((a) => `- [${a.type}] **${a.id}** (conf: ${a.confidence})\n  ${a.body}`)
+                    .join('\n'),
+              )
+            }
+            if (result.episodes?.length) {
+              sections.push(`## Episodes\n` + result.episodes.map((e) => e.body ?? e.id).join('\n---\n'))
+            }
+            const text = sections.join('\n\n---\n\n') || '(no atoms found)'
+            return ok(text, { atomCount: result.atoms?.length ?? 0, tokenEstimate: result.token_estimate })
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return ok(`Error: ${msg}`)
           }
-          if (result.episodes?.length) {
-            sections.push(`## Episodes\n` + result.episodes.map((e) => e.body ?? e.id).join('\n---\n'))
-          }
-          const text = sections.join('\n\n---\n\n') || '(no atoms found)'
-          return ok(text, { atomCount: result.atoms?.length ?? 0, tokenEstimate: result.token_estimate })
         },
       },
       { name: 'mk_recall' },
@@ -217,12 +229,17 @@ const memoryKernelPlugin = {
           'Call at end of session or after a merge.',
         parameters: ReflectParams,
         async execute(_id, _params) {
-          const result = await reflect({ memoryDir })
-          return ok(
-            `reflect complete — expired: ${result.expired}, archived: ${result.archived}, ` +
-              `deduped: ${result.deduped}, promoted: ${result.promoted}, conflicts: ${result.conflicts_found}`,
-            result as unknown as Record<string, unknown>,
-          )
+          try {
+            const result = await reflect({ memoryDir })
+            return ok(
+              `reflect complete — expired: ${result.expired}, archived: ${result.archived}, ` +
+                `deduped: ${result.deduped}, promoted: ${result.promoted}, conflicts: ${result.conflicts_found}`,
+              { ...result },
+            )
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return ok(`Error: ${msg}`)
+          }
         },
       },
       { name: 'mk_reflect' },
@@ -238,17 +255,22 @@ const memoryKernelPlugin = {
           'Best for session start or handoff — one call instead of separate reflect + recall.',
         parameters: ContextBundleParams,
         async execute(_id, params) {
-          const p = params as Static<typeof ContextBundleParams>
-          const result = await checkpoint({
-            memoryDir,
-            task: p.task,
-            max_tokens: p.max_tokens,
-            skip_reflect: p.skip_reflect,
-          })
-          return ok(result.markdown, {
-            atomCount: result.atom_count,
-            tokenEstimate: result.token_estimate,
-          })
+          try {
+            const p = params as Static<typeof ContextBundleParams>
+            const result = await checkpoint({
+              memoryDir,
+              task: p.task,
+              max_tokens: p.max_tokens,
+              skipReflect: p.skipReflect,
+            })
+            return ok(result.markdown, {
+              atomCount: result.atom_count,
+              tokenEstimate: result.token_estimate,
+            })
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return ok(`Error: ${msg}`)
+          }
         },
       },
       { name: 'mk_context_bundle' },
