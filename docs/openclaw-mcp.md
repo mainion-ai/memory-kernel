@@ -55,14 +55,14 @@ Optional env vars:
 
 | Tool | Maps to | Description |
 |---|---|---|
-| `remember` | `createAtom()` | Store a typed atom (fact / decision / constraint / belief / open_question) |
-| `recall` | `recall()` | Retrieve atoms — FTS5-ranked when `task` is set, typed-filtered when `types` is set |
-| `reflect` | `reflect()` | Expire TTL'd atoms, dedup, auto-promote beliefs, detect conflicts, regenerate views |
-| `gc` | `reflect()` | Alias for reflect (GC framing) |
-| `merge` | `mergeEventLogs()` | Union-merge a remote memory directory with conflict detection |
-| `list_conflicts` | `listAtoms()` | List active conflict atoms |
-| `resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved |
-| `get_context_bundle` | `checkpoint()` | Pre-assembled Markdown context (reflect + recall in one call) |
+| `mk_remember` | `createAtom()` | Store a typed atom (fact / decision / constraint / belief / open_question) |
+| `mk_recall` | `recall()` | Retrieve atoms — FTS5-ranked when `task` is set, typed-filtered when `types` is set |
+| `mk_reflect` | `reflect()` | Expire TTL'd atoms, dedup, auto-promote beliefs, detect conflicts, regenerate views |
+| `mk_gc` | `reflect()` | Alias for reflect (GC framing) |
+| `mk_merge` | `mergeEventLogs()` | Union-merge a remote memory directory with conflict detection |
+| `mk_list_conflicts` | `listAtoms()` | List active conflict atoms |
+| `mk_resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved |
+| `mk_get_context_bundle` | `checkpoint()` | Pre-assembled Markdown context (reflect + recall in one call) |
 
 ## Resources exposed
 
@@ -80,13 +80,13 @@ Optional env vars:
 After restarting OpenClaw, ask your agent:
 
 ```
-Use the remember tool to store this decision: we use TypeScript for all new modules. confidence 0.95.
+Use mk_remember to store this decision: we use TypeScript for all new modules. confidence 0.95.
 ```
 
 Then:
 
 ```
-Use recall with task "TypeScript modules" and show me what comes back.
+Use mk_recall with task "TypeScript modules" and show me what comes back.
 ```
 
 You should see a typed `decision` atom returned with FTS5-ranked results.
@@ -96,5 +96,4 @@ You should see a typed `decision` atom returned with FTS5-ranked results.
 ## Notes
 
 - memory-kernel runs as a **separate process** (standard for MCP). It does not replace OpenClaw's built-in `memory_search` / `memory_get` — both run alongside each other.
-- The `remember` tool name may conflict with built-in OpenClaw tools depending on your version. If so, use `get_context_bundle` or `recall` as the primary entry points, and rename the server key to distinguish it.
-- For the integrated plugin experience (no separate process, tool names prefixed `mk_*`, SKILL.md routing), see [`openclaw-memory-kernel`](https://github.com/mainion-ai/openclaw-memory-kernel) *(coming soon)*.
+- For the integrated plugin experience (no separate process, SKILL.md routing), see [`packages/openclaw-memory-kernel/`](../packages/openclaw-memory-kernel/).
