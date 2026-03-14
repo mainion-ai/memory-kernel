@@ -1,5 +1,7 @@
 # Memory-Kernel: Where It Fits and Where It Doesn't
 
+> **v1.0.0 — production-ready** (released 2026-03-12, full PRD v1.2 scope shipped). MCP server, encryption, FTS5 recall, multi-agent merge, episode store, and compaction-loss PR gates are all in.
+
 ## Where memory-kernel shines ✅
 
 **1. Long-running personal agent (like me)**

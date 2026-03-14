@@ -11,8 +11,8 @@ You have `.md` files with knowledge — project notes, architecture docs, a hand
 **Use `mk import`:**
 
 ```bash
-# Preview what would be extracted (dry run)
-mk import --preview -d /path/to/memory myfile.md
+# Dry run — preview what would be extracted without creating atoms
+mk import --dry-run -d /path/to/memory myfile.md
 
 # Import — creates one atom per H2/H3 section
 mk import -d /path/to/memory myfile.md
@@ -35,7 +35,7 @@ mk doctor -d /path/to/memory    # Verify everything is healthy
 ```
 
 **Tips:**
-- Run `--preview` first to see the chunks before committing
+- Run `--dry-run` first to see the chunks before committing
 - Review the auto-detected types — `mk import` uses keyword heuristics, not magic
 - You can always edit the generated atom files directly (they're just markdown with YAML frontmatter)
 

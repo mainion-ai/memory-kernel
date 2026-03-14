@@ -91,7 +91,7 @@ Then:
 Use mk_recall with task "TypeScript modules" and show me what comes back.
 ```
 
-You should see a typed `decision` atom returned with FTS5-ranked results.
+You should see a tool response containing a `decision` atom — look for `"type": "decision"` in the atom's fields, along with a `provenance` block showing the `memoryDir` and `agent_id` used.
 
 ---
 

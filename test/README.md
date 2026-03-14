@@ -22,6 +22,8 @@ This directory also includes:
 npm test
 ```
 
+**Total: 551 tests across 21 files** (as of v1.0.0). See `CODING_INSTRUCTIONS.md` for the full test file inventory and what each file covers.
+
 ## Notes
 
 * The OpenClaw plugin (`packages/openclaw-memory-kernel`) is intentionally not imported by root tests.
