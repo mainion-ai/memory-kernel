@@ -26,6 +26,8 @@ Memory Kernel treats agent memory like a **typed system**, not a text dump. Know
 npm install memory-kernel
 ```
 
+<video src="docs/videos/MemoryKernelVideo.mp4" controls width="100%"></video>
+
 ---
 
 ## Concepts
@@ -811,14 +813,14 @@ All tools accept optional `agent_id` and `session_id` fields to override server 
 
 | Tool | Maps to | Description |
 |---|---|---|
-| `remember` | `createAtom()` | Create a new memory atom |
-| `recall` | `recall()` | Load relevant context (types, tags, task, episodes) |
-| `reflect` | `reflect()` | Expire, dedup, promote, detect conflicts, regenerate views |
-| `gc` | `reflect()` | Archive expired atoms (GC-focused alias for reflect) |
-| `merge` | `mergeEventLogs()` | Merge a remote memory directory into local |
-| `list_conflicts` | `listAtoms` / `queryIndex` | List all active conflict atoms |
-| `resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved and archive it |
-| `get_context_bundle` | `checkpoint()` | Generate a full markdown handoff bundle |
+| `mk_remember` | `createAtom()` | Create a new memory atom |
+| `mk_recall` | `recall()` | Load relevant context (types, tags, task, episodes) |
+| `mk_reflect` | `reflect()` | Expire, dedup, promote, detect conflicts, regenerate views |
+| `mk_gc` | `reflect()` | Archive expired atoms (GC-focused alias for reflect) |
+| `mk_merge` | `mergeEventLogs()` | Merge a remote memory directory into local |
+| `mk_list_conflicts` | `listAtoms` / `queryIndex` | List all active conflict atoms |
+| `mk_resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved and archive it |
+| `mk_get_context_bundle` | `checkpoint()` | Generate a full markdown handoff bundle |
 
 ### MCP Resources (read-only)
 
@@ -933,8 +935,8 @@ Run `reflect()` (or `mk reflect`) after a merge. The merge operation writes atom
 
 1. Run `mk reflect -d <dir>` — conflict atoms appear in `CONFLICTS/`
 2. Inspect `CONFLICTS/*.md` to see the conflicting atom IDs and their values
-3. Update or archive the incorrect atom with `updateAtom()` / `archiveAtom()` (or MCP `remember` / the atom file directly)
-4. Call `resolveConflict({ memoryDir, filePath: conflictAtomPath, agent_id, session_id, resolutionNote: '...' })` or use MCP `resolve_conflict`
+3. Update or archive the incorrect atom with `updateAtom()` / `archiveAtom()` (or MCP `mk_remember` / the atom file directly)
+4. Call `resolveConflict({ memoryDir, filePath: conflictAtomPath, agent_id, session_id, resolutionNote: '...' })` or use MCP `mk_resolve_conflict`
 5. Run `mk reflect` again — the conflict count should decrease
 
 Conflicts are created by `reflect()` when two active atoms of the same eligible type (`fact`, `decision`, `constraint`) share overlapping scope paths and have a confidence gap > 0.3.

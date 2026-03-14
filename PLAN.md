@@ -12,6 +12,8 @@ Based on [memory-kernel-prd-v1.2.md](./docs/memory-kernel-prd-v1.2.md) with scop
 
 ## Architecture (v0.1)
 
+> Initial design — current architecture is documented in [README.md](./README.md).
+
 ```
 memory-kernel/
   src/
