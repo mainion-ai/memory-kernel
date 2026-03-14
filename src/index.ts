@@ -22,6 +22,10 @@ export type {
   EpisodeMetadata,
 } from './types.js';
 
+// Re-export runtime constants so downstream integrations (e.g. schema builders)
+// can stay in sync with the canonical atom type list.
+export { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS } from './types.js';
+
 // Schema & validation
 export {
   AtomFrontmatterSchema,
