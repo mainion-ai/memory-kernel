@@ -26,6 +26,8 @@ Memory Kernel treats agent memory like a **typed system**, not a text dump. Know
 npm install memory-kernel
 ```
 
+<video src="docs/videos/MemoryKernelVideo.mp4" controls width="100%"></video>
+
 ---
 
 ## Concepts
