@@ -1,33 +1,33 @@
-<p align="center">
-  <img src="docs/images/transparent_logo.png" alt="Memory Kernel" width="200">
-</p>
 
-<h1 align="center">Memory Kernel</h1>
 
-<p align="center">
-  A model-agnostic, file-first memory system for AI agents.<br>
-  Persistent, structured memory that survives context windows, compaction, and session boundaries.
-</p>
+# Memory Kernel
 
-<p align="center">
-  <strong>New here?</strong> Read <a href="STORY.md">STORY.md</a> first — it explains everything with no jargon.<br>
-  <a href="docs/when-to-choose-memory-kernel.md">When to choose memory-kernel</a> · <a href="docs/migration.md">Migration guide</a>
-</p>
+A model-agnostic, file-first memory system for AI agents.  
+Persistent, structured memory that survives context windows, compaction, and session boundaries.
+
+**New here?** Read [STORY.md](STORY.md) first — it explains everything with no jargon.  
+When to choose memory-kernel · Migration guide
 
 ## The Problem
 
 AI agents forget. Every time the context window fills up or a session ends, knowledge disappears. Agents re-discover the same things, contradict past decisions, and lose track of what they've learned. The usual fix — dump everything into a giant context — doesn't scale and wastes tokens.
 
-## The Solution
+## The Solutionmig
 
 Memory Kernel treats agent memory like a **typed system**, not a text dump. Knowledge is stored as **atoms** — small, typed markdown files with metadata. Three operations (**retain**, **recall**, **reflect**) manage the lifecycle. Files are the source of truth, human-readable and git-friendly. An optional SQLite index accelerates queries but is always rebuildable from files.
 
-```
+```bash
 npm install memory-kernel
 ```
 
+See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for using memory-kernel as an OpenClaw MCP server (MCP tool integration).
+
 [Memory-Kernel video](docs/videos/MemoryKernelVideo.mp4):
-<video src="docs/videos/MemoryKernelVideo.mp4" controls width="100%"></video>
+<video src="docs/videos/MemoryKernelVideo.mp4" controls width="720" poster="https://raw.githubusercontent.com/mAInion/memory-kernel/main/docs/assets/mk-thumb.png">
+  Your browser does not support the video tag.  
+  [Download video](docs/videos/MemoryKernelVideo.mp4)
+</video>
+
 
 ---
 
@@ -801,38 +801,44 @@ MEMORY_DIR=./my-memory mk-mcp
 
 Environment variables:
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `MEMORY_DIR` | **yes** | — | Absolute path to the memory directory |
-| `MCP_AGENT_ID` | no | `mcp-server` | Agent ID written to the event log |
-| `MCP_SESSION_ID` | no | `mcp-<uuid8>` | Session ID written to the event log |
-| `MEMORY_ENCRYPTION_KEY` | no | — | Encrypt/decrypt `SECRET` atoms at rest (64-char hex or passphrase) |
+
+| Variable                | Required | Default       | Description                                                        |
+| ----------------------- | -------- | ------------- | ------------------------------------------------------------------ |
+| `MEMORY_DIR`            | **yes**  | —             | Absolute path to the memory directory                              |
+| `MCP_AGENT_ID`          | no       | `mcp-server`  | Agent ID written to the event log                                  |
+| `MCP_SESSION_ID`        | no       | `mcp-<uuid8>` | Session ID written to the event log                                |
+| `MEMORY_ENCRYPTION_KEY` | no       | —             | Encrypt/decrypt `SECRET` atoms at rest (64-char hex or passphrase) |
+
 
 ### MCP Tools
 
 All tools accept optional `agent_id` and `session_id` fields to override server defaults per-call. All responses include a `provenance` block.
 
-| Tool | Maps to | Description |
-|---|---|---|
-| `mk_remember` | `createAtom()` | Create a new memory atom |
-| `mk_recall` | `recall()` | Load relevant context (types, tags, task, episodes) |
-| `mk_reflect` | `reflect()` | Expire, dedup, promote, detect conflicts, regenerate views |
-| `mk_gc` | `reflect()` | Archive expired atoms (GC-focused alias for reflect) |
-| `mk_merge` | `mergeEventLogs()` | Merge a remote memory directory into local |
-| `mk_list_conflicts` | `listAtoms` / `queryIndex` | List all active conflict atoms |
-| `mk_resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved and archive it |
-| `mk_get_context_bundle` | `checkpoint()` | Generate a full markdown handoff bundle |
+
+| Tool                    | Maps to                    | Description                                                |
+| ----------------------- | -------------------------- | ---------------------------------------------------------- |
+| `mk_remember`           | `createAtom()`             | Create a new memory atom                                   |
+| `mk_recall`             | `recall()`                 | Load relevant context (types, tags, task, episodes)        |
+| `mk_reflect`            | `reflect()`                | Expire, dedup, promote, detect conflicts, regenerate views |
+| `mk_gc`                 | `reflect()`                | Archive expired atoms (GC-focused alias for reflect)       |
+| `mk_merge`              | `mergeEventLogs()`         | Merge a remote memory directory into local                 |
+| `mk_list_conflicts`     | `listAtoms` / `queryIndex` | List all active conflict atoms                             |
+| `mk_resolve_conflict`   | `resolveConflict()`        | Mark a conflict atom resolved and archive it               |
+| `mk_get_context_bundle` | `checkpoint()`             | Generate a full markdown handoff bundle                    |
+
 
 ### MCP Resources (read-only)
 
 Resources read view files fresh on every request. If a view hasn't been generated yet, the resource returns a placeholder prompting you to run `reflect` first.
 
-| Resource URI | View file |
-|---|---|
-| `memory://decisions` | `DECISIONS.md` |
-| `memory://constraints` | `CONSTRAINTS.md` |
-| `memory://handoff` | `HANDOFF.md` |
+
+| Resource URI              | View file           |
+| ------------------------- | ------------------- |
+| `memory://decisions`      | `DECISIONS.md`      |
+| `memory://constraints`    | `CONSTRAINTS.md`    |
+| `memory://handoff`        | `HANDOFF.md`        |
 | `memory://open-questions` | `OPEN_QUESTIONS.md` |
+
 
 ### Claude Desktop configuration
 
@@ -854,24 +860,24 @@ Resources read view files fresh on every request. If a view hasn't been generate
 ## CLI Commands
 
 
-| Command                                                                                   | Description                                                      |
-| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `mk init [dir]`                                                                           | Initialize a memory directory with all subdirectories            |
-| `mk status -d <dir>`                                                                      | Show atom counts, tag stats, index status                        |
-| `mk remember -d <dir> --type <type> "body"`                                               | Quick-create an atom from the command line                       |
-| `mk recall -d <dir> [--task "text"] [--include-episodes]`                                 | Load relevant context; `--task` enables FTS BM25 re-ranking      |
-| `mk reflect -d <dir>`                                                                     | Consolidate: deduplicate, expire, promote, detect conflicts      |
-| `mk checkpoint -d <dir>`                                                                  | Generate checkpoint/handoff bundle (stdout)                      |
-| `mk import --from <file> [-d <dir>] [--type <t>] [--classification <c>] [--dry-run]`     | Import a markdown file as memory atoms (heading/bullet extraction) |
-| `mk episode -d <dir> --session-id <id> --summary "text"`                                  | Write a session episode summary to EPISODES/                     |
-| `mk episodes -d <dir> [--limit N] [--tags a,b]`                                           | List session episodes newest-first                               |
-| `mk bootstrap-events -d <dir>`                                                            | Migrate existing atoms to V2 event-sourced format                |
-| `mk replay --from <file>`                                                                 | Reconstruct atoms + views from an event log                      |
-| `mk reindex -d <dir>`                                                                     | Rebuild SQLite index (including FTS5) from files                 |
-| `mk compact -d <dir>`                                                                     | Compact event log — remove intermediate mutation events          |
-| `mk merge -d <dir> --remote <path> [--dry-run]`                                           | Merge remote event log into local; creates conflict atoms for concurrent updates |
-| `mk gc -d <dir>`                                                                          | Archive expired atoms                                            |
-| `mk doctor -d <dir>`                                                                      | Validate schema, check links, report problems                    |
+| Command                                                                              | Description                                                                      |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `mk init [dir]`                                                                      | Initialize a memory directory with all subdirectories                            |
+| `mk status -d <dir>`                                                                 | Show atom counts, tag stats, index status                                        |
+| `mk remember -d <dir> --type <type> "body"`                                          | Quick-create an atom from the command line                                       |
+| `mk recall -d <dir> [--task "text"] [--include-episodes]`                            | Load relevant context; `--task` enables FTS BM25 re-ranking                      |
+| `mk reflect -d <dir>`                                                                | Consolidate: deduplicate, expire, promote, detect conflicts                      |
+| `mk checkpoint -d <dir>`                                                             | Generate checkpoint/handoff bundle (stdout)                                      |
+| `mk import --from <file> [-d <dir>] [--type <t>] [--classification <c>] [--dry-run]` | Import a markdown file as memory atoms (heading/bullet extraction)               |
+| `mk episode -d <dir> --session-id <id> --summary "text"`                             | Write a session episode summary to EPISODES/                                     |
+| `mk episodes -d <dir> [--limit N] [--tags a,b]`                                      | List session episodes newest-first                                               |
+| `mk bootstrap-events -d <dir>`                                                       | Migrate existing atoms to V2 event-sourced format                                |
+| `mk replay --from <file>`                                                            | Reconstruct atoms + views from an event log                                      |
+| `mk reindex -d <dir>`                                                                | Rebuild SQLite index (including FTS5) from files                                 |
+| `mk compact -d <dir>`                                                                | Compact event log — remove intermediate mutation events                          |
+| `mk merge -d <dir> --remote <path> [--dry-run]`                                      | Merge remote event log into local; creates conflict atoms for concurrent updates |
+| `mk gc -d <dir>`                                                                     | Archive expired atoms                                                            |
+| `mk doctor -d <dir>`                                                                 | Validate schema, check links, report problems                                    |
 
 
 ---
@@ -880,13 +886,15 @@ Resources read view files fresh on every request. If a view hasn't been generate
 
 Typical performance on a modern workstation (M-series Mac or equivalent x86-64) with a 100-atom workload and SQLite index present:
 
-| Operation | Metric | Typical | PRD Target |
-|---|---|---|---|
-| `recall()` | p50 | ~2ms | — |
-| `recall()` | p95 | ~3ms | < 50ms |
-| `recall()` | p99 | ~5ms | — |
-| `reflect()` | single call | ~100–200ms | — |
-| `replay()` | 100 atoms (~160 events) | ~2ms | — |
+
+| Operation   | Metric                  | Typical    | PRD Target |
+| ----------- | ----------------------- | ---------- | ---------- |
+| `recall()`  | p50                     | ~2ms       | —          |
+| `recall()`  | p95                     | ~3ms       | < 50ms     |
+| `recall()`  | p99                     | ~5ms       | —          |
+| `reflect()` | single call             | ~100–200ms | —          |
+| `replay()`  | 100 atoms (~160 events) | ~2ms       | —          |
+
 
 For the reference measurement used in CI, see `scripts/bench-baseline.json`.
 
@@ -904,6 +912,7 @@ cat scripts/bench-baseline.json | jq '.recall.p95_ms'
 ```
 
 **Notes:**
+
 - `recall()` degrades gracefully when the SQLite index is absent — it falls back to a full file scan (~3–5× slower). Run `mk reindex` to rebuild.
 - At 500 atoms without an index, `reflect()` completes in < 15 seconds (verified by `test/stress.test.ts`).
 - Encrypted SECRET atoms are excluded from default recall (decryption is skipped).
