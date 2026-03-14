@@ -22,12 +22,9 @@ npm install memory-kernel
 
 See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for using memory-kernel as an OpenClaw MCP server (MCP tool integration).
 
-[Memory-Kernel video](docs/videos/MemoryKernelVideo.mp4):
-<video src="docs/videos/MemoryKernelVideo.mp4" controls width="720" poster="https://raw.githubusercontent.com/mAInion/memory-kernel/main/docs/assets/mk-thumb.png">
-  Your browser does not support the video tag.  
-  [Download video](docs/videos/MemoryKernelVideo.mp4)
-</video>
+**Video demo:** [Download or view MemoryKernelVideo.mp4](docs/videos/MemoryKernelVideo.mp4)
 
+<img src="docs/videos/mk-thumb.png" alt="Memory Kernel video thumbnail" width="360">
 
 ---
 

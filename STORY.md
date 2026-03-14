@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="Memory Kernel" width="150">
+  <img src="docs/images/transparent_logo.png" alt="Memory Kernel" width="150">
 </p>
 
 # How Memory Kernel Works — A Story for Humans
