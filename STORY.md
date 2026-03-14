@@ -1033,3 +1033,43 @@ If a future change makes recall significantly slower, you'll see it immediately 
 Because memory is load-bearing. An agent that makes decisions based on corrupted facts is worse than an agent with no memory — at least with no memory, you know it's working from scratch. A corrupted fact is invisible damage.
 
 Every test is a promise: *this invariant holds, on every machine, after every change.* The 551 tests are 551 such promises.
+
+---
+
+## Chapter 19: Opening the Doors — Docs, Plugins, and a Cleaner API
+
+v1.0.0 was the proof that Memory Kernel worked. v1.0.1 was about making it easy to use.
+
+After Milestone G shipped, the question shifted from *"does it work?"* to *"can someone new pick this up in an afternoon?"* The answer was: *mostly, but there are rough edges.*
+
+### The Name Problem
+
+When the MCP server launched in Milestone E, its tools were named after what they did: `remember`, `recall`, `reflect`, `merge`. Simple, but a problem once the native OpenClaw plugin arrived. The plugin also exposed tools named `mk_remember`, `mk_recall` — and suddenly there were two naming conventions living side by side. Clients that connected to both the MCP server and the plugin would see confusing duplicates.
+
+The fix was straightforward: rename all 8 MCP server tools to carry the `mk_` prefix. `remember` → `mk_remember`, `resolve_conflict` → `mk_resolve_conflict`, and so on. The prefix makes the source obvious at a glance — any tool starting with `mk_` comes from Memory Kernel.
+
+It was a breaking change. Anyone with a Claude Desktop or Cursor config pointing at the old names had to update it. But the CHANGELOG gave them the full migration table, and the change made the system significantly less confusing going forward.
+
+### The Three Guides
+
+Three documents were written to answer the most common questions from new users:
+
+**"How do I bring in my existing notes?"** — The migration guide (`docs/migration.md`) covers five different starting points: raw markdown, upgrading from a pre-v1.0 memory directory, migrating from another memory system, starting fresh, and setting up multi-agent merge. Each path has concrete commands and a "what to check after" section.
+
+**"Should I even use this?"** — The decision guide (`docs/when-to-choose-memory-kernel.md`) is deliberately honest. Memory Kernel isn't always the right tool. If you're building a simple chatbot with a few static facts, a plain markdown file is fine. If you need semantic vector search, that's a different layer. The guide helps people self-select: use Memory Kernel when you need typed, versioned, audited memory with lifecycle management across long-running sessions.
+
+**"How do I connect this to OpenClaw?"** — The OpenClaw MCP guide (`docs/openclaw-mcp.md`) is a zero-code quick-start for the most common setup: running Memory Kernel as an MCP server and pointing OpenClaw at it. Five minutes from `npm install` to first `mk_remember` call.
+
+### The Native Plugin
+
+For OpenClaw users who wanted even tighter integration, the native plugin (`packages/openclaw-memory-kernel/`) was the answer. Instead of running a separate MCP server process, the plugin loads directly into OpenClaw as a first-class extension.
+
+The trade-off is scope: the native plugin exposes only the four core tools — `mk_remember`, `mk_recall`, `mk_reflect`, `mk_get_context_bundle`. The maintenance tools (`mk_merge`, `mk_gc`, `mk_list_conflicts`, `mk_resolve_conflict`) are available through the MCP server for users who need them, but kept out of the plugin's default surface to reduce cognitive load for the common case.
+
+The plugin ships with its own `SKILL.md` — a routing guide that tells the agent exactly when to call which tool and why. It's the difference between an agent that *has* memory and an agent that *uses* memory well.
+
+### What v1.0.1 Represents
+
+v1.0.0 proved the system was solid. v1.0.1 made it approachable.
+
+If v1.0.0 was building the filing cabinet, v1.0.1 was labeling the drawers, writing the user manual, and putting up a sign that says *"you can use this now — here's how."*
