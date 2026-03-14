@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="Memory Kernel" width="200">
+  <img src="docs/images/transparent_logo.png" alt="Memory Kernel" width="200">
 </p>
 
 <h1 align="center">Memory Kernel</h1>
