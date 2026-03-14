@@ -142,7 +142,7 @@ Use mk_recall with task "package manager" — what comes back?
 - Check gateway logs for plugin load errors
 
 **`memoryDir is required` error**
-- Ensure `config.memoryDir` is set in `openclaw.json`, or export `MEMORY_ENCRYPTION_KEY` to the gateway process environment
+- Ensure `config.memoryDir` is set in `openclaw.json`, or export `MEMORY_DIR` to the gateway process environment
 
 **SECRET atoms show as `MKENC:v1:...`**
 - The encryption key is not available. Verify `MEMORY_ENCRYPTION_KEY` is exported in the shell that starts OpenClaw (not just your terminal session)

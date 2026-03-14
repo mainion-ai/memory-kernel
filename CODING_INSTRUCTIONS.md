@@ -26,6 +26,8 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/mcp.test.ts` | MCP contract tests for all 8 tools (handlers called directly, no transport needed) |
 | `test/mcp-resources.test.ts` | MCP contract tests for all 4 resources (URI, mimeType, placeholder vs real content) |
 | `test/crypto.test.ts` | AES-256-GCM encryption: encrypt/decrypt SECRET atoms, key derivation (PBKDF2), `isEncrypted()`, event snapshot encryption |
+| `test/retain-encrypted.test.ts` | Integration: createAtom/updateAtom/archiveAtom with `MEMORY_ENCRYPTION_KEY` set — verifies SECRET atoms are encrypted on disk and decrypted on read |
+| `test/recall-audit.test.ts` | Read audit logging: `atom_read` events emitted on recall with `agent_id`/`session_id`, correct `meta.atoms_returned` and `meta.token_estimate` |
 | `test/import.test.ts` | `importFromFile()`, `previewImport()`, `extractChunks()`: heading extraction, type/confidence inference, dry-run mode |
 | `test/compaction-loss.test.ts` | 13 PR-gate torture tests: section survival (Numbers, Conditional Logic, Rationale, Cross-links, Open Questions), multi-cycle stability, replay determinism, reflect idempotence, recall correctness |
 | `test/stress.test.ts` | Edge cases, error paths, and invariants across all subsystems |
