@@ -8,7 +8,7 @@
  *   npx tsx scripts/render-claude-md.ts <memory-dir> <output-path>
  *
  * Example:
- *   npx tsx scripts/render-claude-md.ts /home/np/repos/memory/kernel /home/np/Documents/nanoclaw/groups/telegram_main/CLAUDE.md
+ *   npx tsx scripts/render-claude-md.ts ~/repos/memory/kernel ~/Documents/nanoclaw/groups/telegram_main/CLAUDE.md
  */
 
 import { recall, listAtoms, countEvents, readView } from '../src/index.js';

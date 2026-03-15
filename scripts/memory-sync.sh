@@ -4,17 +4,17 @@
 
 set -euo pipefail
 
-MEMORY_DIR="/home/np/repos/memory/kernel"
-MEMORY_REPO="/home/np/repos/memory"
-KERNEL_REPO="/home/np/repos/memory-kernel"
-CLAUDE_MD="/home/np/Documents/nanoclaw/groups/telegram_main/CLAUDE.md"
+MEMORY_DIR="${HOME}/repos/memory/kernel"
+MEMORY_REPO="${HOME}/repos/memory"
+KERNEL_REPO="${HOME}/repos/memory-kernel"
+CLAUDE_MD="${HOME}/Documents/nanoclaw/groups/telegram_main/CLAUDE.md"
 
 echo "[$(date -Iseconds)] Memory sync starting..."
 
 # 1. Reflect — consolidate, TTL, dedup, promote
 echo "→ Reflecting..."
 cd "$KERNEL_REPO"
-npx tsx src/cli/mk.ts reflect -d "$MEMORY_DIR" --agent-id mainion-ai --session-id "sync-$(date +%Y%m%d-%H%M)"
+npx tsx src/cli/mk.ts reflect -d "$MEMORY_DIR" --agent-id "my-agent" --session-id "sync-$(date +%Y%m%d-%H%M)"
 
 # 2. Render to NanoClaw CLAUDE.md
 echo "→ Rendering CLAUDE.md..."

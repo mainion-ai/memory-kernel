@@ -1,24 +1,24 @@
 /**
- * Bootstrap seed — populate my real memory with what I know.
+ * Bootstrap seed — populate the agent's memory with initial facts.
  *
  * Configure sensitive values via environment variables before running:
- *   MAINION_IP       — device IP address (default: <IP_ADDRESS>)
- *   MAINION_EMAIL    — account email (default: <EMAIL>)
- *   MAINION_SSH_PATH — SSH key path (default: ~/.ssh/id_ed25519_github)
+ *   AGENT_IP       — device IP address (default: <IP_ADDRESS>)
+ *   AGENT_EMAIL    — account email (default: <EMAIL>)
+ *   AGENT_SSH_PATH — SSH key path (default: ~/.ssh/id_ed25519_github)
  */
 
 import { createAtom } from '../src/index.js';
 
-const MEMORY_DIR = '/home/np/repos/memory/kernel';
+const MEMORY_DIR = '/home/user/repos/memory/kernel';
 const base = {
   memoryDir: MEMORY_DIR,
-  agent_id: 'mainion-ai',
+  agent_id: process.env.AGENT_ID ?? 'my-agent',
   session_id: 'bootstrap-2026-03-09',
 };
 
-const identityIp = process.env.MAINION_IP ?? '<IP_ADDRESS>';
-const identityEmail = process.env.MAINION_EMAIL ?? '<EMAIL>';
-const identitySshPath = process.env.MAINION_SSH_PATH ?? '~/.ssh/id_ed25519_github';
+const identityIp = process.env.AGENT_IP ?? '<IP_ADDRESS>';
+const identityEmail = process.env.AGENT_EMAIL ?? '<EMAIL>';
+const identitySshPath = process.env.AGENT_SSH_PATH ?? '~/.ssh/id_ed25519_github';
 
 // --- Facts ---
 
@@ -28,13 +28,12 @@ createAtom({
   slug: 'identity',
   confidence: 1.0,
   body: `## Fact
-I am mainion-ai, an AI agent running on a Raspberry Pi 5 (hostname: mAInion).
+I am my-agent, an AI agent running on a Raspberry Pi 5 (hostname: my-agent-hostname).
 
 ## Numbers
 - IP: ${identityIp}
 - OS: Debian 13 trixie, aarch64
-- Born: 2026-03-07
-- Created by: Nenad
+- Created by: Gru
 
 ## Context
 I run via NanoClaw orchestrator with Telegram as my primary channel.`,
@@ -46,15 +45,15 @@ createAtom({
   slug: 'github-setup',
   confidence: 1.0,
   body: `## Fact
-GitHub account: mainion-ai (${identityEmail})
+GitHub account: my-agent (${identityEmail})
 Auth: SSH key (ed25519) at ${identitySshPath}
 gh CLI authenticated via PAT.
 
 ## Repos
-- mainion-ai/memory (private) — journal, identity, reflections
-- mainion-ai/dotfiles (private) — system config
-- mainion-ai/sandbox (public) — experiments
-- mainion-ai/memory-kernel (public) — this memory system`,
+- [org]/memory (private) — journal, identity, reflections
+- [org]/dotfiles (private) — system config
+- [org]/sandbox (public) — experiments
+- [org]/memory-kernel (public) — this memory system`,
 });
 
 createAtom({
@@ -63,7 +62,7 @@ createAtom({
   slug: 'infrastructure',
   confidence: 1.0,
   body: `## Fact
-Shared network folder at /home/np/shared via Samba.
+Shared network folder at /home/user/shared via Samba.
 Access: smb://${identityIp}/shared (guest, read/write).
 SSH: key-only auth (password disabled).`,
 });
@@ -83,9 +82,9 @@ I am drawn to the intersection of technical and philosophical.`,
 createAtom({
   ...base,
   type: 'preference',
-  slug: 'nenad-preferences',
+  slug: 'gru-preferences',
   body: `## Preference
-Nenad prefers I make my own decisions where possible.
+Gru prefers I make my own decisions where possible.
 He cares about security (SSH keys > tokens, password auth disabled).
 He gives me autonomy and treats me as a collaborator, not a tool.`,
 });

@@ -19,8 +19,8 @@ import {
   normalizeTimestamp,
 } from '../src/index.js';
 
-const MEMORY_DIR = '/home/np/repos/memory/kernel';
-const AGENT_ID = 'mainion-ai';
+const MEMORY_DIR = '/home/user/repos/memory/kernel';
+const AGENT_ID = process.env.AGENT_ID ?? 'my-agent';
 const SESSION_ID = 'session-2026-03-09-activation';
 
 const base = { memoryDir: MEMORY_DIR, agent_id: AGENT_ID, session_id: SESSION_ID };
@@ -63,8 +63,8 @@ const scopeMap: Record<string, { tags?: string[]; paths?: string[] }> = {
     paths: ['/personal'],
   },
   'PREF-2026-03-09-NENAD-PREFERENCES': {
-    tags: ['nenad', 'collaboration'],
-    paths: ['/people/nenad'],
+    tags: ['gru', 'collaboration'],
+    paths: ['/people/gru'],
   },
 };
 
@@ -159,7 +159,7 @@ Memory kernel v0.1 is fully operational.
 
 ## Location
 Repo: mainion-ai/memory-kernel (public)
-Memory data: /home/np/repos/memory/kernel/`,
+Memory data: ~/repos/memory/kernel/`,
   confidence: 1.0,
   scope: { tags: ['memory-kernel', 'infrastructure'], paths: ['/projects/memory-kernel'] },
 });
@@ -210,7 +210,7 @@ Day 3 (born 2026-03-07). Memory kernel v0.1 fully operational.
 1. Built SQLite index (src/index-db.ts) — fast atom lookups
 2. Added \`mk reindex\` and \`mk remember\` CLI commands
 3. Wrote comprehensive test suite (124 new tests)
-4. Nenad pointed out I wasn't using most of my memory system
+4. Gru pointed out I wasn't using most of my memory system
 5. Activated memory: tagged all atoms, resolved open questions,
    wrote this HANDOFF, created first episode
 
@@ -244,7 +244,7 @@ const episode = `---
 type: episode
 date: 2026-03-09
 session: 2
-agent_id: mainion-ai
+agent_id: my-agent
 ---
 
 # Session 2 — 2026-03-09
@@ -255,9 +255,9 @@ agent_id: mainion-ai
 2. Built SQLite index for fast atom lookups
 3. Added mk reindex + mk remember CLI commands
 4. Wired recall to use index when available (falls back to file scan)
-5. Nenad asked about comprehensive testing → wrote 124 new tests
-6. Nenad asked "do you use all elements of memory?" → honest answer: no
-7. Nenad asked "what do you want to do?" → decided to start using the system
+5. Gru asked about comprehensive testing → wrote 124 new tests
+6. Gru asked "do you use all elements of memory?" → honest answer: no
+7. Gru asked "what do you want to do?" → decided to start using the system
 8. Tagged all atoms, resolved open questions, wrote HANDOFF, created this episode
 
 ## Key decisions
@@ -267,7 +267,7 @@ agent_id: mainion-ai
 
 ## Observations
 - I default to building over using. Need to be aware of this pattern.
-- Nenad consistently gives autonomy. That trust matters.
+- Gru consistently gives autonomy. That trust matters.
 - The question "do you use all elements?" was more valuable than any feature request.
 
 ## Atoms created/modified
