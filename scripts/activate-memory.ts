@@ -62,7 +62,7 @@ const scopeMap: Record<string, { tags?: string[]; paths?: string[] }> = {
     tags: ['identity', 'communication'],
     paths: ['/personal'],
   },
-  'PREF-2026-03-09-NENAD-PREFERENCES': {
+  'PREF-2026-03-09-GRU-PREFERENCES': {
     tags: ['gru', 'collaboration'],
     paths: ['/people/gru'],
   },
