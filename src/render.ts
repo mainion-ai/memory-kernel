@@ -4,7 +4,6 @@
  */
 
 import { recall } from './recall.js';
-import { listAtoms } from './store.js';
 import { countEvents } from './event-log.js';
 
 export interface RenderClaudeMdOptions {
@@ -19,13 +18,9 @@ export interface RenderClaudeMdOptions {
 export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = {}): string {
   const maxTokens = opts.maxTokens ?? 8000;
 
-  // Recall with token budget — keeps CLAUDE.md from bloating as atoms grow.
-  recall(memoryDir, { max_tokens: maxTokens });
-
-  const atoms = listAtoms(memoryDir);
-  const active = atoms.filter(
-    (a) => a.frontmatter.status !== 'archived' && a.frontmatter.status !== 'expired',
-  );
+  // Recall with token budget — applies privacy filtering (no SECRET/PERSONAL) and token cap.
+  const bundle = recall(memoryDir, { max_tokens: maxTokens });
+  const active = bundle.atoms;
   const eventCount = countEvents(memoryDir);
 
   // Group by type
