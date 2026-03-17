@@ -40,6 +40,7 @@ import { compactLog } from '../event-log.js';
 import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
+import { renderClaudeMd } from '../render.js';
 import type { Classification } from '../types.js';
 
 const program = new Command();
@@ -677,6 +678,42 @@ program
       }
     } catch (err) {
       console.error(`✗ Import failed: ${String(err)}`);
+      process.exit(1);
+    }
+  });
+
+// --- mk render ---
+program
+  .command('render')
+  .description('Render memory atoms as a CLAUDE.md context file')
+  .argument('<memory-dir>', 'Memory directory')
+  .argument('<output-path>', 'Output file path')
+  .option('--max-tokens <n>', 'Token budget for recall', '8000')
+  .action((memoryDir: string, outputPath: string, opts: { maxTokens: string }) => {
+    const resolvedDir = path.resolve(memoryDir);
+    const resolvedOutput = path.resolve(outputPath);
+
+    if (!fs.existsSync(resolvedDir)) {
+      console.error(`✗ Memory directory not found: ${resolvedDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    const maxTokens = parseInt(opts.maxTokens, 10);
+    if (isNaN(maxTokens) || maxTokens <= 0) {
+      console.error('✗ --max-tokens must be a positive integer');
+      process.exit(1);
+    }
+
+    try {
+      const content = renderClaudeMd(resolvedDir, { maxTokens });
+      fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
+      fs.writeFileSync(resolvedOutput, content);
+      const lineCount = content.split('\n').length - 1;
+      const atomCount = (content.match(/^### /gm) ?? []).length;
+      console.log(`✓ Rendered ${atomCount} atoms → ${resolvedOutput} (${lineCount} lines)`);
+    } catch (err) {
+      console.error(`✗ Render failed: ${String(err)}`);
       process.exit(1);
     }
   });

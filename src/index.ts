@@ -148,3 +148,7 @@ export type {
 // Import
 export { importFromFile, previewImport } from './import.js';
 export type { ImportFromFileOpts, ImportResult } from './import.js';
+
+// Render
+export { renderClaudeMd } from './render.js';
+export type { RenderClaudeMdOptions } from './render.js';
