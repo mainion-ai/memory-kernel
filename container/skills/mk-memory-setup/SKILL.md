@@ -142,26 +142,7 @@ git remote -v
 gh repo view {GITHUB_USER}/memory
 ```
 
-## 5. Clone memory-kernel Code (for render script)
-
-The render script (`scripts/render-claude-md.ts`) is in the memory-kernel source repo, not the npm package. Clone it:
-
-```bash
-# Clone next to memory dir
-KERNEL_CODE_DIR=$(dirname {MEMORY_DIR})/memory-kernel-code
-git clone https://github.com/mainion-ai/memory-kernel.git "$KERNEL_CODE_DIR"
-cd "$KERNEL_CODE_DIR"
-npm install
-```
-
-**Important:** `npm install` is required — the render script depends on `zod`, `gray-matter`, etc.
-
-Verify:
-```bash
-npx tsx "$KERNEL_CODE_DIR/scripts/render-claude-md.ts" --help 2>/dev/null || echo "Render script ready"
-```
-
-## 6. Create Mount Allowlist
+## 5. Create Mount Allowlist
 
 NanoClaw silently blocks ALL additional container mounts unless an allowlist exists. This is the #1 gotcha in memory-kernel setup.
 
@@ -190,7 +171,7 @@ Where `{MEMORY_DIR_PARENT}` is the parent of the memory directory (e.g., `~` if 
 
 **Critical:** Without this file, mounts silently fail. No error, no warning — the agent just can't see the memory files.
 
-## 7. Configure NanoClaw Container Mounts
+## 6. Configure NanoClaw Container Mounts
 
 Find the NanoClaw database:
 ```bash
@@ -210,19 +191,12 @@ sqlite3 "$DB_PATH" "SELECT name, folder, container_config FROM registered_groups
 Update container_config with mounts. Container paths must be **relative** — NanoClaw prepends `/workspace/extra/`:
 
 ```bash
-KERNEL_CODE_DIR=$(dirname {MEMORY_DIR})/memory-kernel-code
-
 sqlite3 "$DB_PATH" "UPDATE registered_groups SET container_config = json('{
   \"additionalMounts\": [
     {
       \"hostPath\": \"{MEMORY_DIR_ABSOLUTE}\",
       \"containerPath\": \"memory\",
       \"readonly\": false
-    },
-    {
-      \"hostPath\": \"{KERNEL_CODE_DIR_ABSOLUTE}\",
-      \"containerPath\": \"memory-kernel-code\",
-      \"readonly\": true
     }
   ]
 }') WHERE is_main = 1;"
@@ -230,7 +204,6 @@ sqlite3 "$DB_PATH" "UPDATE registered_groups SET container_config = json('{
 
 **Important paths inside the container:**
 - Memory data: `/workspace/extra/memory`
-- Kernel code: `/workspace/extra/memory-kernel-code`
 - Group folder: `/workspace/group/`
 - CLAUDE.md: `/workspace/group/CLAUDE.md`
 
@@ -239,7 +212,7 @@ Verify the update:
 sqlite3 "$DB_PATH" "SELECT container_config FROM registered_groups WHERE is_main = 1;"
 ```
 
-## 8. Create Symlinks
+## 7. Create Symlinks
 
 Link conversation logs and impulse queue from NanoClaw into the memory directory so they're accessible to the kernel:
 
@@ -255,7 +228,7 @@ touch "$NANOCLAW_DIR/groups/$GROUP_FOLDER/impulses.ndjson"
 ln -sf "$NANOCLAW_DIR/groups/$GROUP_FOLDER/impulses.ndjson" "{MEMORY_DIR}/impulses.ndjson"
 ```
 
-## 9. Create Initial Atoms
+## 8. Create Initial Atoms
 
 Add identity and preference atoms so the agent knows who it is from the first session:
 
@@ -283,17 +256,16 @@ npx mk remember "GitHub account: {GITHUB_USER}. Repos: {GITHUB_USER}/memory (pri
   --tags github setup
 ```
 
-## 10. Render CLAUDE.md
+## 9. Render CLAUDE.md
 
 This is the critical step — render atoms into the CLAUDE.md file that NanoClaw loads at every session start:
 
 ```bash
-KERNEL_CODE_DIR=$(dirname {MEMORY_DIR})/memory-kernel-code
 NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
 
-npx tsx "$KERNEL_CODE_DIR/scripts/render-claude-md.ts" "{MEMORY_DIR}" "$CLAUDE_MD"
+mk render "{MEMORY_DIR}" "$CLAUDE_MD"
 ```
 
 Verify:
@@ -303,22 +275,21 @@ head -20 "$CLAUDE_MD"
 # > Auto-generated from memory-kernel. X atoms, Y events.
 ```
 
-If the render script fails:
-- `Cannot find package 'zod'` → `cd "$KERNEL_CODE_DIR" && npm install`
+If the render fails:
 - `No atoms found` → Check `ls {MEMORY_DIR}/ENTITIES/` has .md files
+- `mk: command not found` → Ensure `npm install -g memory-kernel` completed (Step 2)
 
-## 11. Set Up Cron (Nightly Sync)
+## 10. Set Up Cron (Nightly Sync)
 
 Create a nightly cron job that runs reflect → render → git push:
 
 ```bash
-KERNEL_CODE_DIR=$(dirname {MEMORY_DIR})/memory-kernel-code
 NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
 
 # Add to crontab (preserving existing entries)
-(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx tsx $KERNEL_CODE_DIR/scripts/render-claude-md.ts {MEMORY_DIR} $CLAUDE_MD && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && mk render {MEMORY_DIR} $CLAUDE_MD && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
 ```
 
 Verify:
@@ -326,7 +297,7 @@ Verify:
 crontab -l | grep memory
 ```
 
-## 12. Restart NanoClaw
+## 11. Restart NanoClaw
 
 Restart so the new mounts and CLAUDE.md take effect:
 
@@ -347,7 +318,7 @@ systemctl --user status nanoclaw
 # launchctl list | grep nanoclaw
 ```
 
-## 13. Commit, Push, and Verify
+## 12. Commit, Push, and Verify
 
 Final commit of all memory data:
 ```bash
@@ -367,7 +338,7 @@ Expected output:
 - `mk status`: shows atom counts by type, event count
 - `mk doctor`: reports no issues (or only warnings)
 
-## 14. Save Setup Spec (Optional)
+## 13. Save Setup Spec (Optional)
 
 Save the configuration as a YAML spec for future reference:
 
@@ -383,8 +354,6 @@ memory:
   github:
     repo: "{GITHUB_USER}/memory"
     private: true
-  kernel_code:
-    dir: "$(dirname {MEMORY_DIR})/memory-kernel-code"
 nanoclaw:
   group: "{GROUP_FOLDER}"
   service: "systemd-user"
@@ -407,27 +376,22 @@ Print a summary of what was set up:
   Agent:        {AGENT_NAME}
   Memory dir:   {MEMORY_DIR}
   GitHub repo:  {GITHUB_USER}/memory (private)
-  Kernel code:  {KERNEL_CODE_DIR}
   CLAUDE.md:    {CLAUDE_MD}
   Mount allow:  ~/.config/nanoclaw/mount-allowlist.json
   Cron:         Nightly sync at 23:00
 
   Container paths:
-    /workspace/extra/memory              (read-write)
-    /workspace/extra/memory-kernel-code  (read-only)
+    /workspace/extra/memory  (read-write)
     /workspace/group/CLAUDE.md           (auto-loaded)
 
   Remember something:
     npx mk remember "text" -d /workspace/extra/memory -t fact
 
   Re-render after remembering:
-    npx tsx /workspace/extra/memory-kernel-code/scripts/render-claude-md.ts \
-      /workspace/extra/memory /workspace/group/CLAUDE.md
+    mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
 
 ## Troubleshooting
-
-**"Cannot find package 'zod'"** — Run `npm install` in the memory-kernel-code directory.
 
 **Mounts not working (agent can't see /workspace/extra/memory):**
 1. Check mount allowlist exists: `cat ~/.config/nanoclaw/mount-allowlist.json`
@@ -437,8 +401,8 @@ Print a summary of what was set up:
 
 **CLAUDE.md empty or not updating:**
 1. Check atoms exist: `ls {MEMORY_DIR}/ENTITIES/`
-2. Re-render manually: `npx tsx .../render-claude-md.ts {MEMORY_DIR} {CLAUDE_MD}`
-3. Check render script output for errors.
+2. Re-render manually: `mk render {MEMORY_DIR} {CLAUDE_MD}`
+3. Check render output for errors.
 
 **`npx mk init -d .` fails** — The correct syntax is `npx mk init .` (positional argument, not `-d` flag).
 

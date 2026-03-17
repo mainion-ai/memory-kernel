@@ -33,8 +33,10 @@ To install the skill into your NanoClaw fork:
 
 ```bash
 cd /path/to/your/nanoclaw
-git fetch https://github.com/mainion-ai/memory-kernel.git skill/mk-memory-setup
-git merge FETCH_HEAD --allow-unrelated-histories -m "Add mk-memory-setup skill"
+git remote add memory-kernel https://github.com/mainion-ai/memory-kernel.git 2>/dev/null || true
+git fetch memory-kernel main
+mkdir -p container/skills/mk-memory-setup
+git checkout memory-kernel/main -- container/skills/mk-memory-setup/
 npm run build
 ```
 
