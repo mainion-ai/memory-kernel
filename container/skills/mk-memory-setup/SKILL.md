@@ -1,12 +1,13 @@
 ---
 name: mk-memory-setup
 description: Set up memory-kernel for a NanoClaw agent — persistent memory across sessions. Use when user asks to set up memory, install memory-kernel, add persistent memory, or configure agent memory. Triggers on "setup memory", "memory-kernel", "mk-memory-setup", "add memory", "persistent memory".
-allowed-tools: Bash(mk-memory-setup:*)
 ---
 
 # Memory-Kernel Setup
 
 Set up persistent memory for a NanoClaw agent. This creates a file-based memory system (atoms, events, beliefs) that survives across sessions via CLAUDE.md rendering.
+
+**Important:** This skill runs on the **host machine** via Claude Code, not inside a container. It configures mounts, databases, and cron jobs that require host-level access.
 
 **Principle:** When something is broken or missing, fix it. Don't tell the user to go fix it themselves. Ask for permission when needed, then do the work.
 
@@ -19,17 +20,20 @@ Before anything else, verify the environment. Run each check and report results:
 ```bash
 node --version    # Need >= 20.0.0
 git --version     # Need git
-gh auth status    # Need GitHub CLI authenticated
-sqlite3 --version # Need sqlite3
+sqlite3 --version # Need sqlite3 (for NanoClaw DB config)
 docker --version  # Need Docker (NanoClaw container runtime)
 ```
 
 **If any missing:**
 - `node`: Install via nvm or nodesource. Don't proceed without Node 20+.
 - `git`: `sudo apt install git` (Linux) or `brew install git` (macOS)
-- `gh`: `sudo apt install gh` or `brew install gh`, then `gh auth login`
 - `sqlite3`: `sudo apt install sqlite3` (Linux) or `brew install sqlite3` (macOS)
 - `docker`: Should already be running if NanoClaw works. Just verify.
+
+**Optional checks** (only if user wants GitHub backup):
+```bash
+gh auth status    # GitHub CLI authenticated
+```
 
 Also verify NanoClaw is running:
 ```bash
@@ -53,7 +57,14 @@ Use `AskUserQuestion` to gather setup details:
 "What is the agent's name? (used in commits, cron IDs, and identity)"
 - Free text input
 
-**Question 3: GitHub username**
+**Question 3: Version control**
+"Do you want to back up memory to GitHub?"
+- Yes (Recommended) — Git init + private GitHub repo
+- No — Local only, no git
+
+**If yes to GitHub:**
+
+**Question 3a: GitHub username**
 "What GitHub username should own the memory repo? (e.g., nano-ai-agent)"
 - Free text input
 
@@ -74,7 +85,7 @@ Verify:
 npx mk --version
 ```
 
-If the install fails, try with sudo or fix npm permissions:
+If the install fails with EACCES, fix npm permissions:
 ```bash
 mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'
 export PATH=~/.npm-global/bin:$PATH
@@ -108,11 +119,11 @@ If any directories are missing, create them:
 mkdir -p {MEMORY_DIR}/{ENTITIES,CONFLICTS,ARCHIVE,EVIDENCE,EPISODES}
 ```
 
-## 4. Git Init + GitHub Repo
+## 4. Git Init + GitHub Repo (Optional)
+
+**Skip this step entirely if user chose "No" for version control.**
 
 ```bash
-cd {MEMORY_DIR}/..
-# If memory dir is ~/mk-memory, init the parent isn't needed — init at mk-memory level
 cd {MEMORY_DIR}
 git init
 git add -A
@@ -158,7 +169,7 @@ cat > ~/.config/nanoclaw/mount-allowlist.json << 'EOF'
     {
       "path": "{MEMORY_DIR_PARENT}",
       "allowReadWrite": true,
-      "description": "Memory-kernel repositories"
+      "description": "Memory-kernel data"
     }
   ],
   "blockedPatterns": [],
@@ -173,22 +184,25 @@ Where `{MEMORY_DIR_PARENT}` is the parent of the memory directory (e.g., `~` if 
 
 ## 6. Configure NanoClaw Container Mounts
 
-Find the NanoClaw database:
+Find the NanoClaw installation and database:
 ```bash
 # Try common locations
 NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
 DB_PATH="$NANOCLAW_DIR/store/messages.db"
 # Fallback for older versions
 [ ! -f "$DB_PATH" ] && DB_PATH="$NANOCLAW_DIR/data/nanoclaw.db"
+echo "NanoClaw: $NANOCLAW_DIR"
 echo "DB: $DB_PATH"
 ```
+
+If the NanoClaw directory isn't found, use `AskUserQuestion` to ask the user where NanoClaw is installed.
 
 Find the registered group:
 ```bash
 sqlite3 "$DB_PATH" "SELECT name, folder, container_config FROM registered_groups;"
 ```
 
-Update container_config with mounts. Container paths must be **relative** — NanoClaw prepends `/workspace/extra/`:
+Update container_config with mount for memory data only. Container paths must be **relative** — NanoClaw prepends `/workspace/extra/`:
 
 ```bash
 sqlite3 "$DB_PATH" "UPDATE registered_groups SET container_config = json('{
@@ -214,7 +228,7 @@ sqlite3 "$DB_PATH" "SELECT container_config FROM registered_groups WHERE is_main
 
 ## 7. Create Symlinks
 
-Link conversation logs and impulse queue from NanoClaw into the memory directory so they're accessible to the kernel:
+Link conversation logs from NanoClaw into the memory directory so they're accessible to the kernel:
 
 ```bash
 NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
@@ -265,7 +279,7 @@ NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
 
-mk render "{MEMORY_DIR}" "$CLAUDE_MD"
+npx mk render "{MEMORY_DIR}" "$CLAUDE_MD"
 ```
 
 Verify:
@@ -277,19 +291,24 @@ head -20 "$CLAUDE_MD"
 
 If the render fails:
 - `No atoms found` → Check `ls {MEMORY_DIR}/ENTITIES/` has .md files
-- `mk: command not found` → Ensure `npm install -g memory-kernel` completed (Step 2)
 
 ## 10. Set Up Cron (Nightly Sync)
 
-Create a nightly cron job that runs reflect → render → git push:
+Create a nightly cron job that runs reflect → render → optionally git push:
 
+**With git backup:**
 ```bash
 NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
 
 # Add to crontab (preserving existing entries)
-(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && mk render {MEMORY_DIR} $CLAUDE_MD && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} $CLAUDE_MD && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
+```
+
+**Without git (local only):**
+```bash
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} $CLAUDE_MD 2>&1 | logger -t memory-sync") | crontab -
 ```
 
 Verify:
@@ -320,7 +339,7 @@ systemctl --user status nanoclaw
 
 ## 12. Commit, Push, and Verify
 
-Final commit of all memory data:
+**If using git:**
 ```bash
 cd {MEMORY_DIR}
 git add -A
@@ -328,7 +347,7 @@ git commit -m "Memory-kernel setup complete"
 git push
 ```
 
-Run verification:
+Run verification regardless:
 ```bash
 npx mk status -d {MEMORY_DIR}
 npx mk doctor -d {MEMORY_DIR}
@@ -337,34 +356,6 @@ npx mk doctor -d {MEMORY_DIR}
 Expected output:
 - `mk status`: shows atom counts by type, event count
 - `mk doctor`: reports no issues (or only warnings)
-
-## 13. Save Setup Spec (Optional)
-
-Save the configuration as a YAML spec for future reference:
-
-```bash
-cat > {MEMORY_DIR}/agent.yaml << EOF
-# Memory-Kernel Agent Setup Spec
-spec_version: "0.1"
-agent:
-  name: "{AGENT_NAME}"
-  identity: "{IDENTITY_DESCRIPTION}"
-memory:
-  dir: "{MEMORY_DIR}"
-  github:
-    repo: "{GITHUB_USER}/memory"
-    private: true
-nanoclaw:
-  group: "{GROUP_FOLDER}"
-  service: "systemd-user"
-cron:
-  nightly_sync: "0 23 * * *"
-EOF
-
-git add agent.yaml
-git commit -m "Add agent setup spec"
-git push
-```
 
 ## Post-Setup Summary
 
@@ -375,20 +366,19 @@ Print a summary of what was set up:
 
   Agent:        {AGENT_NAME}
   Memory dir:   {MEMORY_DIR}
-  GitHub repo:  {GITHUB_USER}/memory (private)
+  GitHub repo:  {GITHUB_USER}/memory (private)  [or "Local only"]
   CLAUDE.md:    {CLAUDE_MD}
   Mount allow:  ~/.config/nanoclaw/mount-allowlist.json
   Cron:         Nightly sync at 23:00
 
   Container paths:
-    /workspace/extra/memory  (read-write)
+    /workspace/extra/memory              (read-write)
     /workspace/group/CLAUDE.md           (auto-loaded)
 
-  Remember something:
-    npx mk remember "text" -d /workspace/extra/memory -t fact
+  The agent can now use these commands inside the container:
 
-  Re-render after remembering:
-    mk render /workspace/extra/memory /workspace/group/CLAUDE.md
+    npx mk remember "text" -d /workspace/extra/memory -t fact
+    npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
 
 ## Troubleshooting
@@ -401,8 +391,12 @@ Print a summary of what was set up:
 
 **CLAUDE.md empty or not updating:**
 1. Check atoms exist: `ls {MEMORY_DIR}/ENTITIES/`
-2. Re-render manually: `mk render {MEMORY_DIR} {CLAUDE_MD}`
+2. Re-render manually: `npx mk render {MEMORY_DIR} {CLAUDE_MD}`
 3. Check render output for errors.
+
+**`npm install -g` fails with EACCES:**
+Fix npm prefix: `mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'`
+Then add `export PATH=~/.npm-global/bin:$PATH` to your shell profile.
 
 **`npx mk init -d .` fails** — The correct syntax is `npx mk init .` (positional argument, not `-d` flag).
 
@@ -416,3 +410,6 @@ Print a summary of what was set up:
 ```bash
 0 23 * * * PATH=/usr/local/bin:/usr/bin:$HOME/.nvm/versions/node/v22.*/bin cd {MEMORY_DIR} && ...
 ```
+
+**Agent uses `npx tsx` instead of `mk` (old setup):**
+If the agent was set up before `mk render` existed (pre-v1.1.0), update its memory-kernel-code mount and re-render, or just `npm install -g memory-kernel` on the host and update the cron to use `mk render`.
