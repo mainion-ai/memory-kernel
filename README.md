@@ -1,12 +1,17 @@
 
 
-# Memory Kernel
+# Memory Kernel (MK)
 
 A model-agnostic, file-first memory system for AI agents.  
-Persistent, structured memory that survives context windows, compaction, and session boundaries.
 
-**New here?** Read [STORY.md](STORY.md) first — it explains everything with no jargon.
-[When to choose memory-kernel](docs/when-to-choose-memory-kernel.md) · [Migration guide](docs/migration.md)
+Persistent, structured memory that survives context windows, compaction, and session boundaries. 
+
+Configurable max context size. Automatic memory backup in git (optional) 
+
+**New here? GOOD TO READ THIS FIRST:** 
+- [Memory Kernel Explained](STORY.md) first — it explains everything with no jargon.
+- [When to choose memory-kernel](docs/when-to-choose-memory-kernel.md) 
+- [Migration guide](docs/migration.md)
 
 ## The Problem
 
@@ -16,15 +21,45 @@ AI agents forget. Every time the context window fills up or a session ends, know
 
 Memory Kernel treats agent memory like a **typed system**, not a text dump. Knowledge is stored as **atoms** — small, typed markdown files with metadata. Three operations (**retain**, **recall**, **reflect**) manage the lifecycle. Files are the source of truth, human-readable and git-friendly. An optional SQLite index accelerates queries but is always rebuildable from files.
 
+<p align="center"><b>Memory Kernal Video</b></p>
+<p align="center">
+  <a href="docs/videos/MemoryKernelVideo.mp4">
+    <img src="docs/videos/mk-thumb.png" alt="Memory Kernel video thumbnail" width="360">
+  </a>
+</p>
+
+
+### Agent Installation
+
 ```bash
 npm install memory-kernel
 ```
 
-See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for using memory-kernel as an OpenClaw MCP server (MCP tool integration).
+**NanoClaw:** See [container/skills/mk-memory-setup/README.md](container/skills/mk-memory-setup/README.md) for using memory-kernel as an NanoClaw memory.
 
-**Video demo:** [Download or view MemoryKernelVideo.mp4](docs/videos/MemoryKernelVideo.mp4)
+Quick Install:
 
-<img src="docs/videos/mk-thumb.png" alt="Memory Kernel video thumbnail" width="360">
+```bash
+# From the NanoClaw directory
+cd /path/to/nanoclaw
+
+# Get the skill from memory-kernel
+git fetch https://github.com/mainion-ai/memory-kernel.git main
+git checkout FETCH_HEAD -- container/skills/mk-memory-setup/
+ 
+# Install for Claude Code (host-side)
+mkdir -p .claude/skills
+cp -r container/skills/mk-memory-setup .claude/skills/
+
+# Run Claude Code and invoke the skill
+claude
+/mk-memory-setup
+
+# Run skill from your messaging app:
+/mk-memmory-setup
+
+```
+**OpenClaw MCP server:**:See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for using memory-kernel as an OpenClaw MCP server (MCP tool integration).
 
 ---
 
