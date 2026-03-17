@@ -398,27 +398,18 @@ Print a summary of what was set up:
 
 Once set up, the agent can use these commands **inside the container** (e.g. after a mid-session `mk remember`):
 
-**Render CLAUDE.md so the next session loads new memories:**
+**Primary** (requires memory-kernel ≥ 1.1.0 published on npm):
 ```bash
 npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
 
-**If `npx mk` fails with EACCES or permission errors inside the container:**
-```bash
-./node_modules/.bin/mk render /workspace/extra/memory /workspace/group/CLAUDE.md
-```
+> `npx mk render` requires memory-kernel ≥ 1.1.0 to be published on npm. Until then, use the legacy fallback if your agent has the `memory-kernel-code` mount.
 
-**Version check** — `mk render` requires memory-kernel ≥ 1.1.0:
-```bash
-npx mk --version
-```
-
-**Legacy fallback for memory-kernel < 1.1.0** (pre-dates `mk render`):
+**Legacy fallback** (works with mounted source at any version):
 ```bash
 npx tsx /workspace/extra/memory-kernel-code/scripts/render-claude-md.ts \
   /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
-Note: this path requires a `memory-kernel-code` mount — not present in the default setup. Ask your operator to add it.
 
 **If CLI behaviour doesn't match docs:** Check `npx mk --version` against the latest release. Ask your operator to run `npm update memory-kernel` globally or update the mount source.
 
