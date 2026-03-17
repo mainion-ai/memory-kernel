@@ -3,7 +3,7 @@
 /**
  * @deprecated Use `mk render <memory-dir> <output-path>` instead.
  *   npm install -g memory-kernel
- *   mk render ~/repos/memory/kernel ~/Documents/nanoclaw/groups/telegram_main/CLAUDE.md
+ *   mk render ~/my-memory ~/path/to/CLAUDE.md
  *
  * This script is kept for backward compatibility only.
  *

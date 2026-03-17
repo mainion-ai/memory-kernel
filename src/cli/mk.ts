@@ -699,8 +699,14 @@ program
       process.exit(1);
     }
 
+    const maxTokens = parseInt(opts.maxTokens, 10);
+    if (isNaN(maxTokens) || maxTokens <= 0) {
+      console.error('✗ --max-tokens must be a positive integer');
+      process.exit(1);
+    }
+
     try {
-      const content = renderClaudeMd(resolvedDir, { maxTokens: parseInt(opts.maxTokens, 10) });
+      const content = renderClaudeMd(resolvedDir, { maxTokens });
       fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
       fs.writeFileSync(resolvedOutput, content);
       const lineCount = content.split('\n').length - 1;

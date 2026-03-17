@@ -114,11 +114,25 @@ describe('renderClaudeMd', () => {
     expect(output).not.toContain('## ⚠ Active Conflicts');
   });
 
-  it('respects maxTokens option', () => {
-    for (let i = 0; i < 5; i++) {
-      createAtom({ ...base(), type: 'fact', slug: `fact${i}`, body: `Fact number ${i}.` });
+  it('respects maxTokens — atoms beyond budget are excluded', () => {
+    for (let i = 0; i < 20; i++) {
+      createAtom({ ...base(), type: 'fact', slug: `fact${i}`, body: `Fact number ${i} with enough text to consume tokens in the budget.` });
     }
-    expect(() => renderClaudeMd(testDir, { maxTokens: 100 })).not.toThrow();
+    const unlimited = renderClaudeMd(testDir);
+    const limited = renderClaudeMd(testDir, { maxTokens: 50 });
+    const unlimitedCount = (unlimited.match(/^### /gm) ?? []).length;
+    const limitedCount = (limited.match(/^### /gm) ?? []).length;
+    expect(limitedCount).toBeLessThan(unlimitedCount);
+  });
+
+  it('excludes SECRET and PERSONAL atoms', () => {
+    createAtom({ ...base(), type: 'fact', slug: 'public', body: 'Public fact.' });
+    createAtom({ ...base(), type: 'fact', slug: 'secret', body: 'Secret fact.', classification: 'SECRET' });
+    createAtom({ ...base(), type: 'fact', slug: 'personal', body: 'Personal fact.', classification: 'PERSONAL' });
+    const output = renderClaudeMd(testDir);
+    expect(output).toContain('Public fact.');
+    expect(output).not.toContain('Secret fact.');
+    expect(output).not.toContain('Personal fact.');
   });
 
   it('returns a string ending with a newline', () => {
