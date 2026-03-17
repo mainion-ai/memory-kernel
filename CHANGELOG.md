@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] — 2026-03-17
+
+### Added
+
+- **`mk render` CLI command** (`src/render.ts`, `src/cli/mk.ts`) — promotes the one-off `scripts/render-claude-md.ts` script to a first-class public command. Outputs a token-budgeted `CLAUDE.md` by running `recall()` with the configured budget and applying privacy filtering before writing the file.
+- **`container/skills/mk-memory-setup/SKILL.md`** — step-by-step agent skill for setting up memory-kernel inside a Docker/NanoClaw environment, covering container configuration, mounts, cron scheduling, and post-setup verification.
+- **`container/skills/mk-memory-setup/README.md`** — companion README for the `mk-memory-setup` skill with usage notes.
+- **`docs/sdk-reference.md`** — full SDK reference extracted from README for easier linking and navigation.
+- **`docs/nanoclaw-integration.md`** — NanoClaw integration guide extracted from README, covering sparse-checkout install, container mounts, and `mk render` cron setup.
+
+### Fixed
+
+- **`mk render` token budget** — `render.ts` now passes the `recall()` result through to enforce the configured token budget and privacy filtering; previously the budget was set but the filtered output was not used.
+- **`container/skills/mk-memory-setup/SKILL.md`** — removed defunct Step 5 (manual `memory-kernel` clone); renumbered remaining steps; replaced deprecated `npx tsx` script invocations with `mk render`; removed stale `KERNEL_CODE_DIR` references.
+- **`docs/nanoclaw-integration.md`** — replaced non-existent `skill/mk-memory-setup` branch reference with sparse-checkout from `main`.
+
+### Modified
+
+- **`package.json`** — version `1.0.1` → `1.1.0` (`mk render` is now stable public API).
+- **`README.md`** — updated `mk render` usage section; extracted SDK reference and NanoClaw guide into dedicated `docs/` files.
+
+---
+
 ## [1.0.1] — 2026-03-15
 
 ### ⚠️ Breaking Changes
