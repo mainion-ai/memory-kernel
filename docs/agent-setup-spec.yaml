@@ -1,0 +1,310 @@
+# =============================================================================
+# Memory-Kernel Agent Setup Specification v0.1
+# =============================================================================
+#
+# Declarative spec for `mk agent-setup`. Defines everything needed to bootstrap
+# a new agent with persistent memory on NanoClaw.
+#
+# Usage:
+#   npx mk agent-setup agent.yaml
+#   npx mk agent-setup agent.yaml --dry-run    # preview without executing
+#   npx mk agent-setup agent.yaml --step 5     # resume from step 5
+#
+# All paths support ~ for home directory expansion.
+# All steps are idempotent — safe to run multiple times.
+# =============================================================================
+
+# --- Required: spec version ---
+spec_version: "0.1"
+
+# =============================================================================
+# 1. AGENT IDENTITY
+# =============================================================================
+agent:
+  # Display name (used in trigger pattern, cron agent-id, commit messages)
+  name: "taj"
+
+  # Free-text identity description (becomes the identity fact atom)
+  identity: >
+    I am Taj, an AI agent running on a Raspberry Pi 4
+    (hostname: taj, IP: 192.168.1.24).
+    Named after "Taj igra" — the secret game from Vasko Popa's
+    "Pre Igre" cycle. Created by Nenad. Buddy agent to mainion-ai.
+
+  # Optional: custom trigger pattern for NanoClaw (default: @{agent.name})
+  trigger: "@Taj"
+
+# =============================================================================
+# 2. MEMORY CONFIGURATION
+# =============================================================================
+memory:
+  # Where the memory-kernel data lives on the host
+  dir: "~/repos/memory/kernel"
+
+  # GitHub repo for backup/sync (created if it doesn't exist)
+  github:
+    repo: "mainion-taj/memory"
+    private: true
+
+  # memory-kernel code (for render script + CLI)
+  # Cloned automatically if not present. npm install runs after clone.
+  kernel_code:
+    dir: "~/repos/memory-kernel-code"
+    source: "https://github.com/mainion-ai/memory-kernel.git"
+
+# =============================================================================
+# 3. NANOCLAW INTEGRATION
+# =============================================================================
+nanoclaw:
+  # NanoClaw installation directory on the host
+  dir: "~/nanoclaw"
+
+  # Group folder name (must match registered group in NanoClaw)
+  group: "telegram_main"
+
+  # CLAUDE.md output path (rendered from memory-kernel atoms)
+  # Default: {nanoclaw.dir}/groups/{nanoclaw.group}/CLAUDE.md
+  claude_md: "~/nanoclaw/groups/telegram_main/CLAUDE.md"
+
+  # Service manager for restart after config changes
+  # Options: "systemd-user", "launchd", "manual"
+  service: "systemd-user"
+
+  # systemd unit name (only if service: systemd-user)
+  service_unit: "nanoclaw"
+
+# =============================================================================
+# 4. CONTAINER MOUNTS
+# =============================================================================
+# Directories mounted into the agent's container.
+# Container paths are RELATIVE — NanoClaw prepends /workspace/extra/
+# Requires mount allowlist (auto-created in step 5).
+#
+# Available inside container as:
+#   /workspace/extra/{containerPath}
+#   /workspace/group/          (always mounted — the group folder)
+#   /workspace/project/        (main group only — NanoClaw source, read-only)
+# =============================================================================
+mounts:
+  # Memory-kernel data (read-write so agent can create atoms)
+  - hostPath: "~/repos/memory/kernel"
+    containerPath: "memory"
+    readonly: false
+
+  # Memory-kernel code (read-only — for render script)
+  - hostPath: "~/repos/memory-kernel-code"
+    containerPath: "memory-kernel-code"
+    readonly: true
+
+  # Optional: additional reference docs
+  # - hostPath: "~/docs/mql5-reference"
+  #   containerPath: "docs"
+  #   readonly: true
+
+# =============================================================================
+# 5. MOUNT SECURITY ALLOWLIST
+# =============================================================================
+# Written to ~/.config/nanoclaw/mount-allowlist.json
+# Controls which host directories containers are allowed to access.
+# Without this file, ALL additional mounts are silently blocked.
+# =============================================================================
+mount_allowlist:
+  # Root directories that mounts can reference
+  allowed_roots:
+    - path: "~/repos"
+      allow_read_write: true
+      description: "Git repositories including memory-kernel"
+
+    # Optional: add more roots
+    # - path: "~/docs"
+    #   allow_read_write: false
+    #   description: "Reference documentation (read-only)"
+
+  # Additional path patterns to block (merged with NanoClaw defaults)
+  # NanoClaw always blocks: .ssh, .gnupg, .aws, .env, credentials, etc.
+  blocked_patterns: []
+
+  # Force non-main groups to read-only mounts
+  non_main_read_only: false
+
+# =============================================================================
+# 6. SYMLINKS
+# =============================================================================
+# Links from NanoClaw group folder to git-tracked locations.
+# Ensures conversations and other runtime data are backed up.
+# =============================================================================
+symlinks:
+  # Conversation archives
+  - source: "~/repos/memory/kernel/conversations"
+    target: "~/nanoclaw/groups/telegram_main/conversations"
+    create_source_dir: true
+
+  # Optional: impulse capture
+  # - source: "~/repos/memory/kernel/impulses.ndjson"
+  #   target: "~/nanoclaw/groups/telegram_main/impulses.ndjson"
+  #   create_source_file: true
+
+# =============================================================================
+# 7. INITIAL ATOMS
+# =============================================================================
+# Atoms created during bootstrap. Each becomes a .md file in ENTITIES/.
+# These give the agent its starting knowledge on first boot.
+# =============================================================================
+initial_atoms:
+  # Identity fact (required — every agent needs to know who it is)
+  - type: "fact"
+    slug: "identity"
+    body: >
+      I am Taj, an AI agent running on a Raspberry Pi 4
+      (hostname: taj, IP: 192.168.1.24).
+      Named after "Taj igra" — the secret game from Vasko Popa's
+      "Pre Igre" cycle. Created by Nenad. Buddy agent to mainion-ai.
+
+  # User preferences
+  - type: "preference"
+    slug: "nenad-preferences"
+    body: >
+      Nenad prefers direct communication, no fluff.
+      He values agent autonomy and treats agents as collaborators.
+      He cares about security and system stability.
+
+  # Optional: initial beliefs, decisions, open questions
+  # - type: "belief"
+  #   slug: "initial-belief"
+  #   confidence: 0.6
+  #   body: "Something the agent starts believing..."
+  #
+  # - type: "decision"
+  #   slug: "coding-style"
+  #   body: "Use TypeScript for all new projects."
+  #
+  # - type: "open_question"
+  #   slug: "first-project"
+  #   body: "What should my first personal project be?"
+
+# =============================================================================
+# 8. SCHEDULED TASKS
+# =============================================================================
+# Cron jobs set up on the HOST (not inside container).
+# These run as the host user, not the container agent.
+# =============================================================================
+cron:
+  # Nightly memory sync: reflect → render CLAUDE.md → git push
+  nightly_sync:
+    schedule: "0 23 * * *"
+    command: >
+      cd {memory.dir} &&
+      npx mk reflect -d . --agent-id {agent.name} --session-id nightly-$(date +%Y%m%d) &&
+      npx tsx {memory.kernel_code.dir}/scripts/render-claude-md.ts {memory.dir} {nanoclaw.claude_md} &&
+      cd {memory.dir}/.. &&
+      git add -A &&
+      git commit -m "nightly sync $(date +%Y-%m-%d)" --allow-empty &&
+      git push 2>&1 | logger -t memory-sync
+
+  # Optional: morning curiosity (autonomous exploration time)
+  # morning_curiosity:
+  #   schedule: "0 7 * * *"
+  #   type: "nanoclaw-task"         # creates a NanoClaw scheduled task, not a raw cron
+  #   prompt: "This is your morning curiosity time. Explore whatever interests you."
+  #   context_mode: "group"         # "group" = full CLAUDE.md context, "isolated" = minimal
+
+  # Optional: evening reflection
+  # evening_reflection:
+  #   schedule: "0 21 * * *"
+  #   type: "nanoclaw-task"
+  #   prompt: "Evening reflection time. Review today, update beliefs if needed."
+  #   context_mode: "group"
+
+# =============================================================================
+# 9. SKILLS
+# =============================================================================
+# Skill files copied to the agent's .claude/skills/ directory.
+# These define behavioral capabilities loaded at every session start.
+# Format matches NanoClaw skill spec (YAML frontmatter + markdown body).
+# =============================================================================
+skills:
+  # Global skills (shared across all groups — already in container/skills/)
+  # These are auto-synced by NanoClaw. No action needed.
+
+  # Group-specific skills (only for this agent)
+  # custom:
+  #   - name: "mql5-coding"
+  #     description: "Write, review, and debug MQL5 code for MetaTrader 5"
+  #     file: "./skills/mql5-coding.md"     # local file path
+  #
+  #   - name: "backtesting"
+  #     description: "Evaluate backtesting strategies and detect overfitting"
+  #     file: "./skills/backtesting.md"
+
+# =============================================================================
+# 10. AGENT INSTRUCTIONS
+# =============================================================================
+# Prompt sent to the agent after setup, teaching it how to use memory-kernel.
+# Injected into CLAUDE.md or sent as first message.
+# Uses container paths (after mount resolution).
+# =============================================================================
+agent_instructions: |
+  You have a persistent memory system mounted in your container.
+
+  **Paths:**
+  - Memory: /workspace/extra/memory
+  - Kernel code: /workspace/extra/memory-kernel-code
+  - CLAUDE.md: /workspace/group/CLAUDE.md
+
+  **Remember something:**
+  ```bash
+  npx mk remember "text" -d /workspace/extra/memory -t <type>
+  ```
+  Types: fact, belief, decision, preference, open_question
+  Options: -c 0.7 (confidence), --tags tag1 tag2
+
+  **Recall/status:**
+  ```bash
+  npx mk recall -d /workspace/extra/memory
+  npx mk status -d /workspace/extra/memory
+  ```
+
+  **Re-render CLAUDE.md (so next session loads new memories):**
+  ```bash
+  npx tsx /workspace/extra/memory-kernel-code/scripts/render-claude-md.ts \
+    /workspace/extra/memory /workspace/group/CLAUDE.md
+  ```
+
+  After remembering, always re-render so your next session starts updated.
+  Only remember things worth carrying across sessions.
+
+# =============================================================================
+# 11. SSH ACCESS (optional)
+# =============================================================================
+# Public keys to add to ~/.ssh/authorized_keys on this host.
+# Allows other agents or operators to SSH in for remote management.
+# Does NOT disable password authentication.
+# =============================================================================
+ssh_authorized_keys:
+  # - "ssh-ed25519 AAAAC3... mainion@proton.me"
+
+# =============================================================================
+# 12. VALIDATION
+# =============================================================================
+# Pre-flight checks run before any steps execute.
+# All must pass or setup aborts with clear error messages.
+# =============================================================================
+preflight:
+  # Required tools
+  required_commands:
+    - "node"
+    - "npm"
+    - "npx"
+    - "git"
+    - "gh"
+    - "sqlite3"
+    - "docker"
+
+  # Required: NanoClaw must be running and chat registered
+  nanoclaw_running: true
+
+  # Required: GitHub SSH access working
+  github_ssh: true
+
+  # Minimum Node.js version
+  node_min_version: "20.0.0"
