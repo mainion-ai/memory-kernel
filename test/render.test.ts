@@ -58,9 +58,8 @@ describe('renderClaudeMd', () => {
     expect(output).toContain('Use event sourcing.');
   });
 
-  it('renders decisions and omits confidence suffix only when confidence is undefined', () => {
-    // createAtom applies a default confidence, so the suffix will appear.
-    // This test verifies the section heading is present regardless.
+  it('renders decisions section when no explicit confidence given', () => {
+    // createAtom applies a default confidence, so the section heading and suffix are always present.
     createAtom({ ...base(), type: 'decision', slug: 'eventsource', body: 'Use event sourcing.' });
     const output = renderClaudeMd(testDir);
     expect(output).toContain('## Decisions');
