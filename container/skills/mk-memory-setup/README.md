@@ -42,26 +42,34 @@ This skill runs on the **host machine** via Claude Code, not inside a container.
 
 ## Installation
 
-Merge the skill branch into your NanoClaw fork:
-
+Merge the skill branch into your NanoClaw fork and copy it to Calude Code
 ```bash
-cd /path/to/your/nanoclaw
-git fetch https://github.com/mainion-ai/memory-kernel.git skill/mk-memory-setup
-git merge FETCH_HEAD --allow-unrelated-histories -m "Add mk-memory-setup skill"
-npm run build
+# From the NanoClaw directory
+cd /path/to/nanoclaw
+
+# Get the skill from memory-kernel
+git fetch https://github.com/mainion-ai/memory-kernel.git main
+git checkout FETCH_HEAD -- container/skills/mk-memory-setup/
+
+# Run skill from your messaging app:
+/mk-memmory-setup
+
+# or
+ 
+# Install for Claude Code (host-side)
+mkdir -p .claude/skills
+cp -r container/skills/mk-memory-setup .claude/skills/
+
+# Run Claude Code and invoke the skill
+claude
+# then: /mk-memory-setup
 ```
 
-This adds `container/skills/mk-memory-setup/` to your NanoClaw. The skill is automatically synced to agent containers at session start.
+This adds `container/skills/mk-memory-setup/` to your NanoClaw and `.claude/skills/mk-memory-setup/`. The skill is automatically synced to agent containers at session start.
 
 ## Usage
 
-In your chat with the agent, say:
-
-```
-Set up memory-kernel
-```
-
-or
+In your chat with the agent or Claude, say:
 
 ```
 /mk-memory-setup
