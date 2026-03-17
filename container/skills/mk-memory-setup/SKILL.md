@@ -72,6 +72,23 @@ Use `AskUserQuestion` to gather setup details:
 "Describe this agent in 1-2 sentences (becomes the identity atom):"
 - Free text input
 
+**Question 5: NanoClaw directory**
+"Where is NanoClaw installed? I'll try to auto-detect first."
+
+Run auto-detect:
+```bash
+NANOCLAW_DIR=$(for p in ~/nanoclaw ~/Documents/nanoclaw ~/projects/nanoclaw ~/repos/nanoclaw; do
+  [ -d "$p" ] && echo "$p" && break
+done)
+echo "Found: $NANOCLAW_DIR"
+```
+
+If found, confirm with user: `"Found NanoClaw at $NANOCLAW_DIR — is this correct?"`
+
+If not found or user says no, ask: `"Please enter the full path to your NanoClaw directory:"` — free text input.
+
+Store as `{NANOCLAW_DIR}` and use in all subsequent steps.
+
 Store all values for use in subsequent steps.
 
 ## 2. Install memory-kernel CLI
@@ -184,18 +201,14 @@ Where `{MEMORY_DIR_PARENT}` is the parent of the memory directory (e.g., `~` if 
 
 ## 6. Configure NanoClaw Container Mounts
 
-Find the NanoClaw installation and database:
+Locate the NanoClaw database (using `{NANOCLAW_DIR}` from Step 1):
 ```bash
-# Try common locations
-NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
+NANOCLAW_DIR="{NANOCLAW_DIR}"
 DB_PATH="$NANOCLAW_DIR/store/messages.db"
 # Fallback for older versions
 [ ! -f "$DB_PATH" ] && DB_PATH="$NANOCLAW_DIR/data/nanoclaw.db"
-echo "NanoClaw: $NANOCLAW_DIR"
 echo "DB: $DB_PATH"
 ```
-
-If the NanoClaw directory isn't found, use `AskUserQuestion` to ask the user where NanoClaw is installed.
 
 Find the registered group:
 ```bash
@@ -231,7 +244,7 @@ sqlite3 "$DB_PATH" "SELECT container_config FROM registered_groups WHERE is_main
 Link conversation logs from NanoClaw into the memory directory so they're accessible to the kernel:
 
 ```bash
-NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
+NANOCLAW_DIR="{NANOCLAW_DIR}"
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 
 # Conversation logs
@@ -275,7 +288,7 @@ npx mk remember "GitHub account: {GITHUB_USER}. Repos: {GITHUB_USER}/memory (pri
 This is the critical step — render atoms into the CLAUDE.md file that NanoClaw loads at every session start:
 
 ```bash
-NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
+NANOCLAW_DIR="{NANOCLAW_DIR}"
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
 
@@ -298,7 +311,7 @@ Create a nightly cron job that runs reflect → render → optionally git push:
 
 **With git backup:**
 ```bash
-NANOCLAW_DIR=$(find ~ -maxdepth 2 -name "nanoclaw" -type d 2>/dev/null | head -1)
+NANOCLAW_DIR="{NANOCLAW_DIR}"
 GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
 CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
 
@@ -380,6 +393,34 @@ Print a summary of what was set up:
     npx mk remember "text" -d /workspace/extra/memory -t fact
     npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
+
+## Memory-Kernel Container Usage
+
+Once set up, the agent can use these commands **inside the container** (e.g. after a mid-session `mk remember`):
+
+**Render CLAUDE.md so the next session loads new memories:**
+```bash
+npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
+```
+
+**If `npx mk` fails with EACCES or permission errors inside the container:**
+```bash
+./node_modules/.bin/mk render /workspace/extra/memory /workspace/group/CLAUDE.md
+```
+
+**Version check** — `mk render` requires memory-kernel ≥ 1.1.0:
+```bash
+npx mk --version
+```
+
+**Legacy fallback for memory-kernel < 1.1.0** (pre-dates `mk render`):
+```bash
+npx tsx /workspace/extra/memory-kernel-code/scripts/render-claude-md.ts \
+  /workspace/extra/memory /workspace/group/CLAUDE.md
+```
+Note: this path requires a `memory-kernel-code` mount — not present in the default setup. Ask your operator to add it.
+
+**If CLI behaviour doesn't match docs:** Check `npx mk --version` against the latest release. Ask your operator to run `npm update memory-kernel` globally or update the mount source.
 
 ## Troubleshooting
 
