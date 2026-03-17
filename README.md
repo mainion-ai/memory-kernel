@@ -556,6 +556,7 @@ import {
   mergeEventLogs,
   importFromFile,
   previewImport,
+  renderClaudeMd,
 } from 'memory-kernel';
 
 // Initialize
@@ -734,6 +735,14 @@ const imported = importFromFile({
 });
 console.log(`Created: ${imported.atoms_created}, Skipped: ${imported.atoms_skipped}`);
 
+// --- Render to CLAUDE.md (v1.1.0+) ---
+
+// Generate a CLAUDE.md-compatible markdown string from active atoms.
+// Caller is responsible for writing the result to disk.
+const md = renderClaudeMd('./memory', { maxTokens: 8000 });
+fs.writeFileSync('./CLAUDE.md', md);
+// md includes conflicts (⚠), facts, decisions, constraints, preferences, beliefs.
+
 // --- Encryption (v0.9.0+) ---
 
 // Set MEMORY_ENCRYPTION_KEY env var before creating SECRET atoms.
@@ -875,6 +884,7 @@ Resources read view files fresh on every request. If a view hasn't been generate
 | `mk merge -d <dir> --remote <path> [--dry-run]`                                      | Merge remote event log into local; creates conflict atoms for concurrent updates |
 | `mk gc -d <dir>`                                                                     | Archive expired atoms                                                            |
 | `mk doctor -d <dir>`                                                                 | Validate schema, check links, report problems                                    |
+| `mk render <memory-dir> <output-path> [--max-tokens N]`                              | Render active atoms to a CLAUDE.md-compatible markdown file (default: 8000 tokens) |
 
 
 ---
@@ -963,7 +973,7 @@ Memory Kernel was built to work with [NanoClaw](https://github.com/nicepkg/nanoc
 │  ENTITIES/      │     mk reflect       │  groups/          │
 │  events/        │ ──────────────────►  │   my-group/       │
 │  views/         │                      │     CLAUDE.md     │
-│                 │  render-claude-md.ts │                   │
+│                 │      mk render       │                   │
 │                 │ ──────────────────►  │  (loaded at       │
 │                 │                      │   session start)  │
 │                 │     git push         │                   │
@@ -1007,14 +1017,12 @@ git init
 mk init ~/repos/memory/kernel
 ```
 
-#### 3. Create the render script
+#### 3. Render to CLAUDE.md
 
-Memory Kernel includes a script that renders atoms into NanoClaw's CLAUDE.md format:
+Render active atoms into NanoClaw's CLAUDE.md format:
 
 ```bash
-# Render your memory into CLAUDE.md
-npx tsx scripts/render-claude-md.ts \
-  ~/repos/memory/kernel \
+mk render ~/repos/memory/kernel \
   ~/path/to/nanoclaw/groups/YOUR_GROUP/CLAUDE.md
 ```
 
@@ -1031,19 +1039,17 @@ set -euo pipefail
 
 MEMORY_DIR="$HOME/repos/memory/kernel"
 MEMORY_REPO="$HOME/repos/memory"
-KERNEL_REPO="$HOME/repos/memory-kernel"
 CLAUDE_MD="$HOME/path/to/nanoclaw/groups/YOUR_GROUP/CLAUDE.md"
 
 echo "[$(date -Iseconds)] Memory sync starting..."
 
 # 1. Reflect — consolidate, deduplicate, promote, expire
-cd "$KERNEL_REPO"
-npx tsx src/cli/mk.ts reflect -d "$MEMORY_DIR" \
+mk reflect -d "$MEMORY_DIR" \
   --agent-id YOUR_AGENT_ID \
   --session-id "sync-$(date +%Y%m%d-%H%M)"
 
 # 2. Render to NanoClaw CLAUDE.md
-npx tsx scripts/render-claude-md.ts "$MEMORY_DIR" "$CLAUDE_MD"
+mk render "$MEMORY_DIR" "$CLAUDE_MD"
 
 # 3. Commit & push memory repo
 cd "$MEMORY_REPO"
@@ -1089,7 +1095,7 @@ This runs every night at 23:00:
 mk status -d ~/repos/memory/kernel
 
 # Test render
-npx tsx scripts/render-claude-md.ts ~/repos/memory/kernel /tmp/test-claude.md
+mk render ~/repos/memory/kernel /tmp/test-claude.md
 cat /tmp/test-claude.md
 
 # Test sync
@@ -1099,7 +1105,7 @@ bash scripts/memory-sync.sh
 crontab -l
 ```
 
-If `mk status` shows your atoms and `render-claude-md.ts` produces a valid CLAUDE.md, you're done. Next time NanoClaw starts a session, the agent will load its memory.
+If `mk status` shows your atoms and `mk render` produces a valid CLAUDE.md, you're done. Next time NanoClaw starts a session, the agent will load its memory.
 
 ### How the agent uses it
 
