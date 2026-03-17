@@ -1,6 +1,12 @@
 #!/usr/bin/env npx tsx
 
 /**
+ * @deprecated Use `mk render <memory-dir> <output-path>` instead.
+ *   npm install -g memory-kernel
+ *   mk render ~/repos/memory/kernel ~/Documents/nanoclaw/groups/telegram_main/CLAUDE.md
+ *
+ * This script is kept for backward compatibility only.
+ *
  * Render memory kernel state into a CLAUDE.md file.
  * Bridge between memory-kernel and NanoClaw's group memory system.
  *
