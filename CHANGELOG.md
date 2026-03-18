@@ -7,6 +7,14 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [1.1.2] — 2026-03-18
+
+### Fixed
+
+- **`CONTRIBUTING.md`** — corrected maintainer email address, updated license validity year, and added lint instructions for contributors.
+
+---
+
 ## [1.1.1] — 2026-03-18
 
 ### Added
