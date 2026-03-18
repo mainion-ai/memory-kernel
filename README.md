@@ -1,4 +1,9 @@
 
+<!-- start-badges -->
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/memory-kernel)](https://www.npmjs.com/package/memory-kernel)
+[![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](SECURITY.md)
+<!-- end-badges -->
 
 # Memory Kernel (MK)
 
@@ -8,10 +13,11 @@ Persistent, structured memory that survives context windows, compaction, and ses
 
 Configurable max context size. Automatic memory backup in git (optional) 
 
-**New here? GOOD TO READ THIS FIRST:** 
-- [Memory Kernel Explained](STORY.md) first — it explains everything with no jargon.
-- [When to choose memory-kernel](docs/when-to-choose-memory-kernel.md) 
-- [Migration guide](docs/migration.md)
+> [!NOTE]
+> **New here? Start here:**
+> - [Memory Kernel Explained](STORY.md) — everything explained with no jargon
+> - [When to choose memory-kernel](docs/when-to-choose-memory-kernel.md)
+> - [Migration guide](docs/migration.md)
 
 ## The Problem
 
@@ -809,4 +815,4 @@ git merge FETCH_HEAD --allow-unrelated-histories -m "Add mk-memory-setup skill"
 
 ## License
 
-MIT
+This project is licensed under the [Apache License 2.0](LICENSE).
