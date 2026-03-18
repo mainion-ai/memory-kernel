@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+> [!IMPORTANT]
+> **License change — MIT → Apache-2.0**
+> Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
+> See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
+
+## [1.1.1] — 2026-03-18
+
+### Added
+
+- **`CODE_OF_CONDUCT.md`** — Contributor Covenant v2.1 with `mainion@proton.me` enforcement contact.
+- **`CONTRIBUTING.md`** — dev setup, workflow, Conventional Commits guide, code style, and bug reporting instructions.
+- **`SECURITY.md`** — supported versions table, private vulnerability reporting (GitHub advisory + `mainion@proton.me`), response timeline, and scope definition.
+- **`NOTICE`** — Apache-2.0 attribution notice required by the license.
+
+### Changed
+
+- **`LICENSE`** — replaced MIT license text with Apache License 2.0.
+- **`README.md`** — updated license section to reference Apache-2.0; added status badges (license, npm version, tests, security policy).
+- **`package.json`** — `"license"` field updated from `"MIT"` to `"Apache-2.0"`.
+
+---
+
 ## [1.1.0] — 2026-03-17
 
 ### Added
