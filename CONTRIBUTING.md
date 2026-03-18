@@ -77,7 +77,7 @@ npm run bench
 - Prefer small, composable, testable functions over classes.
 - **Files are the source of truth** — memory lives on disk; keep I/O explicit.
 - Do not add comments that restate what the code does; prefer self-explanatory names.
-- Run `npm run lint` before pushing (`tsc --noEmit`).
+- Run `npm run lint:all` before pushing (`tsc --noEmit`).
 
 ---
 
