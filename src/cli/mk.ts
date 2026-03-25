@@ -427,6 +427,8 @@ program
     const embedded = await embedAtom(memoryDir, atom);
     if (embedded) {
       console.log(`  Embedded: ✓`);
+    } else if (process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_PROVIDER !== 'none') {
+      console.warn(`  ⚠ Embedding failed — run "mk reindex --embed" to retry`);
     }
   });
 

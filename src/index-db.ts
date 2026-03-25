@@ -409,7 +409,7 @@ export function getAllEmbeddings(memoryDir: string): { atom_id: string; embeddin
     }
 
     return db.prepare(
-      `SELECT atom_id, embedding FROM atom_embeddings LIMIT ${MAX_EMBEDDINGS_FOR_KNN}`,
+      `SELECT atom_id, embedding FROM atom_embeddings ORDER BY rowid DESC LIMIT ${MAX_EMBEDDINGS_FOR_KNN}`,
     ).all() as {
       atom_id: string;
       embedding: Buffer;
