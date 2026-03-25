@@ -230,12 +230,15 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
   const atoms = listAtoms(memoryDir);
 
   const tx = db.transaction(() => {
-    // Clear existing data (embeddings + FTS first to avoid FK issues)
-    db.exec('DELETE FROM atom_embeddings');
+    // Preserve embeddings across reindex — they are expensive to recompute (API calls).
+    // Save to temp table before clearing atoms (FK cascade would wipe them).
+    db.exec('CREATE TEMP TABLE IF NOT EXISTS _saved_embeddings AS SELECT * FROM atom_embeddings');
+
+    // Clear existing data
     db.exec('DELETE FROM atom_fts');
     db.exec('DELETE FROM atom_paths');
     db.exec('DELETE FROM atom_tags');
-    db.exec('DELETE FROM atoms');
+    db.exec('DELETE FROM atoms'); // cascades to atom_embeddings
 
     const insertAtom = db.prepare(`
       INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
@@ -287,6 +290,15 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
       // FTS index
       insertFts.run(fm.id, extractTitle(atom.body), atom.body);
     }
+
+    // Restore preserved embeddings (only for atoms that still exist)
+    db.exec(`
+      INSERT OR IGNORE INTO atom_embeddings (atom_id, embedding, model, dimensions, body_hash)
+      SELECT atom_id, embedding, model, dimensions, body_hash
+      FROM _saved_embeddings
+      WHERE atom_id IN (SELECT atom_id FROM atoms)
+    `);
+    db.exec('DROP TABLE IF EXISTS _saved_embeddings');
   });
 
   tx();
@@ -403,7 +415,7 @@ export function getAllEmbeddings(memoryDir: string): { atom_id: string; embeddin
     if (count > MAX_EMBEDDINGS_FOR_KNN) {
       console.warn(
         `⚠ ${count} embeddings exceed KNN limit (${MAX_EMBEDDINGS_FOR_KNN}). ` +
-        `Only the first ${MAX_EMBEDDINGS_FOR_KNN} will be used for semantic search. ` +
+        `Only the ${MAX_EMBEDDINGS_FOR_KNN} most recent will be used for semantic search. ` +
         `Consider sqlite-vss for larger stores.`,
       );
     }
@@ -446,7 +458,7 @@ export function embeddingStats(memoryDir: string): { count: number; model: strin
   try {
     const db = openIndex(memoryDir);
     const count = (db.prepare('SELECT COUNT(*) as c FROM atom_embeddings').get() as { c: number }).c;
-    const modelRow = db.prepare('SELECT model FROM atom_embeddings LIMIT 1').get() as { model: string } | undefined;
+    const modelRow = db.prepare('SELECT model, COUNT(*) as cnt FROM atom_embeddings GROUP BY model ORDER BY cnt DESC LIMIT 1').get() as { model: string; cnt: number } | undefined;
     return { count, model: modelRow?.model ?? null };
   } catch {
     return null;

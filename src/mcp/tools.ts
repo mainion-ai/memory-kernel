@@ -23,6 +23,7 @@ import {
   indexExists,
 } from '../index.js';
 import { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS } from '../types.js';
+import { embedAtom } from '../embed-sync.js';
 import { resolveAgentId, resolveSessionId, type McpContext } from './context.js';
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,9 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         ? { paths: input.scope_paths, tags: input.scope_tags }
         : undefined,
     });
+    // Auto-embed the new atom (no-op if embeddings not configured)
+    const embedded = await embedAtom(ctx.memoryDir, atom);
+
     const result = {
       atom: {
         id: atom.frontmatter.id,
@@ -129,6 +133,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         confidence: atom.frontmatter.confidence,
         created_at: atom.frontmatter.created_at,
         filePath: atom.filePath,
+        embedded,
       },
       provenance: buildProvenance(ctx, agentId, sessionId, {
         event_id: getLastEventId(ctx.memoryDir),
