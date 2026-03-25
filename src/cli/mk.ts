@@ -11,6 +11,7 @@
  *   mk gc                      Archive expired atoms
  *   mk doctor                  Validate schema, links, conflicts
  *   mk status                  Show memory stats
+ *   mk wander                  Explore memory via spreading activation
  */
 
 import { Command } from 'commander';
@@ -41,6 +42,7 @@ import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
 import { renderClaudeMd } from '../render.js';
+import { wander, wanderFromFiles } from '../wander.js';
 import type { Classification } from '../types.js';
 
 const program = new Command();
@@ -715,6 +717,88 @@ program
     } catch (err) {
       console.error(`✗ Render failed: ${String(err)}`);
       process.exit(1);
+    }
+  });
+
+// --- mk wander ---
+program
+  .command('wander')
+  .description('Explore memory via spreading activation — find unexpected connections')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--seed <ids...>', 'Seed atom IDs to start from')
+  .option('--tags <tags...>', 'Seed tags to start from')
+  .option('--steps <n>', 'Number of spreading steps', parseInt)
+  .option('--threshold <n>', 'Minimum activation threshold (0-1)', parseFloat)
+  .option('--top-k <n>', 'Max active atoms per step (lateral inhibition)', parseInt)
+  .option('--decay <n>', 'Spread decay factor (0-1)', parseFloat)
+  .option('--max-collisions <n>', 'Max collision candidates to return', parseInt)
+  .option('--json', 'Output as JSON')
+  .action((opts: {
+    dir: string;
+    seed?: string[];
+    tags?: string[];
+    steps?: number;
+    threshold?: number;
+    topK?: number;
+    decay?: number;
+    maxCollisions?: number;
+    json?: boolean;
+  }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      console.error(`✗ Memory directory not found: ${memoryDir}`);
+      console.error('  Run "mk init" first.');
+      process.exit(1);
+    }
+
+    const useFiles = !indexExists(memoryDir);
+    if (useFiles) {
+      console.error('⚠ No index found — falling back to file scan (slower). Run "mk reindex" for faster results.');
+    }
+
+    const wanderFn = useFiles ? wanderFromFiles : wander;
+    const result = wanderFn({
+      memoryDir,
+      seeds: opts.seed,
+      seedTags: opts.tags,
+      steps: opts.steps,
+      threshold: opts.threshold,
+      topK: opts.topK,
+      decay: opts.decay,
+      maxCollisions: opts.maxCollisions,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    // Human-readable output
+    console.log(`✓ Wander completed in ${result.duration_ms}ms (${result.steps_taken} steps)\n`);
+    console.log(`Seeds: ${result.seeds_used.length}`);
+    for (const seed of result.seeds_used) {
+      console.log(`  ${seed}`);
+    }
+
+    console.log(`\nActivated: ${result.activated.length} atoms`);
+    for (const atom of result.activated.slice(0, 10)) {
+      const tagStr = atom.tags.length > 0 ? ` [${atom.tags.join(', ')}]` : '';
+      console.log(`  ${atom.activation.toFixed(3)}  ${atom.type.padEnd(16)} ${atom.atom_id}${tagStr}`);
+    }
+    if (result.activated.length > 10) {
+      console.log(`  ... and ${result.activated.length - 10} more`);
+    }
+
+    if (result.collisions.length > 0) {
+      console.log(`\nCollisions: ${result.collisions.length}`);
+      for (const c of result.collisions) {
+        console.log(`\n  Score: ${c.score.toFixed(3)} (distance: ${c.distance})`);
+        console.log(`    ${c.type_a}: ${c.atom_a}`);
+        console.log(`    ${c.type_b}: ${c.atom_b}`);
+        console.log(`    Shared: [${c.shared_tags.join(', ')}]`);
+      }
+    } else {
+      console.log('\nNo collisions found. Try broader seeds or more steps.');
     }
   });
 

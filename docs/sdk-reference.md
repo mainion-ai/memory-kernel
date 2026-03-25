@@ -39,6 +39,8 @@ import {
   importFromFile,
   previewImport,
   renderClaudeMd,
+  wander,
+  wanderFromFiles,
 } from 'memory-kernel';
 ```
 
@@ -354,3 +356,43 @@ const imported = importFromFile({
 });
 console.log(`Created: ${imported.atoms_created}, Skipped: ${imported.atoms_skipped}`);
 ```
+
+---
+
+## Wander — Spreading Activation (v1.2.0+)
+
+Find unexpected connections between atoms by walking the tag co-occurrence graph. Pure computation — no LLM calls, runs in milliseconds.
+
+```typescript
+import { wander, wanderFromFiles, closeIndex } from 'memory-kernel';
+
+// Index-backed (fast, requires mk reindex)
+const result = wander({
+  memoryDir: './memory',
+  seedTags: ['philosophy', 'accounting'],  // or seeds: ['BELI-2026-...']
+  steps: 5,          // spreading depth (default: 3)
+  topK: 20,          // lateral inhibition limit (default: 20)
+  threshold: 0.05,   // minimum activation to survive (default: 0.05)
+  decay: 0.5,        // spread decay factor (default: 0.5)
+  maxCollisions: 5,  // max collision candidates (default: 5)
+});
+
+// result.collisions — atom pairs from different types with shared tags
+for (const c of result.collisions) {
+  console.log(`${c.atom_a} <-> ${c.atom_b} (score: ${c.score}, shared: ${c.shared_tags})`);
+}
+
+// result.activated — all activated atoms sorted by activation score
+// result.steps_taken, result.duration_ms, result.seeds_used
+
+// File-scan fallback (no index needed, slower)
+const fileResult = wanderFromFiles({
+  memoryDir: './memory',
+  seedTags: ['philosophy'],
+});
+
+// In long-running processes, close the SQLite connection when done:
+closeIndex('./memory');
+```
+
+Or use the CLI: `mk wander -d ./memory --tags philosophy accounting --steps 5 --json`
