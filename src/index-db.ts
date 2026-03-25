@@ -13,7 +13,7 @@ import type { Atom, AtomType, AtomStatus, Classification, RecallQuery } from './
 import { listAtoms } from './store.js';
 
 const DB_FILENAME = '.memory-index.db';
-const SCHEMA_VERSION = 3; // Bump when schema changes to trigger auto-rebuild
+const SCHEMA_VERSION = 4; // Bump when schema changes to trigger auto-rebuild
 
 // --- Schema ---
 
@@ -65,6 +65,18 @@ CREATE VIRTUAL TABLE IF NOT EXISTS atom_fts USING fts5(
   title,
   body,
   tokenize='porter unicode61'
+)`;
+
+// Embeddings table for semantic search (KNN via cosine similarity).
+// Vectors stored as BLOBs (Float32Array). Provider/model tracked for cache invalidation.
+const CREATE_EMBEDDINGS_TABLE = `
+CREATE TABLE IF NOT EXISTS atom_embeddings (
+  atom_id TEXT PRIMARY KEY,
+  embedding BLOB NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  body_hash TEXT NOT NULL,
+  FOREIGN KEY (atom_id) REFERENCES atoms(atom_id) ON DELETE CASCADE
 )`;
 
 // --- Connection cache ---
@@ -135,6 +147,7 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   const currentVersion = (db.pragma('user_version', { simple: true }) as number) ?? 0;
   if (currentVersion !== SCHEMA_VERSION) {
     // Drop and recreate all tables for clean schema upgrade
+    db.exec('DROP TABLE IF EXISTS atom_embeddings');
     db.exec('DROP TABLE IF EXISTS atom_fts');
     db.exec('DROP TABLE IF EXISTS atom_paths');
     db.exec('DROP TABLE IF EXISTS atom_tags');
@@ -149,6 +162,7 @@ function openIndexRaw(resolvedDir: string): Database.Database {
     db.exec(idx);
   }
   db.exec(CREATE_FTS_TABLE);
+  db.exec(CREATE_EMBEDDINGS_TABLE);
 
   // Set schema version
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -216,7 +230,8 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
   const atoms = listAtoms(memoryDir);
 
   const tx = db.transaction(() => {
-    // Clear existing data (FTS first to avoid FK issues)
+    // Clear existing data (embeddings + FTS first to avoid FK issues)
+    db.exec('DELETE FROM atom_embeddings');
     db.exec('DELETE FROM atom_fts');
     db.exec('DELETE FROM atom_paths');
     db.exec('DELETE FROM atom_tags');
@@ -342,7 +357,83 @@ export function removeFromIndex(memoryDir: string, atomId: string): void {
   const db = openIndex(memoryDir);
   db.prepare('DELETE FROM atoms WHERE atom_id = ?').run(atomId);
   db.prepare('DELETE FROM atom_fts WHERE atom_id = ?').run(atomId);
+  db.prepare('DELETE FROM atom_embeddings WHERE atom_id = ?').run(atomId);
   // atom_tags and atom_paths cascade-deleted via FK on atoms table
+}
+
+// --- Embedding operations ---
+
+/**
+ * Store an embedding vector for an atom.
+ */
+export function storeEmbedding(
+  memoryDir: string,
+  atomId: string,
+  embedding: Buffer,
+  model: string,
+  dimensions: number,
+  bHash: string,
+): void {
+  const db = openIndex(memoryDir);
+  db.prepare(`
+    INSERT OR REPLACE INTO atom_embeddings (atom_id, embedding, model, dimensions, body_hash)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(atomId, embedding, model, dimensions, bHash);
+}
+
+/**
+ * Get all embeddings for semantic search.
+ * Returns atom_id + raw embedding buffer for KNN.
+ */
+export function getAllEmbeddings(memoryDir: string): { atom_id: string; embedding: Buffer }[] | null {
+  if (!indexExists(memoryDir)) return null;
+
+  try {
+    const db = openIndex(memoryDir);
+    const count = (db.prepare('SELECT COUNT(*) as c FROM atom_embeddings').get() as { c: number }).c;
+    if (count === 0) return null;
+
+    return db.prepare('SELECT atom_id, embedding FROM atom_embeddings').all() as {
+      atom_id: string;
+      embedding: Buffer;
+    }[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check if an atom's embedding is stale (body changed since embedding was computed).
+ */
+export function isEmbeddingStale(memoryDir: string, atomId: string, currentBodyHash: string): boolean {
+  if (!indexExists(memoryDir)) return true;
+
+  try {
+    const db = openIndex(memoryDir);
+    const row = db.prepare('SELECT body_hash FROM atom_embeddings WHERE atom_id = ?').get(atomId) as {
+      body_hash: string;
+    } | undefined;
+    if (!row) return true;
+    return row.body_hash !== currentBodyHash;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Get embedding stats.
+ */
+export function embeddingStats(memoryDir: string): { count: number; model: string | null } | null {
+  if (!indexExists(memoryDir)) return null;
+
+  try {
+    const db = openIndex(memoryDir);
+    const count = (db.prepare('SELECT COUNT(*) as c FROM atom_embeddings').get() as { c: number }).c;
+    const modelRow = db.prepare('SELECT model FROM atom_embeddings LIMIT 1').get() as { model: string } | undefined;
+    return { count, model: modelRow?.model ?? null };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -491,12 +582,16 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
 /**
  * Get index stats.
  */
-export function indexStats(memoryDir: string): { atoms: number; tags: number; paths: number } | null {
+export function indexStats(memoryDir: string): { atoms: number; tags: number; paths: number; embeddings: number } | null {
   if (!indexExists(memoryDir)) return null;
 
   const db = openIndex(memoryDir);
   const atoms = (db.prepare('SELECT COUNT(*) as c FROM atoms').get() as { c: number }).c;
   const tags = (db.prepare('SELECT COUNT(*) as c FROM atom_tags').get() as { c: number }).c;
   const paths = (db.prepare('SELECT COUNT(*) as c FROM atom_paths').get() as { c: number }).c;
-  return { atoms, tags, paths };
+  let embeddings = 0;
+  try {
+    embeddings = (db.prepare('SELECT COUNT(*) as c FROM atom_embeddings').get() as { c: number }).c;
+  } catch { /* table may not exist in older schema */ }
+  return { atoms, tags, paths, embeddings };
 }
