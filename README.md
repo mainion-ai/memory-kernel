@@ -263,6 +263,8 @@ Nightly: mk reflect → mk render CLAUDE.md → git push
 Next session: NanoClaw loads CLAUDE.md as context
 ```
 
+**Drift pre-filter:** Set `MEMORY_DIR` in your `.env` and NanoClaw uses `mk wander` as a Tier 1 gate before post-conversation drift. Cheap spreading activation (~30ms, no LLM) decides whether to spawn an expensive drift session — skips drift when no interesting connections are found, injects collision context when they are.
+
 Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, cron, restart).
 
 **[Full integration guide →](docs/nanoclaw-integration.md)**
