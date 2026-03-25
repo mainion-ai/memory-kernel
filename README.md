@@ -86,7 +86,7 @@ Everything the system does is one of these:
 
 **Retain** — Store knowledge. `createAtom()`, `updateAtom()`, `archiveAtom()`. Every action emits an event.
 
-**Recall** — Query knowledge. Filter by type, status, tags, paths. Task-aware FTS5 BM25 re-ranking when a task description is provided. Trim to token budget. Falls back to file scan when no index exists.
+**Recall** — Query knowledge. Filter by type, status, tags, paths. Hybrid re-ranking when a task description is provided: FTS5 BM25 (keyword match) + cosine similarity (semantic match) with configurable weights. Embeddings are opt-in — no API key means FTS-only, zero behavior change. Trim to token budget. Falls back to file scan when no index exists.
 
 **Reflect** — Consolidate. Expire atoms past TTL. Deduplicate identical content. Promote beliefs with confidence >= 0.9 to facts. Detect conflicts between overlapping atoms. Regenerate all views.
 
@@ -127,14 +127,14 @@ my-memory/
 | `mk init [dir]` | Initialize memory directory |
 | `mk status -d <dir>` | Show atom counts, tag stats, index status |
 | `mk remember -d <dir> --type <type> "body"` | Create an atom |
-| `mk recall -d <dir> [--task "text"] [--include-episodes]` | Load context; `--task` enables FTS re-ranking |
+| `mk recall -d <dir> [--task "text"] [--include-episodes]` | Load context; `--task` enables hybrid FTS + semantic re-ranking |
 | `mk reflect -d <dir>` | Consolidate: dedup, expire, promote, detect conflicts |
 | `mk checkpoint -d <dir>` | Generate checkpoint/handoff bundle (stdout) |
 | `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
 | `mk import --from <file> [--dry-run]` | Import markdown as atoms |
 | `mk episode --session-id <id> --summary "text"` | Write session episode |
 | `mk episodes [--limit N]` | List recent episodes |
-| `mk reindex -d <dir>` | Rebuild SQLite index |
+| `mk reindex -d <dir> [--embed]` | Rebuild SQLite index; `--embed` computes embeddings for all atoms |
 | `mk compact -d <dir>` | Compact event log |
 | `mk merge -d <dir> --from <path> [--dry-run]` | Merge remote event log |
 | `mk gc -d <dir>` | Archive expired atoms |
@@ -148,7 +148,7 @@ my-memory/
 ## SDK
 
 ```typescript
-import { initMemoryDir, createAtom, recall, reflect, wander } from 'memory-kernel';
+import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander } from 'memory-kernel';
 
 // Initialize
 initMemoryDir('./memory');
@@ -165,8 +165,11 @@ createAtom({
   scope: { tags: ['api', 'performance'] },
 });
 
-// Recall (with FTS re-ranking)
+// Recall (FTS-only — works without any API key)
 const context = recall('./memory', { task: 'pagination API', max_tokens: 4000 });
+
+// Recall with semantic re-ranking (hybrid FTS + embeddings when EMBEDDING_PROVIDER is set)
+const semanticContext = await recallWithEmbeddings('./memory', { task: 'pagination API', max_tokens: 4000 });
 
 // Reflect (consolidate)
 reflect({ memoryDir: './memory', agent_id: 'my-agent', session_id: 'session-2' });
@@ -220,7 +223,7 @@ MEMORY_DIR=/path/to/memory mk-mcp
 | Tool | Maps to | Description |
 |------|---------|-------------|
 | `mk_remember` | `createAtom()` | Create atom |
-| `mk_recall` | `recall()` | Load context |
+| `mk_recall` | `recallWithEmbeddings()` | Load context (hybrid FTS + semantic when configured) |
 | `mk_reflect` | `reflect()` | Consolidate |
 | `mk_gc` | `reflect()` | Archive expired |
 | `mk_merge` | `mergeEventLogs()` | Merge remote memory |
@@ -284,7 +287,7 @@ Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, c
 3. **Typed knowledge** — A fact carries more weight than a belief. Types encode this.
 4. **Explicit lifecycle** — Created, updated, promoted, archived. Every change logged.
 5. **Token-aware** — Recall respects budgets. Prioritizes by status and recency.
-6. **Model-agnostic** — No embeddings, no vector stores, no model-specific APIs.
+6. **Embeddings are opt-in** — Works fully without any API key (FTS-only). Add `EMBEDDING_PROVIDER` + `EMBEDDING_API_KEY` for hybrid semantic search. Graceful degradation throughout.
 
 ---
 
@@ -296,6 +299,7 @@ Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, c
 | FTS returns null | Run `mk reindex` to build the SQLite index |
 | SECRET atoms skipped | Set `MEMORY_ENCRYPTION_KEY` env var |
 | No atoms after merge | Run `mk reflect` — merge doesn't auto-regenerate views |
+| Embeddings not working | Set `EMBEDDING_PROVIDER=voyage` + `EMBEDDING_API_KEY=...`, then `mk reindex --embed` |
 | Conflict resolution | `mk reflect` → inspect `CONFLICTS/` → update atoms → `resolveConflict()` |
 
 ---

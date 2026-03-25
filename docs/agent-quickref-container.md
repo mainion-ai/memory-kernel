@@ -31,6 +31,9 @@ npx mk remember "The new cache layer reduces p99 by ~40%" \
 # Re-render CLAUDE.md so next session picks up new atoms
 npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 
+# Embed all atoms for semantic search (requires EMBEDDING_PROVIDER + EMBEDDING_API_KEY)
+npx mk reindex -d /workspace/extra/memory --embed
+
 # Check what you know
 npx mk status -d /workspace/extra/memory
 
@@ -52,7 +55,7 @@ npx mk doctor -d /workspace/extra/memory
 | Something is unresolved | `mk remember ... -t open_question` |
 | You wrote a how-to | `mk remember ... -t procedure` |
 | After any `mk remember` | `mk render` (updates CLAUDE.md for next session) |
-| Start of session (optional) | `mk recall -d ... --task "current task"` |
+| Start of session (optional) | `mk recall -d ... --task "current task"` (uses semantic re-ranking if embeddings configured) |
 | Looking for unexpected connections | `mk wander -d ... --tags tag1,tag2` |
 
 ## Session Loop
@@ -115,3 +118,4 @@ node /workspace/extra/memory-kernel-code/dist/cli/mk.js --version
 | `mk render` says "No atoms found" | Check `ls /workspace/extra/memory/ENTITIES/` — should have `.md` files |
 | CLAUDE.md not updating between sessions | Run `mk render` after `mk remember` |
 | `mk doctor` shows issues | Follow its suggestions — usually missing index (`mk reindex`) |
+| Embeddings not working | Ensure `EMBEDDING_PROVIDER` and `EMBEDDING_API_KEY` env vars are set, then `mk reindex --embed` |
