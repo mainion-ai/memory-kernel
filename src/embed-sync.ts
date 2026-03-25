@@ -9,10 +9,10 @@
  * - semanticSearch() — sync, KNN over stored vectors
  */
 
-import crypto from 'crypto';
 import { getEmbeddingConfig, embedText, embedBatch, cosineSimilarity, serializeVector, deserializeVector, atomToEmbeddingText } from './embeddings.js';
 import { storeEmbedding, getAllEmbeddings, isEmbeddingStale, indexExists } from './index-db.js';
 import { listAtoms } from './store.js';
+import { hashEvidence } from './evidence.js';
 import type { Atom } from './types.js';
 
 // --- Async embedding operations ---
@@ -199,7 +199,7 @@ export function semanticSearchSync(
 
 // --- Helpers ---
 
-/** SHA-256 hash of atom body for embedding staleness detection. */
+/** SHA-256 hash of atom body for embedding staleness detection. Reuses hashEvidence. */
 function contentHash(body: string): string {
-  return crypto.createHash('sha256').update(body).digest('hex');
+  return hashEvidence(Buffer.from(body));
 }
