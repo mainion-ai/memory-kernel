@@ -394,6 +394,19 @@ Print a summary of what was set up:
     npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
 
+## Optional: Enable Drift Pre-Filter (Wander)
+
+If NanoClaw has drift enabled (`DRIFT_ENABLED=true`), you can add a cheap pre-filter that skips expensive LLM drift sessions when there's nothing interesting to explore. Add `MEMORY_DIR` to the NanoClaw `.env` file:
+
+```bash
+# In the NanoClaw .env file (NOT the memory directory — this tells NanoClaw where to find it)
+MEMORY_DIR={MEMORY_DIR}
+```
+
+When set, NanoClaw runs `mk wander --json` (~30ms, no LLM) before each drift session. If no cross-domain collisions are found, drift is skipped entirely. If collisions are found, their context is injected into the drift prompt for directed exploration.
+
+See the [drift integration docs](../../../docs/nanoclaw-integration.md#drift-integration-wander-pre-filter) for details.
+
 ## Memory-Kernel Container Usage
 
 Once set up, the agent can use these commands **inside the container** (e.g. after a mid-session `mk remember`):
