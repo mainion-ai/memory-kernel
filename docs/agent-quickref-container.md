@@ -13,6 +13,8 @@
 
 ## Quick Commands
 
+> **Note:** If `npx mk` fails with "could not determine executable," see the [/tmp install workaround](#tmp-install-workaround) below.
+
 ```bash
 # Remember something (creates an atom)
 npx mk remember "The API rate limit is 1000 req/min" \

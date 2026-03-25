@@ -124,6 +124,16 @@ MEMORY_DIR=/home/np/mk-memory   # adjust to your path
 
 When set, NanoClaw runs `mk wander --json` (~30ms) before spawning an expensive drift session. No collisions → drift skipped. Collisions → directed exploration.
 
+**Resolving the mk binary path** (for NanoClaw's `execFileSync` call):
+```bash
+# If mk is globally installed:
+which mk                    # → /home/user/.npm-global/bin/mk
+readlink -f $(which mk)     # → .../memory-kernel/dist/cli/mk.js
+
+# Or find it directly:
+node -e "console.log(require.resolve('memory-kernel/dist/cli/mk.js'))"
+```
+
 ## Nightly Maintenance
 
 If you have cron access, set up nightly reflect + render:
