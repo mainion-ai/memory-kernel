@@ -705,6 +705,7 @@ Resources read view files fresh on every request. If a view hasn't been generate
 | `mk gc -d <dir>`                                                                     | Archive expired atoms                                                            |
 | `mk doctor -d <dir>`                                                                 | Validate schema, check links, report problems                                    |
 | `mk render <memory-dir> <output-path> [--max-tokens N]`                              | Render active atoms to a CLAUDE.md-compatible markdown file (default: 8000 tokens) |
+| `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]`               | Explore memory via spreading activation — find unexpected cross-domain connections |
 
 
 ---
@@ -743,6 +744,69 @@ cat scripts/bench-baseline.json | jq '.recall.p95_ms'
 - `recall()` degrades gracefully when the SQLite index is absent — it falls back to a full file scan (~3–5× slower). Run `mk reindex` to rebuild.
 - At 500 atoms without an index, `reflect()` completes in < 15 seconds (verified by `test/stress.test.ts`).
 - Encrypted SECRET atoms are excluded from default recall (decryption is skipped).
+- `wander()` is pure computation (no LLM calls) — typically completes in < 30ms for 200 atoms.
+
+---
+
+## Wander — Spreading Activation
+
+`mk wander` explores memory associations through spreading activation, inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975). It finds unexpected connections between atoms in different domains by walking the tag co-occurrence graph.
+
+**No LLM calls.** Pure SQLite computation. Tier 1 of a two-tier architecture — cheap, always available, runs in milliseconds.
+
+### How It Works
+
+1. **Seed** — Start from specific atoms, tags, or auto-select the 3 most recent
+2. **Spread** — Activation flows through shared tags to neighboring atoms, modulated by recency (ACT-R base-level activation)
+3. **Inhibit** — Lateral inhibition keeps only the top-K most activated atoms per step
+4. **Detect** — Collision candidates: pairs of activated atoms from different types with shared tags but graph distance > 1
+
+### CLI Usage
+
+```bash
+# Auto-seed from recent atoms
+mk wander -d ./memory
+
+# Seed from specific tags
+mk wander -d ./memory --tags philosophy accounting
+
+# Tune parameters
+mk wander -d ./memory --steps 5 --top-k 20 --threshold 0.01
+
+# Machine-readable output
+mk wander -d ./memory --json
+```
+
+### Programmatic API
+
+```typescript
+import { wander } from 'memory-kernel';
+
+const result = wander({
+  memoryDir: './memory',
+  seedTags: ['philosophy', 'accounting'],
+  steps: 5,
+  topK: 20,
+  threshold: 0.01,
+  maxCollisions: 5,
+});
+
+// result.collisions — atom pairs with unexpected structural overlap
+// result.activated  — all activated atoms with scores
+// result.duration_ms — wall-clock time
+```
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `seeds` | auto (3 most recent) | Atom IDs to start activation from |
+| `seedTags` | — | Tags to resolve into seed atoms |
+| `steps` | 3 | Spreading steps (more = deeper exploration) |
+| `threshold` | 0.05 | Minimum activation to survive (0-1) |
+| `topK` | 20 | Max atoms per step (lateral inhibition) |
+| `decay` | 0.5 | Spread decay factor (0-1) |
+| `maxCollisions` | 5 | Max collision candidates to return |
 
 ---
 
