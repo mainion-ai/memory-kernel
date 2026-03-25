@@ -59,6 +59,10 @@ mk doctor -d ~/mk-memory
 
 # Rebuild index if queries are slow
 mk reindex -d ~/mk-memory
+
+# Rebuild index AND compute embeddings for semantic search
+# (requires EMBEDDING_PROVIDER + EMBEDDING_API_KEY env vars)
+mk reindex -d ~/mk-memory --embed
 ```
 
 ## Session Loop
@@ -163,8 +167,11 @@ createAtom({
   scope: { tags: ['infrastructure', 'deploy'] },
 });
 
-// Recall with task-aware ranking
+// Recall with task-aware ranking (FTS-only)
 const context = recall('/path/to/memory', { task: 'optimize deploys', max_tokens: 4000 });
+
+// Recall with hybrid FTS + semantic ranking (when EMBEDDING_PROVIDER is set)
+const semanticContext = await recallWithEmbeddings('/path/to/memory', { task: 'optimize deploys', max_tokens: 4000 });
 
 // Wander for connections
 const result = wander({
