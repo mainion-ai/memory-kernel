@@ -64,7 +64,8 @@ Env vars must be available in the container shell (not just NanoClaw's `data/env
 export EMBEDDING_PROVIDER=voyage
 export EMBEDDING_API_KEY=pa-...
 
-# Option 2: Ask the user to add to the host's container env config
+# Option 2: Ask the user to add to the host's NanoClaw env config
+# (data/env/env or docker-compose.yml environment section)
 # so the vars are injected automatically on every container start.
 
 # Then embed all existing atoms:
