@@ -19,7 +19,6 @@ import {
   initMemoryDir,
   createAtom,
   reindex,
-  recall,
   indexExists,
   indexStats,
   closeAllIndexes,
@@ -31,7 +30,9 @@ import {
   getAllEmbeddings,
   isEmbeddingStale,
   embeddingStats,
+  removeFromIndex,
 } from '../src/index.js';
+import { recall } from '../src/recall.js';
 import { semanticSearchSync } from '../src/embed-sync.js';
 
 let testDir: string;
@@ -153,6 +154,7 @@ describe('getEmbeddingConfig', () => {
     delete process.env.EMBEDDING_PROVIDER;
     delete process.env.EMBEDDING_API_KEY;
     delete process.env.EMBEDDING_MODEL;
+    delete process.env.EMBEDDING_DIMENSIONS;
   });
 
   it('should return null when provider is none (default)', async () => {
@@ -378,5 +380,30 @@ describe('recall with queryVector', () => {
     const bundle = recall(testDir, { task: 'deploy' });
     // Should still work fine without queryVector — pure FTS ranking
     expect(bundle.atoms.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// --- removeFromIndex should also remove embeddings ---
+
+describe('removeFromIndex cleans up embeddings', () => {
+  it('should delete embedding when atom is removed from index', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'fact', slug: 'cleanup', body: 'Will be removed' });
+    reindex(testDir);
+
+    // Store an embedding
+    storeEmbedding(testDir, atom.frontmatter.id, serializeVector([0.1, 0.2]), 'test', 2, 'h1');
+
+    // Verify it exists
+    let all = getAllEmbeddings(testDir);
+    expect(all).not.toBeNull();
+    expect(all!.length).toBe(1);
+
+    // Remove from index
+    removeFromIndex(testDir, atom.frontmatter.id);
+
+    // Embedding should also be gone
+    all = getAllEmbeddings(testDir);
+    expect(all).toBeNull(); // null because count === 0
   });
 });

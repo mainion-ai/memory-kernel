@@ -15,12 +15,17 @@ import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
+/** @internal Extended query with pre-computed embedding vector — not part of the public API. */
+export interface RecallQueryInternal extends RecallQuery {
+  queryVector?: number[];
+}
+
 /**
  * Recall relevant context for a task.
  */
 export function recall(
   memoryDir: string,
-  query: RecallQuery = {},
+  query: RecallQueryInternal = {},
 ): ContextBundle {
   // Always load core views
   const index = readView(memoryDir, 'INDEX.md');
@@ -65,10 +70,15 @@ export function recall(
     // Build FTS score map
     const ftsScoreMap = new Map<string, number>();
     if (ftsResults && ftsResults.length > 0) {
-      // Normalize FTS ranks to 0-1 range (rank is negative, lower = better)
-      const minRank = Math.min(...ftsResults.map((r) => r.rank));
-      const maxRank = Math.max(...ftsResults.map((r) => r.rank));
-      const range = maxRank - minRank || 1;
+      // Normalize FTS ranks to 0-1 range (rank is negative, lower = better).
+      // Uses reduce instead of Math.min(...) to avoid stack overflow with large arrays.
+      let minRank = Infinity;
+      let maxRank = -Infinity;
+      for (const r of ftsResults) {
+        if (r.rank < minRank) minRank = r.rank;
+        if (r.rank > maxRank) maxRank = r.rank;
+      }
+      const range = maxRank - minRank || 1; // single result → range 1, score 1.0
       for (const r of ftsResults) {
         // Invert and normalize: best match → 1, worst → 0
         ftsScoreMap.set(r.atom_id, 1 - (r.rank - minRank) / range);
@@ -188,7 +198,7 @@ export async function recallWithEmbeddings(
   query: RecallQuery = {},
 ): Promise<ContextBundle> {
   // If a task is provided and embeddings are configured, embed the query
-  if (query.task && query.task.trim().length > 0 && !query.queryVector) {
+  if (query.task && query.task.trim().length > 0) {
     const config = getEmbeddingConfig();
     if (config) {
       try {
@@ -206,7 +216,7 @@ export async function recallWithEmbeddings(
 /**
  * Filter atoms based on query criteria.
  */
-function filterAtoms(atoms: Atom[], query: RecallQuery): Atom[] {
+function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
   return atoms.filter((atom) => {
     const fm = atom.frontmatter;
 

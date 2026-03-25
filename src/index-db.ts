@@ -381,13 +381,16 @@ export function storeEmbedding(
   `).run(atomId, embedding, model, dimensions, bodyHash);
 }
 
+/** Maximum embeddings to load for in-memory KNN. Beyond this, warn and truncate. */
+const MAX_EMBEDDINGS_FOR_KNN = 10_000;
+
 /**
  * Get all embeddings for semantic search.
  * Returns atom_id + raw embedding buffer for KNN.
  *
- * NOTE: Loads all vectors into memory. At 512-dim (2KB/vector), 10K atoms ≈ 20MB.
- * For 1536-dim (OpenAI), 10K atoms ≈ 60MB. Consider sqlite-vss or pagination
- * if atom count exceeds ~50K.
+ * NOTE: Loads vectors into memory. At 512-dim (2KB/vector), 10K atoms ≈ 20MB.
+ * For 1536-dim (OpenAI), 10K atoms ≈ 60MB. Capped at MAX_EMBEDDINGS_FOR_KNN
+ * to prevent memory issues. Consider sqlite-vss for larger stores.
  */
 export function getAllEmbeddings(memoryDir: string): { atom_id: string; embedding: Buffer }[] | null {
   if (!indexExists(memoryDir)) return null;
@@ -397,7 +400,17 @@ export function getAllEmbeddings(memoryDir: string): { atom_id: string; embeddin
     const count = (db.prepare('SELECT COUNT(*) as c FROM atom_embeddings').get() as { c: number }).c;
     if (count === 0) return null;
 
-    return db.prepare('SELECT atom_id, embedding FROM atom_embeddings').all() as {
+    if (count > MAX_EMBEDDINGS_FOR_KNN) {
+      console.warn(
+        `⚠ ${count} embeddings exceed KNN limit (${MAX_EMBEDDINGS_FOR_KNN}). ` +
+        `Only the first ${MAX_EMBEDDINGS_FOR_KNN} will be used for semantic search. ` +
+        `Consider sqlite-vss for larger stores.`,
+      );
+    }
+
+    return db.prepare(
+      `SELECT atom_id, embedding FROM atom_embeddings LIMIT ${MAX_EMBEDDINGS_FOR_KNN}`,
+    ).all() as {
       atom_id: string;
       embedding: Buffer;
     }[];

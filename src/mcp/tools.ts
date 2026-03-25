@@ -9,7 +9,7 @@ import fs from 'fs';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   createAtom,
-  recall,
+  recallWithEmbeddings,
   reflect,
   mergeEventLogs,
   listAtoms,
@@ -171,7 +171,7 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const bundle = recall(ctx.memoryDir, {
+    const bundle = await recallWithEmbeddings(ctx.memoryDir, {
       task: input.task,
       paths: input.paths,
       types: input.types,

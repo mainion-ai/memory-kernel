@@ -122,7 +122,6 @@ export interface MemoryEvent {
 
 export interface RecallQuery {
   task?: string; // Natural language task — used for FTS-based re-ranking
-  queryVector?: number[]; // Pre-computed embedding vector for semantic re-ranking
   paths?: string[]; // Scope paths to match
   types?: AtomType[]; // Filter by atom type
   statuses?: AtomStatus[]; // Filter by status

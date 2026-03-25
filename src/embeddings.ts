@@ -15,8 +15,7 @@
  * Dimensions: voyage-3-lite=512, text-embedding-3-small=1536.
  */
 
-import https from 'https';
-import http from 'http';
+// Uses native fetch (Node 18+)
 
 // --- Types ---
 
@@ -70,14 +69,14 @@ export function getEmbeddingConfig(): EmbeddingConfig | null {
     return null;
   }
 
+  // EMBEDDING_DIMENSIONS override only supported for OpenAI (text-embedding-3-* models)
   const dimensionsOverride = parseInt(process.env.EMBEDDING_DIMENSIONS || '', 10);
+  const useOverride = provider === 'openai' && Number.isFinite(dimensionsOverride) && dimensionsOverride > 0;
   return {
     provider,
     apiKey,
     model: process.env.EMBEDDING_MODEL || defaults.model,
-    dimensions: Number.isFinite(dimensionsOverride) && dimensionsOverride > 0
-      ? dimensionsOverride
-      : defaults.dimensions,
+    dimensions: useOverride ? dimensionsOverride : defaults.dimensions,
   };
 }
 
@@ -103,10 +102,7 @@ export async function embedBatch(texts: string[], config: EmbeddingConfig): Prom
   const defaults = PROVIDER_DEFAULTS[config.provider];
 
   const body = buildRequestBody(texts, config);
-  const response = await httpPost(defaults.endpoint, body, {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${config.apiKey}`,
-  });
+  const response = await embeddingFetch(defaults.endpoint, body, config.apiKey);
 
   return parseResponse(response, config, texts.length);
 }
@@ -134,11 +130,15 @@ function buildRequestBody(texts: string[], config: EmbeddingConfig): string {
     });
   }
 
-  // OpenAI format
-  return JSON.stringify({
+  // OpenAI format — supports dimensions parameter for text-embedding-3-* models
+  const body: Record<string, unknown> = {
     input: texts,
     model: config.model,
-  });
+  };
+  if (config.dimensions !== PROVIDER_DEFAULTS.openai.dimensions) {
+    body.dimensions = config.dimensions;
+  }
+  return JSON.stringify(body);
 }
 
 function parseResponse(raw: string, config: EmbeddingConfig, inputCount: number): EmbedResult[] {
@@ -160,49 +160,46 @@ function parseResponse(raw: string, config: EmbeddingConfig, inputCount: number)
   }));
 }
 
-// --- HTTP helper ---
+// --- HTTP helper (native fetch) ---
 
 const HTTP_TIMEOUT_MS = 30_000; // 30s timeout for embedding API calls
 
-function httpPost(url: string, body: string, headers: Record<string, string>): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
-    const lib = parsedUrl.protocol === 'https:' ? https : http;
+async function embeddingFetch(url: string, body: string, apiKey: string): Promise<string> {
+  // Enforce HTTPS for production API endpoints (prevents sending API key over plaintext)
+  const parsedUrl = new URL(url);
+  if (parsedUrl.protocol !== 'https:' && !parsedUrl.hostname.match(/^(localhost|127\.)/)) {
+    throw new Error(`Embedding API requires HTTPS: ${url}`);
+  }
 
-    const req = lib.request(
-      {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
-        path: parsedUrl.pathname,
-        method: 'POST',
-        headers: {
-          ...headers,
-          'Content-Length': Buffer.byteLength(body),
-        },
-        timeout: HTTP_TIMEOUT_MS,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => {
-          const responseBody = Buffer.concat(chunks).toString('utf-8');
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(responseBody);
-          } else {
-            reject(new Error(`Embedding API error ${res.statusCode}: ${responseBody.slice(0, 500)}`));
-          }
-        });
-      },
-    );
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
 
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error(`Embedding API timeout after ${HTTP_TIMEOUT_MS}ms: ${url}`));
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body,
+      signal: controller.signal,
     });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+
+    const responseBody = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`Embedding API error ${response.status}: ${responseBody.slice(0, 500)}`);
+    }
+
+    return responseBody;
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(`Embedding API timeout after ${HTTP_TIMEOUT_MS}ms: ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // --- Vector math (for KNN in SQLite) ---
