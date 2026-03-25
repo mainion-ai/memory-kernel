@@ -2,7 +2,7 @@
  * Embedding provider abstraction for semantic search.
  *
  * Supports multiple providers:
- * - voyage: Voyage AI voyage-4-nano (free, default)
+ * - voyage: Voyage AI voyage-3-lite (free, default)
  * - openai: OpenAI text-embedding-3-small ($0.02/MTok)
  * - none: Disabled (tag-based recall only)
  *
@@ -12,7 +12,7 @@
  *   EMBEDDING_MODEL=...                    (optional override)
  *
  * Vectors are stored in the SQLite index alongside other atom metadata.
- * Dimensions: voyage-4-nano=512, text-embedding-3-small=1536.
+ * Dimensions: voyage-3-lite=512, text-embedding-3-small=1536.
  */
 
 import https from 'https';
@@ -70,11 +70,14 @@ export function getEmbeddingConfig(): EmbeddingConfig | null {
     return null;
   }
 
+  const dimensionsOverride = parseInt(process.env.EMBEDDING_DIMENSIONS || '', 10);
   return {
     provider,
     apiKey,
     model: process.env.EMBEDDING_MODEL || defaults.model,
-    dimensions: defaults.dimensions,
+    dimensions: Number.isFinite(dimensionsOverride) && dimensionsOverride > 0
+      ? dimensionsOverride
+      : defaults.dimensions,
   };
 }
 
@@ -159,6 +162,8 @@ function parseResponse(raw: string, config: EmbeddingConfig, inputCount: number)
 
 // --- HTTP helper ---
 
+const HTTP_TIMEOUT_MS = 30_000; // 30s timeout for embedding API calls
+
 function httpPost(url: string, body: string, headers: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const parsedUrl = new URL(url);
@@ -174,6 +179,7 @@ function httpPost(url: string, body: string, headers: Record<string, string>): P
           ...headers,
           'Content-Length': Buffer.byteLength(body),
         },
+        timeout: HTTP_TIMEOUT_MS,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -189,6 +195,10 @@ function httpPost(url: string, body: string, headers: Record<string, string>): P
       },
     );
 
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error(`Embedding API timeout after ${HTTP_TIMEOUT_MS}ms: ${url}`));
+    });
     req.on('error', reject);
     req.write(body);
     req.end();
