@@ -7,6 +7,24 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [Unreleased]
+
+### Added
+
+- **`mk wander` — spreading activation for associative memory exploration** (`src/wander.ts`, `src/cli/mk.ts`) — Tier 1 (no LLM) graph walk through the tag co-occurrence network. ACT-R-inspired base-level activation with recency weighting, lateral inhibition, and collision detection between atoms from different domains with unexpected structural overlap. Pure computation — runs in <30ms for 200 atoms.
+  - `wander(options)` — index-backed (SQLite). Requires `mk reindex`. Reuses module-level connection cache.
+  - `wanderFromFiles(options)` — file-scan fallback. No SQLite needed. Slower but works anywhere.
+  - `mk wander` CLI with `--seed`, `--tags`, `--steps`, `--threshold`, `--top-k`, `--decay`, `--max-collisions`, `--json` flags. Auto-falls back to file scan when no index exists.
+  - Exports: `wander`, `wanderFromFiles`, `WanderOptions`, `WanderResult`, `Collision`, `ActivatedAtom`.
+- **README rewrite** — reduced from ~17k tokens to ~2.5k tokens. Dual-audience (human + agent). Added Wander section with parameter table.
+
+### Tests
+
+- 32 new tests: 25 unit tests (seeding, spreading, lateral inhibition, threshold pruning, decay, collision detection, conflict exclusion, edge cases), 5 stress tests (100-200 atoms, dense graphs, topK bounds), 2 conflict atom exclusion tests.
+- Total: 603 tests passing across 27 files.
+
+---
+
 ## [1.1.2] — 2026-03-18
 
 ### Fixed
