@@ -44,11 +44,53 @@ npx mk wander -d /workspace/extra/memory --tags api,performance --json
 npx mk doctor -d /workspace/extra/memory
 ```
 
+## Semantic Search (Optional)
+
+Embeddings add intent-aware recall on top of keyword matching. **Fully optional** — everything works without it.
+
+### Provider options
+
+```bash
+EMBEDDING_PROVIDER=voyage    # voyage-3-lite, 512-dim, free tier
+EMBEDDING_PROVIDER=openai    # text-embedding-3-small, 1536-dim, $0.02/MTok
+```
+
+### Setup in NanoClaw containers
+
+Env vars must be available in the container shell (not just NanoClaw's `data/env/env`). Export them before calling `mk`:
+
+```bash
+# Option 1: Export in your session (temporary — lost on container restart)
+export EMBEDDING_PROVIDER=voyage
+export EMBEDDING_API_KEY=pa-...
+
+# Option 2: Ask the user to add to the host's container env config
+# so the vars are injected automatically on every container start.
+
+# Then embed all existing atoms:
+npx mk reindex -d /workspace/extra/memory --embed
+
+# Verify:
+npx mk status -d /workspace/extra/memory
+# Should show: Embeddings: ✓ (N vectors, model: voyage-3-lite)
+```
+
+Once configured, `mk remember` **auto-embeds new atoms** — no extra step needed. If embedding fails (network, rate limit), it prints a warning and the atom is still created.
+
+### Upgrading from v1.1.x
+
+The first `mk reindex` after upgrading silently migrates the index schema (v3 → v4). This is safe — the index is a derived cache rebuilt from files. To add embeddings after upgrade:
+
+```bash
+npx mk reindex -d /workspace/extra/memory           # rebuild index (schema v4)
+npx mk reindex -d /workspace/extra/memory --embed    # optional: add semantic search
+```
+
 ## When to Use Each Command
 
 | Situation | Command |
 |-----------|---------|
-| You learned something new | `mk remember ... -t fact` |
+| You learned something new | `mk remember ... -t fact` (auto-embeds if configured) |
 | You or the user made a choice | `mk remember ... -t decision` |
 | You have a hypothesis | `mk remember ... -t belief` |
 | User told you a preference | `mk remember ... -t preference` |
@@ -86,6 +128,7 @@ cd /tmp && npm install memory-kernel
 # Then use the full path for all commands:
 /tmp/node_modules/.bin/mk remember "text" -d /workspace/extra/memory -t fact
 /tmp/node_modules/.bin/mk render /workspace/extra/memory /workspace/group/CLAUDE.md
+/tmp/node_modules/.bin/mk reindex -d /workspace/extra/memory --embed
 ```
 
 **Important:** The install must be done from `/tmp` (`cd /tmp && npm install`) so the binary lands at `/tmp/node_modules/.bin/mk`.
@@ -118,4 +161,6 @@ node /workspace/extra/memory-kernel-code/dist/cli/mk.js --version
 | `mk render` says "No atoms found" | Check `ls /workspace/extra/memory/ENTITIES/` — should have `.md` files |
 | CLAUDE.md not updating between sessions | Run `mk render` after `mk remember` |
 | `mk doctor` shows issues | Follow its suggestions — usually missing index (`mk reindex`) |
-| Embeddings not working | Ensure `EMBEDDING_PROVIDER` and `EMBEDDING_API_KEY` env vars are set, then `mk reindex --embed` |
+| Embeddings not working | `export EMBEDDING_PROVIDER=voyage EMBEDDING_API_KEY=pa-...` then `mk reindex --embed`. Vars must be in shell env, not just NanoClaw's env file |
+| `mk remember` says "⚠ Embedding failed" | Env vars not reaching the container shell. See [Semantic Search](#semantic-search-optional) setup |
+| `mk status` shows "Embeddings: ✗" | Run `mk reindex --embed` with env vars exported |
