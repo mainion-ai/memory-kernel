@@ -407,6 +407,14 @@ When set, NanoClaw runs `mk wander --json` (~30ms, no LLM) before each drift ses
 
 See the [drift integration docs](../../../docs/nanoclaw-integration.md#drift-integration-wander-pre-filter) for details.
 
+## Agent Documentation
+
+After setup, point the agent to these references:
+- [Session loop](../../../docs/agent-session-loop.md) — when to remember, recall, wander, render
+- [Container quickref](../../../docs/agent-quickref-container.md) — container paths, commands, /tmp workaround
+- [Native quickref](../../../docs/agent-quickref-native.md) — host-side workflow
+- `/mk-doctor` — self-diagnostic skill to verify setup
+
 ## Memory-Kernel Container Usage
 
 Once set up, the agent can use these commands **inside the container** (e.g. after a mid-session `mk remember`):
