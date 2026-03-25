@@ -16,12 +16,18 @@
  * - Floop (nvandessel): Hebbian-strengthened behavior graphs
  */
 
-import type Database from 'better-sqlite3';
 import { openIndex, indexExists } from './index-db.js';
 import { listAtoms } from './store.js';
-import type { Atom } from './types.js';
 
 // --- Types ---
+
+/** Graph node: one atom with its tags, type, and precomputed base activation. */
+interface GraphNode {
+  tags: string[];
+  type: string;
+  updated_at: string;
+  base_activation: number;
+}
 
 export interface WanderOptions {
   /** Memory directory */
@@ -63,7 +69,7 @@ export interface Collision {
   type_a: string;
   /** Type of atom B */
   type_b: string;
-  /** Minimum hops between the two atoms in the tag graph */
+  /** Minimum hops between the two atoms in the tag graph (capped at maxDepth+1 if unreachable) */
   distance: number;
 }
 
@@ -97,18 +103,16 @@ function baseLevelActivation(updatedAt: string, now: number): number {
   return Math.log(1 / ageDays);
 }
 
-// --- Core engine ---
+// --- Graph construction ---
 
 /**
  * Build the tag co-occurrence graph from the SQLite index.
- * Returns a map: atom_id -> { tags, type, updated_at, base_activation }
+ * Only includes active, non-SECRET/PERSONAL atoms. Tags are joined
+ * to the filtered atom set to avoid scanning archived/expired tags.
  */
-function loadAtomGraph(db: Database.Database, now: number): Map<string, {
-  tags: string[];
-  type: string;
-  updated_at: string;
-  base_activation: number;
-}> {
+function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
+  const db = openIndex(memoryDir);
+
   const atoms = db.prepare(`
     SELECT a.atom_id, a.type, a.updated_at
     FROM atoms a
@@ -116,8 +120,13 @@ function loadAtomGraph(db: Database.Database, now: number): Map<string, {
       AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
   `).all() as { atom_id: string; type: string; updated_at: string }[];
 
+  // Join tags to filtered atoms only (#4: avoid full-table scan of atom_tags)
   const tagRows = db.prepare(`
-    SELECT atom_id, tag FROM atom_tags
+    SELECT t.atom_id, t.tag
+    FROM atom_tags t
+    INNER JOIN atoms a ON t.atom_id = a.atom_id
+    WHERE a.status NOT IN ('archived', 'expired')
+      AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
   `).all() as { atom_id: string; tag: string }[];
 
   // Build tag lookup
@@ -131,13 +140,7 @@ function loadAtomGraph(db: Database.Database, now: number): Map<string, {
     }
   }
 
-  const graph = new Map<string, {
-    tags: string[];
-    type: string;
-    updated_at: string;
-    base_activation: number;
-  }>();
-
+  const graph = new Map<string, GraphNode>();
   for (const atom of atoms) {
     graph.set(atom.atom_id, {
       tags: tagsByAtom.get(atom.atom_id) ?? [],
@@ -153,7 +156,7 @@ function loadAtomGraph(db: Database.Database, now: number): Map<string, {
 /**
  * Build a reverse index: tag -> set of atom_ids
  */
-function buildTagIndex(graph: Map<string, { tags: string[] }>): Map<string, Set<string>> {
+function buildTagIndex(graph: Map<string, GraphNode>): Map<string, Set<string>> {
   const tagIndex = new Map<string, Set<string>>();
   for (const [atomId, data] of graph) {
     for (const tag of data.tags) {
@@ -191,7 +194,7 @@ function resolveTagSeeds(
  * Select top N seeds by recency when no explicit seeds provided.
  */
 function autoSeeds(
-  graph: Map<string, { base_activation: number }>,
+  graph: Map<string, GraphNode>,
   n: number,
 ): string[] {
   return [...graph.entries()]
@@ -205,12 +208,13 @@ function autoSeeds(
  * Distance 0 = same atom. Distance 1 = share a tag directly.
  * Distance 2 = connected through one intermediate atom, etc.
  *
- * Uses BFS through the tag co-occurrence graph. Returns Infinity if unreachable.
+ * Uses BFS through the tag co-occurrence graph.
+ * Returns maxDepth + 1 if unreachable (JSON-safe, avoids Infinity → null).
  */
 function tagDistance(
   atomA: string,
   atomB: string,
-  graph: Map<string, { tags: string[] }>,
+  graph: Map<string, GraphNode>,
   tagIndex: Map<string, Set<string>>,
   maxDepth: number = 4,
 ): number {
@@ -245,24 +249,33 @@ function tagDistance(
     frontier = nextFrontier;
   }
 
-  return Infinity;
+  // Unreachable within maxDepth — return sentinel (JSON-safe)
+  return maxDepth + 1;
 }
 
+// --- Core algorithm ---
+
 /**
- * Spreading activation — the core algorithm.
+ * Run spreading activation on a pre-built graph.
  *
- * 1. Initialize activation for seed atoms
+ * Shared by both index-backed (wander) and file-backed (wanderFromFiles) paths.
+ *
+ * Algorithm:
+ * 1. Initialize activation for seed atoms (1.0 each)
  * 2. For each step:
- *    a. For each active atom, spread activation through shared tags
- *    b. Modulate by base-level activation (recency)
- *    c. Apply lateral inhibition (keep top-K)
+ *    a. Self-decay existing activation
+ *    b. Spread activation through shared tags, modulated by base-level (recency)
+ *    c. Lateral inhibition: keep top-K atoms
  *    d. Prune below threshold
- * 3. Detect collisions — activated atom pairs from different types
- *    with high combined activation but large tag-graph distance
+ * 3. Detect collisions: activated atom pairs from different types
+ *    with shared tags, scored by activation_product * distance
  */
-export function wander(options: WanderOptions): WanderResult {
+function wanderWithGraph(
+  graph: Map<string, GraphNode>,
+  options: WanderOptions,
+  startTime: number,
+): WanderResult {
   const {
-    memoryDir,
     seeds: seedIds,
     seedTags,
     steps = 3,
@@ -272,40 +285,21 @@ export function wander(options: WanderOptions): WanderResult {
     maxCollisions = 5,
   } = options;
 
-  const start = Date.now();
-
-  // Require index
-  if (!indexExists(memoryDir)) {
-    return {
-      collisions: [],
-      activated: [],
-      steps_taken: 0,
-      duration_ms: Date.now() - start,
-      seeds_used: [],
-    };
-  }
-
-  const db = openIndex(memoryDir);
-  const now = Date.now();
-  const graph = loadAtomGraph(db, now);
   const tagIndex = buildTagIndex(graph);
 
   // Resolve seeds
   let seeds: string[] = [];
 
   if (seedIds && seedIds.length > 0) {
-    // Use provided atom IDs (filter to existing)
     seeds = seedIds.filter((id) => graph.has(id));
   }
 
   if (seedTags && seedTags.length > 0) {
-    // Add atoms matching seed tags
     const tagSeeds = resolveTagSeeds(seedTags, tagIndex);
     seeds = [...new Set([...seeds, ...tagSeeds])];
   }
 
   if (seeds.length === 0) {
-    // Auto-seed from most recent atoms
     seeds = autoSeeds(graph, 3);
   }
 
@@ -314,12 +308,12 @@ export function wander(options: WanderOptions): WanderResult {
       collisions: [],
       activated: [],
       steps_taken: 0,
-      duration_ms: Date.now() - start,
+      duration_ms: Date.now() - startTime,
       seeds_used: [],
     };
   }
 
-  // Initialize activation map
+  // Initialize activation
   const activation = new Map<string, number>();
   for (const seed of seeds) {
     activation.set(seed, 1.0);
@@ -331,9 +325,9 @@ export function wander(options: WanderOptions): WanderResult {
     stepsTaken++;
     const newActivation = new Map<string, number>();
 
-    // Copy existing activation (with decay)
+    // Self-decay existing activation
     for (const [atomId, act] of activation) {
-      newActivation.set(atomId, act * (1 - decay * 0.5)); // Slight self-decay
+      newActivation.set(atomId, act * (1 - decay * 0.5));
     }
 
     // Spread through tags
@@ -348,7 +342,6 @@ export function wander(options: WanderOptions): WanderResult {
         if (!neighbors) continue;
 
         const neighborCount = neighbors.size;
-        // Divide spread among all neighbors of this tag
         const spreadPerNeighbor = spreadPerTag / neighborCount;
 
         for (const neighborId of neighbors) {
@@ -358,7 +351,7 @@ export function wander(options: WanderOptions): WanderResult {
           if (!neighborData) continue;
 
           // Modulate by base-level activation (recency boost)
-          // Normalize base_activation to 0-1 range with sigmoid
+          // Normalize to 0-1 range with sigmoid
           const baseBoost = 1 / (1 + Math.exp(-neighborData.base_activation));
           const incoming = spreadPerNeighbor * baseBoost;
 
@@ -426,227 +419,6 @@ export function wander(options: WanderOptions): WanderResult {
       const dist = tagDistance(idA, idB, graph, tagIndex);
 
       // Score: activation product * distance bonus
-      // Higher distance = more surprising collision
-      const actA = activation.get(idA) ?? 0;
-      const actB = activation.get(idB) ?? 0;
-      const distanceBonus = Math.max(dist, 1);
-      const score = actA * actB * distanceBonus;
-
-      collisions.push({
-        atom_a: idA,
-        atom_b: idB,
-        shared_tags: sharedTags,
-        score: Math.round(score * 1000) / 1000,
-        type_a: dataA.type,
-        type_b: dataB.type,
-        distance: dist,
-      });
-    }
-  }
-
-  // Sort by score descending, take top N
-  collisions.sort((a, b) => b.score - a.score);
-  const topCollisions = collisions.slice(0, maxCollisions);
-
-  return {
-    collisions: topCollisions,
-    activated,
-    steps_taken: stepsTaken,
-    duration_ms: Date.now() - start,
-    seeds_used: seeds,
-  };
-}
-
-/**
- * Convenience: wander from file-scan when no index exists.
- * Builds a temporary in-memory graph from atom files.
- * Slower but works without pre-built index.
- */
-export function wanderFromFiles(options: WanderOptions): WanderResult {
-  const { memoryDir } = options;
-  const start = Date.now();
-
-  const atoms = listAtoms(memoryDir);
-  if (atoms.length === 0) {
-    return {
-      collisions: [],
-      activated: [],
-      steps_taken: 0,
-      duration_ms: Date.now() - start,
-      seeds_used: [],
-    };
-  }
-
-  // Build in-memory graph from atoms
-  const now = Date.now();
-  const graph = new Map<string, {
-    tags: string[];
-    type: string;
-    updated_at: string;
-    base_activation: number;
-  }>();
-
-  for (const atom of atoms) {
-    const fm = atom.frontmatter;
-    if (fm.status === 'archived' || fm.status === 'expired') continue;
-    if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
-
-    graph.set(fm.id, {
-      tags: fm.scope?.tags ?? [],
-      type: fm.type,
-      updated_at: fm.updated_at,
-      base_activation: baseLevelActivation(fm.updated_at, now),
-    });
-  }
-
-  // Delegate to the shared spreading logic
-  return wanderWithGraph(graph, options, start);
-}
-
-/**
- * Internal: Run spreading activation on a pre-built graph.
- * Shared by both index-backed and file-backed paths.
- */
-function wanderWithGraph(
-  graph: Map<string, {
-    tags: string[];
-    type: string;
-    updated_at: string;
-    base_activation: number;
-  }>,
-  options: WanderOptions,
-  startTime: number,
-): WanderResult {
-  const {
-    seeds: seedIds,
-    seedTags,
-    steps = 3,
-    threshold = 0.05,
-    topK = 20,
-    decay = 0.5,
-    maxCollisions = 5,
-  } = options;
-
-  const tagIndex = buildTagIndex(graph);
-
-  // Resolve seeds
-  let seeds: string[] = [];
-
-  if (seedIds && seedIds.length > 0) {
-    seeds = seedIds.filter((id) => graph.has(id));
-  }
-
-  if (seedTags && seedTags.length > 0) {
-    const tagSeeds = resolveTagSeeds(seedTags, tagIndex);
-    seeds = [...new Set([...seeds, ...tagSeeds])];
-  }
-
-  if (seeds.length === 0) {
-    seeds = autoSeeds(graph, 3);
-  }
-
-  if (seeds.length === 0) {
-    return {
-      collisions: [],
-      activated: [],
-      steps_taken: 0,
-      duration_ms: Date.now() - startTime,
-      seeds_used: [],
-    };
-  }
-
-  // Initialize activation
-  const activation = new Map<string, number>();
-  for (const seed of seeds) {
-    activation.set(seed, 1.0);
-  }
-
-  // Spreading steps
-  let stepsTaken = 0;
-  for (let step = 0; step < steps; step++) {
-    stepsTaken++;
-    const newActivation = new Map<string, number>();
-
-    for (const [atomId, act] of activation) {
-      newActivation.set(atomId, act * (1 - decay * 0.5));
-    }
-
-    for (const [atomId, act] of activation) {
-      const atomData = graph.get(atomId);
-      if (!atomData || atomData.tags.length === 0) continue;
-
-      const spreadPerTag = (act * decay) / atomData.tags.length;
-
-      for (const tag of atomData.tags) {
-        const neighbors = tagIndex.get(tag);
-        if (!neighbors) continue;
-
-        const neighborCount = neighbors.size;
-        const spreadPerNeighbor = spreadPerTag / neighborCount;
-
-        for (const neighborId of neighbors) {
-          if (neighborId === atomId) continue;
-
-          const neighborData = graph.get(neighborId);
-          if (!neighborData) continue;
-
-          const baseBoost = 1 / (1 + Math.exp(-neighborData.base_activation));
-          const incoming = spreadPerNeighbor * baseBoost;
-
-          newActivation.set(
-            neighborId,
-            (newActivation.get(neighborId) ?? 0) + incoming,
-          );
-        }
-      }
-    }
-
-    const sorted = [...newActivation.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, topK);
-
-    activation.clear();
-    for (const [atomId, act] of sorted) {
-      if (act >= threshold) {
-        activation.set(atomId, act);
-      }
-    }
-
-    if (activation.size === 0) break;
-  }
-
-  // Build result
-  const activated: ActivatedAtom[] = [...activation.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([atomId, act]) => {
-      const data = graph.get(atomId)!;
-      return {
-        atom_id: atomId,
-        activation: Math.round(act * 1000) / 1000,
-        type: data.type,
-        tags: data.tags,
-        updated_at: data.updated_at,
-      };
-    });
-
-  // Detect collisions
-  const collisions: Collision[] = [];
-  const activatedIds = activated.map((a) => a.atom_id);
-
-  for (let i = 0; i < activatedIds.length; i++) {
-    for (let j = i + 1; j < activatedIds.length; j++) {
-      const idA = activatedIds[i];
-      const idB = activatedIds[j];
-      const dataA = graph.get(idA)!;
-      const dataB = graph.get(idB)!;
-
-      if (dataA.type === dataB.type) continue;
-
-      const tagsA = new Set(dataA.tags);
-      const sharedTags = dataB.tags.filter((t) => tagsA.has(t));
-      if (sharedTags.length === 0) continue;
-
-      const dist = tagDistance(idA, idB, graph, tagIndex);
       const actA = activation.get(idA) ?? 0;
       const actB = activation.get(idB) ?? 0;
       const distanceBonus = Math.max(dist, 1);
@@ -673,4 +445,95 @@ function wanderWithGraph(
     duration_ms: Date.now() - startTime,
     seeds_used: seeds,
   };
+}
+
+// --- Public API ---
+
+/**
+ * Explore memory associations via spreading activation through the tag
+ * co-occurrence graph. Returns collision candidates — atom pairs from
+ * different domains with unexpected structural overlap.
+ *
+ * Requires a SQLite index (run `mk reindex` first). Returns empty result
+ * if no index exists. For index-free operation, use {@link wanderFromFiles}.
+ *
+ * **Connection lifecycle:** This function uses the module-level SQLite
+ * connection cache (via `openIndex`). The connection is reused across calls
+ * and is NOT closed automatically. For long-running processes (MCP servers,
+ * daemons), call `closeIndex(memoryDir)` or `closeAllIndexes()` when done
+ * to release the database handle.
+ *
+ * @example
+ * ```typescript
+ * import { wander, closeIndex } from 'memory-kernel';
+ *
+ * const result = wander({
+ *   memoryDir: './memory',
+ *   seedTags: ['philosophy', 'accounting'],
+ *   steps: 5,
+ * });
+ *
+ * // In long-running processes, clean up when done:
+ * closeIndex('./memory');
+ * ```
+ */
+export function wander(options: WanderOptions): WanderResult {
+  const { memoryDir } = options;
+  const start = Date.now();
+
+  if (!indexExists(memoryDir)) {
+    return {
+      collisions: [],
+      activated: [],
+      steps_taken: 0,
+      duration_ms: Date.now() - start,
+      seeds_used: [],
+    };
+  }
+
+  const now = Date.now();
+  const graph = loadAtomGraph(memoryDir, now);
+
+  return wanderWithGraph(graph, options, start);
+}
+
+/**
+ * Convenience: wander from file-scan when no index exists.
+ * Builds a temporary in-memory graph from atom files.
+ * Slower but works without pre-built index.
+ *
+ * No SQLite connection is opened — safe for any environment.
+ */
+export function wanderFromFiles(options: WanderOptions): WanderResult {
+  const { memoryDir } = options;
+  const start = Date.now();
+
+  const atoms = listAtoms(memoryDir);
+  if (atoms.length === 0) {
+    return {
+      collisions: [],
+      activated: [],
+      steps_taken: 0,
+      duration_ms: Date.now() - start,
+      seeds_used: [],
+    };
+  }
+
+  const now = Date.now();
+  const graph = new Map<string, GraphNode>();
+
+  for (const atom of atoms) {
+    const fm = atom.frontmatter;
+    if (fm.status === 'archived' || fm.status === 'expired') continue;
+    if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
+
+    graph.set(fm.id, {
+      tags: fm.scope?.tags ?? [],
+      type: fm.type,
+      updated_at: fm.updated_at,
+      base_activation: baseLevelActivation(fm.updated_at, now),
+    });
+  }
+
+  return wanderWithGraph(graph, options, start);
 }
