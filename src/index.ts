@@ -84,6 +84,10 @@ export {
   queryIndex,
   indexStats,
   searchFts,
+  storeEmbedding,
+  getAllEmbeddings,
+  isEmbeddingStale,
+  embeddingStats,
 } from './index-db.js';
 export type { IndexQueryResult } from './index-db.js';
 
@@ -124,7 +128,7 @@ export type {
   ResolveConflictOptions,
   ResolveConflictResult,
 } from './retain.js';
-export { recall } from './recall.js';
+export { recall, recallWithEmbeddings } from './recall.js';
 export { reflect } from './reflect.js';
 
 // Merge
@@ -156,3 +160,18 @@ export type { RenderClaudeMdOptions } from './render.js';
 // Wander (spreading activation)
 export { wander, wanderFromFiles } from './wander.js';
 export type { WanderOptions, WanderResult, Collision, ActivatedAtom } from './wander.js';
+
+// Embeddings
+export {
+  getEmbeddingConfig,
+  embedText,
+  embedBatch,
+  cosineSimilarity,
+  serializeVector,
+  deserializeVector,
+  atomToEmbeddingText,
+} from './embeddings.js';
+export type { EmbeddingProvider, EmbeddingConfig, EmbedResult } from './embeddings.js';
+
+// Embed sync (async embedding operations)
+export { embedAtom, embedAllAtoms, semanticSearch, semanticSearchSync } from './embed-sync.js';

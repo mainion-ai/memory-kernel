@@ -9,6 +9,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Semantic search with embedding support** (`src/embeddings.ts`, `src/embed-sync.ts`) — opt-in vector-based search using Voyage AI or OpenAI embedding APIs. Graceful degradation: no API key = FTS-only, no behavior change.
+  - **Two providers:** Voyage AI `voyage-3-lite` (free, 512-dim) and OpenAI `text-embedding-3-small` ($0.02/MTok, 1536-dim). Provider abstraction makes adding new backends trivial.
+  - **Hybrid recall re-ranking:** When embeddings are available, `recall()` combines FTS BM25 scores with cosine similarity using configurable weights (default: FTS 0.4, semantic 0.6). Configurable via `SEMANTIC_WEIGHT` env var.
+  - **Minimum similarity threshold:** Default 0.3 — filters noise from semantic results when no atoms genuinely match. Configurable via `MIN_SIMILARITY` env var.
+  - **SQLite storage:** Vectors stored as Float32Array BLOBs in `atom_embeddings` table (schema v4). FK cascade on atom deletion. Body hash (SHA-256) for staleness detection — atoms are only re-embedded when content changes.
+  - **KNN search:** In-memory cosine similarity over stored vectors. Capped at 10K embeddings with warning; `ORDER BY rowid DESC` for recency bias at scale.
+  - **CLI integration:** `mk remember` auto-embeds new atoms (warns on failure when provider configured). `mk reindex --embed` batch-embeds all atoms. `mk status` shows embedding count and model.
+  - **MCP integration:** `mk_recall` tool now uses `recallWithEmbeddings()` for automatic semantic re-ranking.
+  - **`recallWithEmbeddings()`** — async wrapper that embeds the task query and passes the vector to `recall()` for hybrid ranking. Falls back to FTS-only on any error.
+  - Exports: `embedText`, `embedBatch`, `getEmbeddingConfig`, `cosineSimilarity`, `serializeVector`, `deserializeVector`, `atomToEmbeddingText`, `embedAtom`, `embedAllAtoms`, `semanticSearch`, `semanticSearchSync`, `recallWithEmbeddings`, `storeEmbedding`, `getAllEmbeddings`, `isEmbeddingStale`, `embeddingStats`.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMBEDDING_PROVIDER` | `none` | `voyage`, `openai`, or `none` |
+| `EMBEDDING_API_KEY` | — | API key for the chosen provider |
+| `EMBEDDING_MODEL` | per-provider | Override model name |
+| `EMBEDDING_DIMENSIONS` | per-provider | Override dimensions (OpenAI only) |
+| `SEMANTIC_WEIGHT` | `0.6` | Semantic score weight in hybrid ranking (0-1). FTS weight = 1 - this value |
+| `MIN_SIMILARITY` | `0.3` | Minimum cosine similarity to include in semantic results |
+
+### Tests
+
+- 28 new tests in `test/embeddings.test.ts`: vector math (6), serialization (3), atomToEmbeddingText (4), config resolution (4), storage CRUD (5), KNN search (3), hybrid recall (2), embedding cleanup on removeFromIndex (1).
+
 ---
 
 ## [1.2.0] — 2026-03-25

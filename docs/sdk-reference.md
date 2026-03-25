@@ -41,6 +41,23 @@ import {
   renderClaudeMd,
   wander,
   wanderFromFiles,
+  // Semantic search (opt-in — requires EMBEDDING_PROVIDER + EMBEDDING_API_KEY)
+  recallWithEmbeddings,
+  embedAtom,
+  embedAllAtoms,
+  semanticSearch,
+  semanticSearchSync,
+  getEmbeddingConfig,
+  embedText,
+  embedBatch,
+  cosineSimilarity,
+  serializeVector,
+  deserializeVector,
+  atomToEmbeddingText,
+  storeEmbedding,
+  getAllEmbeddings,
+  isEmbeddingStale,
+  embeddingStats,
 } from 'memory-kernel';
 ```
 
@@ -207,6 +224,101 @@ if (indexExists('./memory')) {
   const hits = searchFts('./memory', 'pagination', 10);
   // hits: [{ atom_id: 'DECI-...', rank: -0.87 }, ...]  (lower rank = better)
 }
+```
+
+---
+
+## Semantic Search — Hybrid FTS + Embeddings (v1.3.0+)
+
+Opt-in vector-based search. When configured, `recallWithEmbeddings()` combines FTS keyword matching with cosine similarity for more intent-aware recall. Without configuration, everything falls back to FTS-only — zero behavior change.
+
+### Setup
+
+Set environment variables:
+
+```bash
+# Voyage AI (free tier, 512-dim vectors)
+EMBEDDING_PROVIDER=voyage
+EMBEDDING_API_KEY=pa-...
+
+# OR OpenAI (paid, 1536-dim vectors)
+EMBEDDING_PROVIDER=openai
+EMBEDDING_API_KEY=sk-...
+
+# Optional tuning
+SEMANTIC_WEIGHT=0.6       # 0-1, semantic vs FTS balance (default: 0.6)
+MIN_SIMILARITY=0.3        # 0-1, filter noise below this threshold (default: 0.3)
+EMBEDDING_DIMENSIONS=256  # OpenAI only — reduce dimensions for smaller vectors
+```
+
+### Embed existing atoms
+
+```bash
+# CLI: embed all atoms in one pass
+mk reindex -d ./memory --embed
+```
+
+```typescript
+// SDK: embed all atoms programmatically
+const result = await embedAllAtoms('./memory', {
+  onProgress: (done, total) => console.log(`${done}/${total}`),
+});
+// result: { embedded: 45, skipped: 3, errors: 0, timeMs: 2100 }
+```
+
+### Recall with semantic re-ranking
+
+```typescript
+// Async — auto-embeds the task query, combines FTS + cosine similarity
+const context = await recallWithEmbeddings('./memory', {
+  task: 'how should we handle pagination at scale?',
+  max_tokens: 4000,
+});
+// Atoms are ranked by: FTS_WEIGHT * bm25_score + SEMANTIC_WEIGHT * cosine_similarity
+```
+
+### Embed individual atoms
+
+```typescript
+// After createAtom, embed the new atom (no-op if embeddings not configured)
+const atom = createAtom({ memoryDir: './memory', type: 'fact', slug: 'test', body: '...' });
+const embedded = await embedAtom('./memory', atom);
+// embedded: true if vector was stored, false if skipped/failed
+```
+
+### Direct semantic search
+
+```typescript
+// Async: embed a query and find similar atoms
+const results = await semanticSearch('./memory', 'database performance optimization', 10);
+// results: [{ atom_id: 'DECI-...', similarity: 0.87 }, ...]
+
+// Sync: search with a pre-computed vector (no API call)
+const syncResults = semanticSearchSync('./memory', queryVector, 10);
+```
+
+### Low-level utilities
+
+```typescript
+// Check if embeddings are configured
+const config = getEmbeddingConfig(); // null if provider=none or no API key
+
+// Embed text directly
+const { vector, model, tokens_used } = await embedText('some text', config);
+
+// Cosine similarity between two vectors
+const sim = cosineSimilarity(vectorA, vectorB); // -1 to 1
+
+// Serialize/deserialize vectors for storage
+const buf = serializeVector(vector);     // Float32Array → Buffer
+const vec = deserializeVector(buf);      // Buffer → number[]
+
+// Check embedding staleness
+const stale = isEmbeddingStale('./memory', atomId, contentHash); // true if needs re-embed
+
+// Embedding stats
+const stats = embeddingStats('./memory');
+// stats: { count: 48, model: 'voyage-3-lite', dimensions: 512 }
 ```
 
 ---

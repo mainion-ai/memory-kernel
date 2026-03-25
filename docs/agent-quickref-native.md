@@ -59,6 +59,55 @@ mk doctor -d ~/mk-memory
 
 # Rebuild index if queries are slow
 mk reindex -d ~/mk-memory
+
+# Rebuild index AND compute embeddings for semantic search
+# (requires EMBEDDING_PROVIDER + EMBEDDING_API_KEY env vars)
+mk reindex -d ~/mk-memory --embed
+```
+
+## Semantic Search (Optional)
+
+Embeddings add intent-aware recall on top of keyword matching. **Fully optional** — everything works without it.
+
+### Provider options
+
+```bash
+EMBEDDING_PROVIDER=voyage    # voyage-3-lite, 512-dim, free tier
+EMBEDDING_PROVIDER=openai    # text-embedding-3-small, 1536-dim, $0.02/MTok
+```
+
+### Setup
+
+Add env vars to your shell profile (`~/.bashrc`, `~/.zshrc`) or `.env` file:
+
+```bash
+export EMBEDDING_PROVIDER=voyage
+export EMBEDDING_API_KEY=pa-...
+
+# Embed all existing atoms:
+mk reindex -d ~/mk-memory --embed
+
+# Verify:
+mk status -d ~/mk-memory
+# Should show: Embeddings: ✓ (N vectors, model: voyage-3-lite)
+```
+
+Once configured, `mk remember` **auto-embeds new atoms** — no extra step needed. If embedding fails (network, rate limit), it prints a warning and the atom is still created.
+
+### Optional tuning
+
+```bash
+SEMANTIC_WEIGHT=0.6    # 0-1, semantic vs FTS balance (default: 0.6)
+MIN_SIMILARITY=0.3     # 0-1, filter noise below this threshold (default: 0.3)
+```
+
+### Upgrading from v1.1.x
+
+The first `mk reindex` after upgrading silently migrates the index schema (v3 → v4). This is safe — the index is a derived cache rebuilt from files. To add embeddings after upgrade:
+
+```bash
+mk reindex -d ~/mk-memory              # rebuild index (schema v4)
+mk reindex -d ~/mk-memory --embed      # optional: add semantic search
 ```
 
 ## Session Loop
@@ -149,7 +198,7 @@ crontab -e
 If you're writing code that uses memory-kernel programmatically:
 
 ```typescript
-import { createAtom, recall, reflect, wander, renderClaudeMd } from 'memory-kernel';
+import { createAtom, recall, recallWithEmbeddings, reflect, wander, renderClaudeMd } from 'memory-kernel';
 
 // Remember
 createAtom({
@@ -163,8 +212,11 @@ createAtom({
   scope: { tags: ['infrastructure', 'deploy'] },
 });
 
-// Recall with task-aware ranking
+// Recall with task-aware ranking (FTS-only)
 const context = recall('/path/to/memory', { task: 'optimize deploys', max_tokens: 4000 });
+
+// Recall with hybrid FTS + semantic ranking (when EMBEDDING_PROVIDER is set)
+const semanticContext = await recallWithEmbeddings('/path/to/memory', { task: 'optimize deploys', max_tokens: 4000 });
 
 // Wander for connections
 const result = wander({
@@ -187,3 +239,6 @@ const md = renderClaudeMd('/path/to/memory', { maxTokens: 8000 });
 | Stale CLAUDE.md | Run `mk render` — the nightly cron may not have run yet |
 | `mk doctor` reports conflicts | Inspect `{MEMORY_DIR}/CONFLICTS/`, resolve with `mk reflect` |
 | Too many atoms in CLAUDE.md | Use `mk render --max-tokens 4000` to reduce |
+| Embeddings not working | Set `EMBEDDING_PROVIDER` + `EMBEDDING_API_KEY` in shell env, then `mk reindex --embed` |
+| `mk remember` says "⚠ Embedding failed" | Check API key is valid and network is reachable. Run `mk reindex --embed` to retry all |
+| `mk status` shows "Embeddings: ✗" | Run `mk reindex --embed` with env vars set. See [Semantic Search](#semantic-search-optional) |
