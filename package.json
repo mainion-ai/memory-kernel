@@ -1,6 +1,6 @@
 {
   "name": "memory-kernel",
-  "version": "1.0.1",
+  "version": "1.1.2",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -34,7 +34,7 @@
     "context"
   ],
   "author": "mainion-ai",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/mainion-ai/memory-kernel.git"
