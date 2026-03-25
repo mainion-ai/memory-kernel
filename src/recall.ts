@@ -17,8 +17,6 @@ import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 // --- Configurable hybrid ranking parameters ---
 
-/** Weight for FTS BM25 scores in hybrid ranking (0-1). Default 0.4. */
-const DEFAULT_FTS_WEIGHT = 0.4;
 /** Weight for semantic cosine similarity in hybrid ranking (0-1). Default 0.6. */
 const DEFAULT_SEMANTIC_WEIGHT = 0.6;
 /** Minimum cosine similarity to include an atom in semantic results. Default 0.3. */

@@ -26,6 +26,10 @@ export async function embedAtom(memoryDir: string, atom: Atom): Promise<boolean>
   if (!config) return false;
   if (!indexExists(memoryDir)) return false;
 
+  // Never send SECRET or PERSONAL atoms to external embedding APIs
+  const cls = atom.frontmatter.classification;
+  if (cls === 'SECRET' || cls === 'PERSONAL') return false;
+
   const text = atomToEmbeddingText(
     atom.body,
     atom.frontmatter.scope?.tags,
@@ -84,6 +88,13 @@ export async function embedAllAtoms(
   const toEmbed: { atom: Atom; text: string; hash: string }[] = [];
 
   for (const atom of atoms) {
+    // Never send SECRET or PERSONAL atoms to external embedding APIs
+    const cls = atom.frontmatter.classification;
+    if (cls === 'SECRET' || cls === 'PERSONAL') {
+      skipped++;
+      continue;
+    }
+
     const hash = contentHash(atom.body);
     if (!isEmbeddingStale(memoryDir, atom.frontmatter.id, hash)) {
       skipped++;
