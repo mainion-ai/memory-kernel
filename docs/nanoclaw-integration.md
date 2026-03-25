@@ -12,15 +12,22 @@ Memory Kernel was built to work with [NanoClaw](https://github.com/qwibitai/nano
 │  events/        │ ──────────────────►  │   my-group/       │
 │  views/         │                      │     CLAUDE.md     │
 │                 │      mk render       │                   │
-│                 │ ──────────────────►  │  (loaded at       │
-│                 │                      │   session start)  │
+│  .memory-       │ ──────────────────►  │  (loaded at       │
+│   index.db      │                      │   session start)  │
 │                 │     git push         │                   │
 │                 │ ──────────────────►  │                   │
+│                 │                      │                   │
+│                 │  ◄── mk wander ───  │  post-conversation │
+│                 │      (~30ms, JSON)   │  drift gate       │
 └─────────────────┘                      └───────────────────┘
 
   Nightly cycle:
   23:00 → reflect → render CLAUDE.md → git push
   Next session → NanoClaw loads CLAUDE.md as context
+
+  Drift cycle (per conversation):
+  Conversation ends → 2min delay → mk wander (Tier 1)
+  → No collisions? Skip drift. Collisions? Directed LLM drift (Tier 2).
 ```
 
 NanoClaw loads `groups/{name}/CLAUDE.md` at the start of every agent session. Memory Kernel renders its atoms into that file. The agent gets its full memory as context — facts, decisions, beliefs, preferences — without any code changes to NanoClaw.
@@ -191,6 +198,137 @@ mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
 
 The nightly sync picks this up, reflects on it, renders it into CLAUDE.md, and the next session has it as context.
+
+## Drift Integration (Wander Pre-Filter)
+
+NanoClaw's post-conversation drift feature fires after a conversation ends (default: 2-minute delay). By default, every drift spawns an expensive LLM session. With `mk wander`, you can add a cheap Tier 1 gate that skips drift when there's nothing interesting to explore.
+
+### How It Works
+
+```
+Conversation ends
+    │
+    ▼ (2 min delay)
+┌──────────────────────┐
+│  mk wander --json    │  ← Tier 1: ~30ms, no LLM, pure SQLite
+│  spreading activation │
+└──────────┬───────────┘
+           │
+     collisions found?
+      ╱          ╲
+    No            Yes
+    │              │
+    ▼              ▼
+  Skip         Inject collision context
+  drift        into drift prompt
+               │
+               ▼
+         ┌─────────────┐
+         │ LLM drift   │  ← Tier 2: expensive, directed
+         │ session      │
+         └─────────────┘
+```
+
+### Configuration
+
+Add `MEMORY_DIR` to your NanoClaw `.env`:
+
+```bash
+# Path to your memory-kernel data directory
+MEMORY_DIR=/path/to/your/memory
+```
+
+Export it in `src/config.ts`:
+
+```typescript
+export const MEMORY_DIR = process.env.MEMORY_DIR || '';
+```
+
+### Calling mk wander from the Host
+
+NanoClaw calls `mk wander` as a subprocess, not via `npx` (which may not resolve if memory-kernel isn't installed globally). Use the direct node path:
+
+```typescript
+import { execFileSync } from 'child_process';
+
+function runWander(memoryDir: string): WanderResult | null {
+  if (!memoryDir) return null;
+  try {
+    const stdout = execFileSync('node', [
+      '/path/to/memory-kernel/dist/cli/mk.js',
+      'wander', '-d', memoryDir, '--json',
+      '--steps', '5', '--threshold', '0.05',
+    ], { timeout: 10000, encoding: 'utf-8' });
+    return JSON.parse(stdout);
+  } catch {
+    return null;        // Fail silently — drift proceeds without gating
+  }
+}
+```
+
+The `--json` flag outputs:
+
+```json
+{
+  "collisions": [
+    {
+      "atom_a": "BELI-notation-as-erasure",
+      "atom_b": "DECI-accounting-trust-hierarchy",
+      "shared_tags": ["notation", "architecture"],
+      "score": 0.42,
+      "type_a": "belief",
+      "type_b": "decision",
+      "distance": 3
+    }
+  ],
+  "activated": [
+    { "atom_id": "BELI-...", "activation": 0.237, "type": "belief" }
+  ],
+  "steps_taken": 5,
+  "duration_ms": 12,
+  "seeds_used": ["BELI-..."]
+}
+```
+
+### Injecting Collisions into the Drift Prompt
+
+When wander finds collisions, format them as context for the drift session:
+
+```typescript
+const collisionBlock = wanderResult?.collisions?.length
+  ? `\nCOLLISION SEEDS (from spreading activation):
+${wanderResult.collisions.map((c) =>
+  `• ${c.type_a} "${c.atom_a}" ↔ ${c.type_b} "${c.atom_b}" (shared: ${c.shared_tags.join(', ')}, score: ${c.score})`,
+).join('\n')}
+
+Explore these connections.\n`
+  : '';
+
+const driftPrompt = `You are in post-conversation drift mode...
+${collisionBlock}
+FIRST: Read /workspace/group/CLAUDE.md...`;
+```
+
+This turns blind drift into directed exploration — the LLM only fires when there's a structurally interesting connection to investigate.
+
+### Verifying It Works
+
+Check NanoClaw logs after a conversation ends:
+
+```bash
+# Drift skipped (no collisions — saved an LLM session)
+grep "Drift skipped" /path/to/nanoclaw/logs/nanoclaw.log
+
+# Directed drift (collisions found — LLM session with context)
+grep "Wander found collisions" /path/to/nanoclaw/logs/nanoclaw.log
+```
+
+Test wander standalone:
+
+```bash
+node /path/to/memory-kernel/dist/cli/mk.js wander \
+  -d /path/to/your/memory --json --steps 5 --threshold 0.05
+```
 
 ## Container Mount Configuration
 
