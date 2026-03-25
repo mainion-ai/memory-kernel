@@ -15,6 +15,29 @@ import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
+// --- Configurable hybrid ranking parameters ---
+
+/** Weight for FTS BM25 scores in hybrid ranking (0-1). Default 0.4. */
+const DEFAULT_FTS_WEIGHT = 0.4;
+/** Weight for semantic cosine similarity in hybrid ranking (0-1). Default 0.6. */
+const DEFAULT_SEMANTIC_WEIGHT = 0.6;
+/** Minimum cosine similarity to include an atom in semantic results. Default 0.3. */
+const DEFAULT_MIN_SIMILARITY = 0.3;
+
+function getSemanticWeight(): number {
+  const v = parseFloat(process.env.SEMANTIC_WEIGHT || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_SEMANTIC_WEIGHT;
+}
+
+function getFtsWeight(): number {
+  return 1 - getSemanticWeight();
+}
+
+function getMinSimilarity(): number {
+  const v = parseFloat(process.env.MIN_SIMILARITY || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_MIN_SIMILARITY;
+}
+
 /** @internal Extended query with pre-computed embedding vector — not part of the public API. */
 export interface RecallQueryInternal extends RecallQuery {
   queryVector?: number[];
@@ -88,11 +111,12 @@ export function recall(
     // Build semantic score map (if query vector provided or embeddings available)
     const semanticScoreMap = new Map<string, number>();
     if (query.queryVector) {
+      const minSim = getMinSimilarity();
       const stored = getAllEmbeddings(memoryDir);
       if (stored && stored.length > 0) {
         for (const { atom_id, embedding } of stored) {
           const similarity = cosineSimilarity(query.queryVector, deserializeVector(embedding));
-          if (similarity > 0) {
+          if (similarity >= minSim) {
             semanticScoreMap.set(atom_id, similarity);
           }
         }
@@ -103,9 +127,10 @@ export function recall(
     const hasSemantic = semanticScoreMap.size > 0;
 
     if (hasFts || hasSemantic) {
-      // Combine scores: FTS weight 0.4, semantic weight 0.6 (semantic is better for intent matching)
-      const FTS_WEIGHT = hasSemantic ? 0.4 : 1.0;
-      const SEMANTIC_WEIGHT = hasFts ? 0.6 : 1.0;
+      // Combine scores using configurable weights (env SEMANTIC_WEIGHT, default 0.6)
+      // When only one signal is available, it gets full weight.
+      const FTS_WEIGHT = hasSemantic ? getFtsWeight() : 1.0;
+      const SEMANTIC_WEIGHT = hasFts ? getSemanticWeight() : 1.0;
 
       filtered.sort((a, b) => {
         const ftsA = ftsScoreMap.get(a.frontmatter.id) ?? 0;
