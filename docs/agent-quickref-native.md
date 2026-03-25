@@ -113,6 +113,17 @@ The output tells you:
 - `activated` — all atoms that lit up during the walk
 - `duration_ms` — should be <30ms for ~200 atoms
 
+### NanoClaw drift pre-filter
+
+If you're running alongside NanoClaw with drift enabled, add `MEMORY_DIR` to the NanoClaw `.env` so wander runs automatically as a pre-filter before each drift session:
+
+```bash
+# In NanoClaw's .env (not the memory directory)
+MEMORY_DIR=/home/np/mk-memory   # adjust to your path
+```
+
+When set, NanoClaw runs `mk wander --json` (~30ms) before spawning an expensive drift session. No collisions → drift skipped. Collisions → directed exploration.
+
 ## Nightly Maintenance
 
 If you have cron access, set up nightly reflect + render:
