@@ -9,9 +9,10 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex, searchFts } from './index-db.js';
+import { queryIndex, searchFts, getAllEmbeddings } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
+import { cosineSimilarity, deserializeVector, getEmbeddingConfig, atomToEmbeddingText } from './embeddings.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 /**
@@ -56,20 +57,58 @@ export function recall(
   }
 
   // Task-aware re-ranking: if a task is provided, use FTS BM25 scores to re-order.
-  // Atoms with a strong match are surfaced first; unmatched atoms retain their status order.
+  // When embeddings are available and a query vector is provided, combine FTS + semantic scores.
   // FTS5 rank is negative (lower = better match in SQLite BM25 convention).
   if (query.task && query.task.trim().length > 0) {
     const ftsResults = searchFts(memoryDir, query.task, Math.max(filtered.length, 200));
+
+    // Build FTS score map
+    const ftsScoreMap = new Map<string, number>();
     if (ftsResults && ftsResults.length > 0) {
-      // Build score map: atom_id → rank (negative; lower is better)
-      const scoreMap = new Map(ftsResults.map((r) => [r.atom_id, r.rank]));
-      filtered.sort((a, b) => {
-        const rankA = scoreMap.get(a.frontmatter.id) ?? 0; // 0 = no match = worst
-        const rankB = scoreMap.get(b.frontmatter.id) ?? 0;
-        // Both match FTS: sort by rank ascending (lower/more-negative = better)
-        if (rankA !== 0 || rankB !== 0) {
-          if (rankA !== rankB) return rankA - rankB;
+      // Normalize FTS ranks to 0-1 range (rank is negative, lower = better)
+      const minRank = Math.min(...ftsResults.map((r) => r.rank));
+      const maxRank = Math.max(...ftsResults.map((r) => r.rank));
+      const range = maxRank - minRank || 1;
+      for (const r of ftsResults) {
+        // Invert and normalize: best match → 1, worst → 0
+        ftsScoreMap.set(r.atom_id, 1 - (r.rank - minRank) / range);
+      }
+    }
+
+    // Build semantic score map (if query vector provided or embeddings available)
+    const semanticScoreMap = new Map<string, number>();
+    if (query.queryVector) {
+      const stored = getAllEmbeddings(memoryDir);
+      if (stored && stored.length > 0) {
+        for (const { atom_id, embedding } of stored) {
+          const similarity = cosineSimilarity(query.queryVector, deserializeVector(embedding));
+          if (similarity > 0) {
+            semanticScoreMap.set(atom_id, similarity);
+          }
         }
+      }
+    }
+
+    const hasFts = ftsScoreMap.size > 0;
+    const hasSemantic = semanticScoreMap.size > 0;
+
+    if (hasFts || hasSemantic) {
+      // Combine scores: FTS weight 0.4, semantic weight 0.6 (semantic is better for intent matching)
+      const FTS_WEIGHT = hasSemantic ? 0.4 : 1.0;
+      const SEMANTIC_WEIGHT = hasFts ? 0.6 : 1.0;
+
+      filtered.sort((a, b) => {
+        const ftsA = ftsScoreMap.get(a.frontmatter.id) ?? 0;
+        const ftsB = ftsScoreMap.get(b.frontmatter.id) ?? 0;
+        const semA = semanticScoreMap.get(a.frontmatter.id) ?? 0;
+        const semB = semanticScoreMap.get(b.frontmatter.id) ?? 0;
+
+        const scoreA = ftsA * FTS_WEIGHT + semA * SEMANTIC_WEIGHT;
+        const scoreB = ftsB * FTS_WEIGHT + semB * SEMANTIC_WEIGHT;
+
+        // Higher combined score = better match
+        if (scoreA !== scoreB) return scoreB - scoreA;
+
         // Fallback: status priority, then recency
         const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
         if (statusOrder !== 0) return statusOrder;
@@ -135,6 +174,34 @@ export function recall(
   }
 
   return bundle;
+}
+
+/**
+ * Async recall with automatic semantic re-ranking.
+ *
+ * If embeddings are configured and a task is provided, this embeds the query
+ * text and passes the vector to `recall()` for hybrid FTS + semantic ranking.
+ * Falls back to FTS-only ranking when embeddings are unavailable.
+ */
+export async function recallWithEmbeddings(
+  memoryDir: string,
+  query: RecallQuery = {},
+): Promise<ContextBundle> {
+  // If a task is provided and embeddings are configured, embed the query
+  if (query.task && query.task.trim().length > 0 && !query.queryVector) {
+    const config = getEmbeddingConfig();
+    if (config) {
+      try {
+        const { embedText } = await import('./embeddings.js');
+        const result = await embedText(query.task, config);
+        return recall(memoryDir, { ...query, queryVector: result.vector });
+      } catch {
+        // Degrade gracefully — use FTS-only ranking
+      }
+    }
+  }
+
+  return recall(memoryDir, query);
 }
 
 /**

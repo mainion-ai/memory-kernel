@@ -31,6 +31,7 @@ import {
   indexStats,
   indexExists,
   createAtom,
+  embeddingStats,
 } from '../index.js';
 import { recall } from '../recall.js';
 import { reflect } from '../reflect.js';
@@ -43,6 +44,7 @@ import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
 import { renderClaudeMd } from '../render.js';
 import { wander, wanderFromFiles } from '../wander.js';
+import { embedAtom, embedAllAtoms } from '../embed-sync.js';
 import type { Classification } from '../types.js';
 
 const program = new Command();
@@ -116,6 +118,12 @@ program
       const stats = indexStats(memoryDir);
       if (stats) {
         console.log(`Index: ✓ (${stats.atoms} atoms, ${stats.tags} tags, ${stats.paths} paths)`);
+        if (stats.embeddings > 0) {
+          const eStats = embeddingStats(memoryDir);
+          console.log(`Embeddings: ✓ (${stats.embeddings} vectors, model: ${eStats?.model ?? 'unknown'})`);
+        } else {
+          console.log('Embeddings: ✗ (set EMBEDDING_PROVIDER + EMBEDDING_API_KEY, then run "mk reindex --embed")');
+        }
       }
     } else {
       console.log('Index: ✗ (run "mk reindex" to build)');
@@ -339,7 +347,8 @@ program
   .command('reindex')
   .description('Rebuild SQLite index from atom files')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
-  .action((opts: { dir: string }) => {
+  .option('--embed', 'Also (re)compute embeddings for all atoms')
+  .action(async (opts: { dir: string; embed?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
       console.error(`✗ Memory directory not found: ${memoryDir}`);
@@ -353,6 +362,18 @@ program
     const stats = indexStats(memoryDir);
     if (stats) {
       console.log(`  Atoms: ${stats.atoms}, Tags: ${stats.tags}, Paths: ${stats.paths}`);
+    }
+
+    // Optionally (re)compute embeddings
+    if (opts.embed) {
+      console.log(`\nEmbedding atoms...`);
+      const embedResult = await embedAllAtoms(memoryDir, {
+        onProgress: (done, total) => {
+          process.stdout.write(`\r  Progress: ${done}/${total}`);
+        },
+      });
+      console.log(''); // newline after progress
+      console.log(`✓ Embeddings: ${embedResult.embedded} embedded, ${embedResult.skipped} skipped, ${embedResult.errors} errors (${embedResult.timeMs}ms)`);
     }
   });
 
@@ -368,7 +389,7 @@ program
   .option('--tags <tags...>', 'Tags for scope')
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-session')
-  .action((body: string, opts: {
+  .action(async (body: string, opts: {
     dir: string; type: string; confidence?: number;
     slug?: string; tags?: string[];
     agentId: string; sessionId: string;
@@ -401,6 +422,12 @@ program
     console.log(`  Type: ${atom.frontmatter.type}, Status: ${atom.frontmatter.status}`);
     console.log(`  Confidence: ${atom.frontmatter.confidence}`);
     if (opts.tags) console.log(`  Tags: ${opts.tags.join(', ')}`);
+
+    // Async: embed the atom if embeddings are configured
+    const embedded = await embedAtom(memoryDir, atom);
+    if (embedded) {
+      console.log(`  Embedded: ✓`);
+    }
   });
 
 // --- mk bootstrap-events ---
