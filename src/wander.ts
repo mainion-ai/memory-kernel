@@ -100,6 +100,7 @@ export interface WanderResult {
  */
 function baseLevelActivation(updatedAt: string, now: number): number {
   const updatedMs = new Date(updatedAt).getTime();
+  if (Number.isNaN(updatedMs)) return 0;
   const ageDays = Math.max((now - updatedMs) / (1000 * 60 * 60 * 24), 0.01);
   return Math.log(1 / ageDays);
 }

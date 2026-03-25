@@ -3,6 +3,10 @@
  *
  * Tests performance with large atom sets and dense tag networks.
  * Verifies that spreading activation scales reasonably.
+ *
+ * Note: test timeouts are generous because atom creation + reindex
+ * is the bottleneck on constrained hardware (RPi). The wander duration
+ * assertions are what we're actually testing.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -62,7 +66,7 @@ function createLargeGraph(dir: string, atomCount: number) {
 
 describe('wander — stress tests', () => {
 
-  it('100 atoms: completes in < 5s', { timeout: 10000 }, () => {
+  it('100 atoms: wander completes in < 500ms', { timeout: 10000 }, () => {
     createLargeGraph(testDir, 100);
     reindex(testDir);
 
@@ -73,13 +77,13 @@ describe('wander — stress tests', () => {
       threshold: 0.01,
     });
 
-    expect(result.duration_ms).toBeLessThan(5000);
+    expect(result.duration_ms).toBeLessThan(500);
     expect(result.activated.length).toBeGreaterThan(0);
     expect(result.steps_taken).toBe(5);
     console.log(`100 atoms: ${result.duration_ms}ms, ${result.activated.length} activated, ${result.collisions.length} collisions`);
   });
 
-  it('200 atoms with dense tags: completes in < 10s', { timeout: 15000 }, () => {
+  it('200 atoms with dense tags: wander completes in < 1s', { timeout: 15000 }, () => {
     createLargeGraph(testDir, 200);
     reindex(testDir);
 
@@ -91,7 +95,7 @@ describe('wander — stress tests', () => {
       maxCollisions: 10,
     });
 
-    expect(result.duration_ms).toBeLessThan(10000);
+    expect(result.duration_ms).toBeLessThan(1000);
     expect(result.activated.length).toBeGreaterThan(0);
     expect(result.collisions.length).toBeGreaterThan(0);
     console.log(`200 atoms: ${result.duration_ms}ms, ${result.activated.length} activated, ${result.collisions.length} collisions`);
@@ -111,7 +115,7 @@ describe('wander — stress tests', () => {
 
     // topK constrains the working set
     expect(result.activated.length).toBeLessThanOrEqual(5);
-    expect(result.duration_ms).toBeLessThan(5000);
+    expect(result.duration_ms).toBeLessThan(500);
     console.log(`150 atoms, topK=5: ${result.duration_ms}ms, ${result.activated.length} activated`);
   });
 
@@ -128,7 +132,7 @@ describe('wander — stress tests', () => {
       maxCollisions: 20,
     });
 
-    expect(result.duration_ms).toBeLessThan(5000);
+    expect(result.duration_ms).toBeLessThan(500);
     // Collisions should be found in a diverse graph
     expect(result.collisions.length).toBeGreaterThan(0);
 
@@ -163,7 +167,7 @@ describe('wander — stress tests', () => {
     });
 
     // Should still complete even with fully connected graph
-    expect(result.duration_ms).toBeLessThan(5000);
+    expect(result.duration_ms).toBeLessThan(500);
     expect(result.activated.length).toBeGreaterThan(0);
     console.log(`50 dense atoms: ${result.duration_ms}ms, ${result.activated.length} activated, ${result.collisions.length} collisions`);
   });
