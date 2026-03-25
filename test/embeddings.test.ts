@@ -22,6 +22,7 @@ import {
   recall,
   indexExists,
   indexStats,
+  closeAllIndexes,
   cosineSimilarity,
   serializeVector,
   deserializeVector,
@@ -40,6 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeAllIndexes();
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 

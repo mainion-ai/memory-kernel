@@ -372,18 +372,22 @@ export function storeEmbedding(
   embedding: Buffer,
   model: string,
   dimensions: number,
-  bHash: string,
+  bodyHash: string,
 ): void {
   const db = openIndex(memoryDir);
   db.prepare(`
     INSERT OR REPLACE INTO atom_embeddings (atom_id, embedding, model, dimensions, body_hash)
     VALUES (?, ?, ?, ?, ?)
-  `).run(atomId, embedding, model, dimensions, bHash);
+  `).run(atomId, embedding, model, dimensions, bodyHash);
 }
 
 /**
  * Get all embeddings for semantic search.
  * Returns atom_id + raw embedding buffer for KNN.
+ *
+ * NOTE: Loads all vectors into memory. At 512-dim (2KB/vector), 10K atoms ≈ 20MB.
+ * For 1536-dim (OpenAI), 10K atoms ≈ 60MB. Consider sqlite-vss or pagination
+ * if atom count exceeds ~50K.
  */
 export function getAllEmbeddings(memoryDir: string): { atom_id: string; embedding: Buffer }[] | null {
   if (!indexExists(memoryDir)) return null;

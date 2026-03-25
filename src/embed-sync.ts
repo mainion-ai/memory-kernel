@@ -9,6 +9,7 @@
  * - semanticSearch() — sync, KNN over stored vectors
  */
 
+import crypto from 'crypto';
 import { getEmbeddingConfig, embedText, embedBatch, cosineSimilarity, serializeVector, deserializeVector, atomToEmbeddingText } from './embeddings.js';
 import { storeEmbedding, getAllEmbeddings, isEmbeddingStale, indexExists } from './index-db.js';
 import { listAtoms } from './store.js';
@@ -31,7 +32,7 @@ export async function embedAtom(memoryDir: string, atom: Atom): Promise<boolean>
     atom.frontmatter.type,
   );
 
-  const bodyHash = simpleHash(atom.body);
+  const bodyHash = contentHash(atom.body);
 
   // Skip if embedding is current
   if (!isEmbeddingStale(memoryDir, atom.frontmatter.id, bodyHash)) {
@@ -83,7 +84,7 @@ export async function embedAllAtoms(
   const toEmbed: { atom: Atom; text: string; hash: string }[] = [];
 
   for (const atom of atoms) {
-    const hash = simpleHash(atom.body);
+    const hash = contentHash(atom.body);
     if (!isEmbeddingStale(memoryDir, atom.frontmatter.id, hash)) {
       skipped++;
       continue;
@@ -131,7 +132,7 @@ export async function embedAllAtoms(
   return { embedded, skipped, errors, timeMs: Date.now() - start };
 }
 
-// --- Synchronous semantic search ---
+// --- Semantic search ---
 
 /**
  * Semantic search: embed a query text and find the most similar atoms.
@@ -198,11 +199,7 @@ export function semanticSearchSync(
 
 // --- Helpers ---
 
-function simpleHash(body: string): string {
-  let hash = 0;
-  for (let i = 0; i < body.length; i++) {
-    const ch = body.charCodeAt(i);
-    hash = ((hash << 5) - hash + ch) | 0;
-  }
-  return hash.toString(36);
+/** SHA-256 hash of atom body for embedding staleness detection. */
+function contentHash(body: string): string {
+  return crypto.createHash('sha256').update(body).digest('hex');
 }

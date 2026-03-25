@@ -12,7 +12,7 @@ import { readView, listAtoms, readAtom } from './store.js';
 import { queryIndex, searchFts, getAllEmbeddings } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
-import { cosineSimilarity, deserializeVector, getEmbeddingConfig, atomToEmbeddingText } from './embeddings.js';
+import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 /**
@@ -192,7 +192,6 @@ export async function recallWithEmbeddings(
     const config = getEmbeddingConfig();
     if (config) {
       try {
-        const { embedText } = await import('./embeddings.js');
         const result = await embedText(query.task, config);
         return recall(memoryDir, { ...query, queryVector: result.vector });
       } catch {
