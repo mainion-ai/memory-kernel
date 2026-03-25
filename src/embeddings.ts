@@ -63,7 +63,10 @@ export function getEmbeddingConfig(): EmbeddingConfig | null {
   const defaults = PROVIDER_DEFAULTS[provider];
   if (!defaults) return null;
 
-  const apiKey = process.env.EMBEDDING_API_KEY || '';
+  // Try EMBEDDING_API_KEY first; fall back to provider-specific keys for convenience
+  let apiKey = process.env.EMBEDDING_API_KEY || '';
+  if (!apiKey && provider === 'openai') apiKey = process.env.OPENAI_API_KEY || '';
+  if (!apiKey && provider === 'voyage') apiKey = process.env.VOYAGE_API_KEY || '';
   if (!apiKey) {
     // Silently degrade — no key means no embeddings
     return null;

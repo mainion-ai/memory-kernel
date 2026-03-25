@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
-## [Unreleased]
+## [1.3.0] — 2026-03-25
 
 ### Added
 
@@ -21,6 +21,8 @@ All notable changes to this project will be documented in this file.
   - **MCP integration:** `mk_recall` tool now uses `recallWithEmbeddings()` for automatic semantic re-ranking.
   - **`recallWithEmbeddings()`** — async wrapper that embeds the task query and passes the vector to `recall()` for hybrid ranking. Falls back to FTS-only on any error.
   - Exports: `embedText`, `embedBatch`, `getEmbeddingConfig`, `cosineSimilarity`, `serializeVector`, `deserializeVector`, `atomToEmbeddingText`, `embedAtom`, `embedAllAtoms`, `semanticSearch`, `semanticSearchSync`, `recallWithEmbeddings`, `storeEmbedding`, `getAllEmbeddings`, `isEmbeddingStale`, `embeddingStats`.
+
+- **API key fallback:** `getEmbeddingConfig()` falls back to `OPENAI_API_KEY` (when provider is `openai`) or `VOYAGE_API_KEY` (when provider is `voyage`) if `EMBEDDING_API_KEY` is not set. Convenience for environments that already have provider-specific keys.
 
 ### Environment Variables
 
