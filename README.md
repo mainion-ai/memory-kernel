@@ -27,6 +27,12 @@ npm install memory-kernel
 
 **NanoClaw agents:** See [mk-memory-setup skill](container/skills/mk-memory-setup/README.md) or run `/mk-memory-setup` from your channel.
 
+**Agents — start here:**
+- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render
+- [Container quickref](docs/agent-quickref-container.md) — paths, commands, /tmp workaround
+- [Native/Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
+- [Self-diagnostic](container/skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
+
 **MCP server:** See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for tool integration with any MCP-capable agent.
 
 ---

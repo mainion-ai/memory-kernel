@@ -86,20 +86,19 @@ Then it runs all steps automatically.
 
 ## Post-Setup
 
-After setup, the agent can:
+After setup, the agent can use the standard [session loop](../../../docs/agent-session-loop.md):
+1. **Session starts** → CLAUDE.md loaded automatically
+2. **During session** → `mk remember` when learning something worth keeping
+3. **Session ends** → `mk render` to update CLAUDE.md
+4. **Between sessions** → `mk wander` finds unexpected connections (used by NanoClaw drift)
 
-**Remember things** (inside the container):
-```bash
-npx mk remember "important fact" -d /workspace/extra/memory -t fact
-```
-
-**Re-render CLAUDE.md** (so next session loads the new memory):
-```bash
-npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
-```
+See also:
+- [Container quickref](../../../docs/agent-quickref-container.md) — paths and commands for container agents
+- [Native quickref](../../../docs/agent-quickref-native.md) — paths and commands for host-side agents
+- `/mk-doctor` — self-diagnostic to verify setup health
 
 **Nightly sync** runs automatically at 23:00:
-- `mk reflect` — processes events into atoms
+- `mk reflect` — consolidates, deduplicates, expires, promotes beliefs → facts
 - `mk render` — renders atoms into CLAUDE.md
 - `git push` — backs up to GitHub (if configured)
 

@@ -2,6 +2,12 @@
 
 Memory Kernel was built to work with [NanoClaw](https://github.com/qwibitai/nanoclaw), but it works with any agent system. This guide covers how to set it up so your agent remembers across sessions.
 
+> **Agent?** If you're an AI agent reading this, start with:
+> - [Session loop](agent-session-loop.md) — the standard remember/recall/wander/render cycle
+> - [Container quickref](agent-quickref-container.md) — if you're running inside a NanoClaw container
+> - [Native quickref](agent-quickref-native.md) — if you're running on the host (Claude Code, native mode)
+> - Run `/mk-doctor` to verify your setup is healthy
+
 ## How It Works
 
 ```

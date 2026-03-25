@@ -43,6 +43,30 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
   lines.push(`> Source: ${memoryDir}`);
   lines.push('');
 
+  // Bootstrap guidance when memory is empty
+  if (active.length === 0) {
+    lines.push('## Getting Started');
+    lines.push('');
+    lines.push('This is a fresh memory. No atoms have been created yet.');
+    lines.push('');
+    lines.push('Start building memory by retaining what matters during this session:');
+    lines.push('');
+    lines.push('```bash');
+    lines.push('# Remember facts, decisions, preferences, beliefs');
+    lines.push('mk remember "text" -d <memory-dir> -t fact --tags tag1,tag2');
+    lines.push('');
+    lines.push('# Re-render so the next session picks up new knowledge');
+    lines.push('mk render <memory-dir> <path-to-CLAUDE.md>');
+    lines.push('```');
+    lines.push('');
+    lines.push('Good first atoms: identity (who am I), infrastructure (what system),');
+    lines.push('preferences (how the user likes to work), key decisions (architecture choices).');
+    lines.push('');
+    lines.push('See: https://github.com/mainion-ai/memory-kernel#cli');
+    lines.push('');
+    return lines.join('\n') + '\n';
+  }
+
   // Conflicts first (most urgent)
   if (conflicts.length > 0) {
     lines.push('## ⚠ Active Conflicts');
