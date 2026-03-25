@@ -22,6 +22,7 @@ let testDir: string;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-wander-stress-'));
+  initMemoryDir(testDir);
 });
 
 afterEach(() => {
@@ -62,7 +63,6 @@ function createLargeGraph(dir: string, atomCount: number) {
 describe('wander — stress tests', () => {
 
   it('100 atoms: completes in < 5s', { timeout: 10000 }, () => {
-    initMemoryDir(testDir);
     createLargeGraph(testDir, 100);
     reindex(testDir);
 
@@ -80,7 +80,6 @@ describe('wander — stress tests', () => {
   });
 
   it('200 atoms with dense tags: completes in < 10s', { timeout: 15000 }, () => {
-    initMemoryDir(testDir);
     createLargeGraph(testDir, 200);
     reindex(testDir);
 
@@ -99,7 +98,6 @@ describe('wander — stress tests', () => {
   });
 
   it('topK limits keep performance bounded regardless of graph size', { timeout: 15000 }, () => {
-    initMemoryDir(testDir);
     createLargeGraph(testDir, 150);
     reindex(testDir);
 
@@ -118,7 +116,6 @@ describe('wander — stress tests', () => {
   });
 
   it('collision detection scales with activated set, not total atoms', { timeout: 15000 }, () => {
-    initMemoryDir(testDir);
     createLargeGraph(testDir, 150);
     reindex(testDir);
 
@@ -145,7 +142,6 @@ describe('wander — stress tests', () => {
   });
 
   it('all-same-tag extreme: performance with fully connected graph', { timeout: 15000 }, () => {
-    initMemoryDir(testDir);
 
     // All 50 atoms share the same tag — fully connected graph
     for (let i = 0; i < 50; i++) {

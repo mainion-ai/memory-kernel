@@ -24,6 +24,7 @@ let testDir: string;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-wander-'));
+  initMemoryDir(testDir);
 });
 
 afterEach(() => {
@@ -123,7 +124,6 @@ describe('wander — spreading activation', () => {
 
   describe('basic functionality', () => {
     it('should return empty result for empty memory', () => {
-      initMemoryDir(testDir);
       reindex(testDir);
 
       const result = wander({ memoryDir: testDir });
@@ -134,7 +134,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should return empty result when no index exists', () => {
-      initMemoryDir(testDir);
       // No reindex — no index
       const result = wander({ memoryDir: testDir });
       expect(result.collisions).toEqual([]);
@@ -142,7 +141,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should auto-seed from recent atoms when no seeds provided', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -153,7 +151,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should complete in reasonable time', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -164,7 +161,6 @@ describe('wander — spreading activation', () => {
 
   describe('seeding', () => {
     it('should seed from atom IDs', () => {
-      initMemoryDir(testDir);
       const atom = createAtom({
         ...base(testDir),
         type: 'belief',
@@ -182,7 +178,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should seed from tags', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -197,7 +192,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should ignore non-existent seed IDs', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -212,7 +206,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should combine atom ID and tag seeds', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -233,7 +226,6 @@ describe('wander — spreading activation', () => {
 
   describe('spreading activation', () => {
     it('should spread activation through shared tags', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -254,7 +246,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should respect step count', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -275,7 +266,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should apply lateral inhibition (topK)', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -290,7 +280,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should prune below threshold', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -307,7 +296,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should not activate isolated atoms (no tags)', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -323,7 +311,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should decay activation across steps', () => {
-      initMemoryDir(testDir);
 
       // Create simple chain: A--tag1-->B--tag2-->C
       createAtom({
@@ -376,7 +363,6 @@ describe('wander — spreading activation', () => {
 
   describe('collision detection', () => {
     it('should detect collisions between different types sharing tags', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -404,7 +390,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should respect maxCollisions limit', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -419,7 +404,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should sort collisions by score descending', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -436,7 +420,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should not report same-type pairs as collisions', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -455,7 +438,6 @@ describe('wander — spreading activation', () => {
 
   describe('wanderFromFiles (fallback)', () => {
     it('should work without index', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       // No reindex — use file scan
 
@@ -466,7 +448,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should produce similar results to index-backed wander', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -488,7 +469,6 @@ describe('wander — spreading activation', () => {
 
   describe('edge cases', () => {
     it('should handle single atom', () => {
-      initMemoryDir(testDir);
       createAtom({
         ...base(testDir),
         type: 'fact',
@@ -505,7 +485,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should handle atoms with many shared tags', () => {
-      initMemoryDir(testDir);
       const sharedTags = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
 
       createAtom({
@@ -533,7 +512,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should handle zero steps (seeds initialized but no spreading)', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -545,7 +523,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should handle very high threshold (prunes everything)', () => {
-      initMemoryDir(testDir);
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -561,7 +538,6 @@ describe('wander — spreading activation', () => {
     });
 
     it('should handle disconnected subgraphs', () => {
-      initMemoryDir(testDir);
 
       // Subgraph 1
       createAtom({
