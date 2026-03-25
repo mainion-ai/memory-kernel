@@ -152,3 +152,7 @@ export type { ImportFromFileOpts, ImportResult } from './import.js';
 // Render
 export { renderClaudeMd } from './render.js';
 export type { RenderClaudeMdOptions } from './render.js';
+
+// Wander (spreading activation)
+export { wander, wanderFromFiles } from './wander.js';
+export type { WanderOptions, WanderResult, Collision, ActivatedAtom } from './wander.js';
