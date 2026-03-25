@@ -73,13 +73,17 @@ If `npx mk` fails with "could not determine executable to run" (memory-kernel no
 
 ```bash
 # Install to /tmp (writable in containers)
-cd /tmp && npm install memory-kernel 2>/dev/null
-node /tmp/node_modules/.bin/mk --version
+cd /tmp && npm install memory-kernel
 
-# Then use the full path:
-node /tmp/node_modules/.bin/mk remember "text" -d /workspace/extra/memory -t fact
-node /tmp/node_modules/.bin/mk render /workspace/extra/memory /workspace/group/CLAUDE.md
+# Verify it works
+/tmp/node_modules/.bin/mk --version
+
+# Then use the full path for all commands:
+/tmp/node_modules/.bin/mk remember "text" -d /workspace/extra/memory -t fact
+/tmp/node_modules/.bin/mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
+
+**Important:** The install must be done from `/tmp` (`cd /tmp && npm install`) so the binary lands at `/tmp/node_modules/.bin/mk`.
 
 Or if the host has memory-kernel source mounted:
 ```bash
