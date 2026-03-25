@@ -9,6 +9,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [1.2.0] — 2026-03-25
+
 ### Added
 
 - **`mk wander` — spreading activation for associative memory exploration** (`src/wander.ts`, `src/cli/mk.ts`) — Tier 1 (no LLM) graph walk through the tag co-occurrence network. ACT-R-inspired base-level activation with recency weighting, lateral inhibition, and collision detection between atoms from different domains with unexpected structural overlap. Pure computation — runs in <30ms for 200 atoms.
@@ -16,7 +20,13 @@ All notable changes to this project will be documented in this file.
   - `wanderFromFiles(options)` — file-scan fallback. No SQLite needed. Slower but works anywhere.
   - `mk wander` CLI with `--seed`, `--tags`, `--steps`, `--threshold`, `--top-k`, `--decay`, `--max-collisions`, `--json` flags. Auto-falls back to file scan when no index exists.
   - Exports: `wander`, `wanderFromFiles`, `WanderOptions`, `WanderResult`, `Collision`, `ActivatedAtom`.
-- **README rewrite** — reduced from ~17k tokens to ~2.5k tokens. Dual-audience (human + agent). Added Wander section with parameter table.
+- **Agent-facing documentation** — three new docs for agents setting up memory-kernel:
+  - `docs/agent-session-loop.md` — standard recall→remember→wander→render lifecycle
+  - `docs/agent-quickref-container.md` — container paths, commands, /tmp workaround
+  - `docs/agent-quickref-native.md` — native setup, drift pre-filter, mk binary resolution
+- **`/mk-doctor` skill** (`container/skills/mk-doctor/SKILL.md`) — 9-step self-diagnostic for both container and native agents. Auto-detects environment, checks directory structure, runs `mk doctor`, validates index, CLAUDE.md, event log, mounts, and cron.
+- **Bootstrap CLAUDE.md** — `renderClaudeMd()` now produces getting-started guidance when memory is empty (0 atoms), so the first session isn't blank.
+- **README rewrite** — reduced from ~17k tokens to ~2.5k tokens. Dual-audience (human + agent). "Agents — start here" section links to all agent docs.
 
 ### Tests
 
