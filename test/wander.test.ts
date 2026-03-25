@@ -436,6 +436,62 @@ describe('wander — spreading activation', () => {
     });
   });
 
+  describe('conflict atom exclusion', () => {
+    it('should exclude conflict atoms from index-backed graph', () => {
+      createTestGraph(testDir);
+      // Add a conflict atom that shares tags with philosophy atoms
+      createAtom({
+        ...base(testDir),
+        type: 'conflict',
+        slug: 'conflict-philosophy',
+        body: 'Conflict between two philosophy atoms.',
+        scope: { tags: ['philosophy', 'identity'] },
+      });
+      reindex(testDir);
+
+      const result = wander({
+        memoryDir: testDir,
+        seedTags: ['philosophy'],
+        steps: 3,
+        threshold: 0.001,
+        topK: 50,
+      });
+
+      // Conflict atoms should never appear in activated set
+      const types = result.activated.map(a => a.type);
+      expect(types).not.toContain('conflict');
+
+      // Conflict atoms should never appear in collisions
+      for (const c of result.collisions) {
+        expect(c.type_a).not.toBe('conflict');
+        expect(c.type_b).not.toBe('conflict');
+      }
+    });
+
+    it('should exclude conflict atoms from file-backed graph', () => {
+      createTestGraph(testDir);
+      createAtom({
+        ...base(testDir),
+        type: 'conflict',
+        slug: 'conflict-music',
+        body: 'Conflict between music atoms.',
+        scope: { tags: ['music', 'notation'] },
+      });
+      // No reindex — file scan path
+
+      const result = wanderFromFiles({
+        memoryDir: testDir,
+        seedTags: ['music'],
+        steps: 3,
+        threshold: 0.001,
+        topK: 50,
+      });
+
+      const types = result.activated.map(a => a.type);
+      expect(types).not.toContain('conflict');
+    });
+  });
+
   describe('wanderFromFiles (fallback)', () => {
     it('should work without index', () => {
       createTestGraph(testDir);

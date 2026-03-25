@@ -36,7 +36,8 @@ export interface WanderOptions {
   seeds?: string[];
   /** Seed tags (alternative to atom IDs) */
   seedTags?: string[];
-  /** Number of spreading steps (default: 3) */
+  /** Number of spreading steps (default: 3). When 0, seeds are initialized
+   *  but no spreading or collision detection occurs. */
   steps?: number;
   /** Minimum activation to keep a node alive (default: 0.05) */
   threshold?: number;
@@ -107,27 +108,38 @@ function baseLevelActivation(updatedAt: string, now: number): number {
 
 /**
  * Build the tag co-occurrence graph from the SQLite index.
- * Only includes active, non-SECRET/PERSONAL atoms. Tags are joined
- * to the filtered atom set to avoid scanning archived/expired tags.
+ * Only includes active, non-SECRET/PERSONAL, non-conflict atoms. Tags are
+ * joined to the filtered atom set to avoid scanning archived/expired tags.
+ *
+ * Both queries run inside a single transaction to guarantee a consistent
+ * snapshot (SQLite WAL mode can otherwise return different snapshots for
+ * separate SELECTs).
  */
 function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
   const db = openIndex(memoryDir);
 
-  const atoms = db.prepare(`
-    SELECT a.atom_id, a.type, a.updated_at
-    FROM atoms a
-    WHERE a.status NOT IN ('archived', 'expired')
-      AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
-  `).all() as { atom_id: string; type: string; updated_at: string }[];
+  const ATOM_FILTER = `
+    a.status NOT IN ('archived', 'expired')
+    AND a.type != 'conflict'
+    AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
+  `;
 
-  // Join tags to filtered atoms only (#4: avoid full-table scan of atom_tags)
-  const tagRows = db.prepare(`
-    SELECT t.atom_id, t.tag
-    FROM atom_tags t
-    INNER JOIN atoms a ON t.atom_id = a.atom_id
-    WHERE a.status NOT IN ('archived', 'expired')
-      AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
-  `).all() as { atom_id: string; tag: string }[];
+  const { atoms, tagRows } = db.transaction(() => {
+    const atoms = db.prepare(`
+      SELECT a.atom_id, a.type, a.updated_at
+      FROM atoms a
+      WHERE ${ATOM_FILTER}
+    `).all() as { atom_id: string; type: string; updated_at: string }[];
+
+    const tagRows = db.prepare(`
+      SELECT t.atom_id, t.tag
+      FROM atom_tags t
+      INNER JOIN atoms a ON t.atom_id = a.atom_id
+      WHERE ${ATOM_FILTER}
+    `).all() as { atom_id: string; tag: string }[];
+
+    return { atoms, tagRows };
+  })();
 
   // Build tag lookup
   const tagsByAtom = new Map<string, string[]>();
@@ -395,8 +407,10 @@ function wanderWithGraph(
 
   // Detect collisions — pairs of activated atoms from different types
   // Score = combined_activation * distance (higher distance = more surprising)
+  // Distance cache avoids redundant BFS walks (O(n^2) pairs with topK=20 → 190 lookups)
   const collisions: Collision[] = [];
   const activatedIds = activated.map((a) => a.atom_id);
+  const distanceCache = new Map<string, number>();
 
   for (let i = 0; i < activatedIds.length; i++) {
     for (let j = i + 1; j < activatedIds.length; j++) {
@@ -415,8 +429,13 @@ function wanderWithGraph(
       // Skip if no shared tags (no structural overlap)
       if (sharedTags.length === 0) continue;
 
-      // Compute distance
-      const dist = tagDistance(idA, idB, graph, tagIndex);
+      // Compute distance (memoized — BFS is symmetric)
+      const pairKey = idA < idB ? `${idA}\0${idB}` : `${idB}\0${idA}`;
+      let dist = distanceCache.get(pairKey);
+      if (dist === undefined) {
+        dist = tagDistance(idA, idB, graph, tagIndex);
+        distanceCache.set(pairKey, dist);
+      }
 
       // Score: activation product * distance bonus
       const actA = activation.get(idA) ?? 0;
@@ -524,7 +543,9 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
 
   for (const atom of atoms) {
     const fm = atom.frontmatter;
+    if (!fm.id) continue;
     if (fm.status === 'archived' || fm.status === 'expired') continue;
+    if (fm.type === 'conflict') continue;
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
 
     graph.set(fm.id, {

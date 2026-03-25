@@ -42,7 +42,7 @@ import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
 import { renderClaudeMd } from '../render.js';
-import { wander } from '../wander.js';
+import { wander, wanderFromFiles } from '../wander.js';
 import type { Classification } from '../types.js';
 
 const program = new Command();
@@ -751,12 +751,13 @@ program
       process.exit(1);
     }
 
-    if (!indexExists(memoryDir)) {
-      console.error('✗ No index found. Run "mk reindex" first.');
-      process.exit(1);
+    const useFiles = !indexExists(memoryDir);
+    if (useFiles) {
+      console.error('⚠ No index found — falling back to file scan (slower). Run "mk reindex" for faster results.');
     }
 
-    const result = wander({
+    const wanderFn = useFiles ? wanderFromFiles : wander;
+    const result = wanderFn({
       memoryDir,
       seeds: opts.seed,
       seedTags: opts.tags,
