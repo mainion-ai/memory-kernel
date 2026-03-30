@@ -429,8 +429,8 @@ describe('Serialization edge cases', () => {
 
   it('should preserve numeric ttl_days through roundtrip', () => {
     initMemoryDir(testDir);
-    const atom = createAtom({ ...base(testDir), type: 'belief', slug: 'ttl-test', body: 'Test' });
-    expect(atom.frontmatter.ttl_days).toBe(30); // Default for belief
+    const atom = createAtom({ ...base(testDir), type: 'conflict', slug: 'ttl-test', body: 'Test' });
+    expect(atom.frontmatter.ttl_days).toBe(30); // Default for conflict
 
     const loaded = readAtom(atom.filePath!);
     expect(loaded.frontmatter.ttl_days).toBe(30);
@@ -724,8 +724,8 @@ describe('TTL and expiry', () => {
 
   it('should expire atoms past their TTL', () => {
     initMemoryDir(testDir);
-    // Create a belief (ttl_days=30) with created_at 60 days ago
-    const atom = createAtom({ ...base(testDir), type: 'belief', slug: 'old-belief', body: 'Old belief' });
+    // Create a conflict (ttl_days=30) with created_at 60 days ago
+    const atom = createAtom({ ...base(testDir), type: 'conflict', slug: 'old-conflict', body: 'Old conflict' });
 
     // Backdate the created_at by 60 days
     const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -751,8 +751,8 @@ describe('TTL and expiry', () => {
 
   it('should not expire atoms still within their TTL', () => {
     initMemoryDir(testDir);
-    // Create a belief with ttl_days=30, created_at = now (well within TTL)
-    createAtom({ ...base(testDir), type: 'belief', slug: 'fresh-belief', body: 'Fresh belief' });
+    // Create a conflict with ttl_days=30, created_at = now (well within TTL)
+    createAtom({ ...base(testDir), type: 'conflict', slug: 'fresh-conflict', body: 'Fresh conflict' });
 
     const result = reflect(base(testDir));
     expect(result.expired).toBe(0);
@@ -760,7 +760,7 @@ describe('TTL and expiry', () => {
 
   it('should skip already archived atoms', () => {
     initMemoryDir(testDir);
-    const atom = createAtom({ ...base(testDir), type: 'belief', slug: 'pre-archived', body: 'Already archived' });
+    const atom = createAtom({ ...base(testDir), type: 'conflict', slug: 'pre-archived', body: 'Already archived' });
 
     // Backdate and archive it manually
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -774,7 +774,7 @@ describe('TTL and expiry', () => {
 
   it('should emit atom_expired event on expiry', () => {
     initMemoryDir(testDir);
-    const atom = createAtom({ ...base(testDir), type: 'belief', slug: 'expiry-event', body: 'Will expire' });
+    const atom = createAtom({ ...base(testDir), type: 'conflict', slug: 'expiry-event', body: 'Will expire' });
 
     // Backdate
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -794,18 +794,18 @@ describe('TTL and expiry', () => {
     // Fresh fact (no TTL) — should survive
     createAtom({ ...base(testDir), type: 'fact', slug: 'fresh-fact', body: 'Should survive' });
 
-    // Old belief (ttl=30, created 60 days ago) — should expire
-    const oldBelief = createAtom({ ...base(testDir), type: 'belief', slug: 'old-belief', body: 'Should expire' });
+    // Old conflict (ttl=30, created 60 days ago) — should expire
+    const oldConflict = createAtom({ ...base(testDir), type: 'conflict', slug: 'old-conflict', body: 'Should expire' });
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    oldBelief.frontmatter.created_at = oldDate;
-    writeAtom(oldBelief, oldBelief.filePath!);
+    oldConflict.frontmatter.created_at = oldDate;
+    writeAtom(oldConflict, oldConflict.filePath!);
 
-    // Fresh belief (ttl=30, created now) — should survive
-    createAtom({ ...base(testDir), type: 'belief', slug: 'fresh-belief', body: 'Should survive too' });
+    // Fresh conflict (ttl=30, created now) — should survive
+    createAtom({ ...base(testDir), type: 'conflict', slug: 'fresh-conflict', body: 'Should survive too' });
 
     const result = reflect(base(testDir));
     expect(result.expired).toBe(1);
-    expect(listAtoms(testDir).length).toBe(2); // fact + fresh belief
+    expect(listAtoms(testDir).length).toBe(2); // fact + fresh conflict
   });
 
   it('should verify DEFAULT_TTLS are correct', () => {
@@ -813,10 +813,10 @@ describe('TTL and expiry', () => {
     expect(DEFAULT_TTLS['decision']).toBeNull();
     expect(DEFAULT_TTLS['constraint']).toBeNull();
     expect(DEFAULT_TTLS['procedure']).toBeNull();
-    expect(DEFAULT_TTLS['belief']).toBe(30);
+    expect(DEFAULT_TTLS['belief']).toBeNull();
     expect(DEFAULT_TTLS['open_question']).toBe(90);
     expect(DEFAULT_TTLS['entity_summary']).toBe(180);
-    expect(DEFAULT_TTLS['preference']).toBe(180);
+    expect(DEFAULT_TTLS['preference']).toBeNull();
     expect(DEFAULT_TTLS['conflict']).toBe(30);
   });
 });
@@ -1013,8 +1013,8 @@ describe('Reflect — full cycle', () => {
   it('should handle combined expiry + dedup + promotion in one cycle', () => {
     initMemoryDir(testDir);
 
-    // 1. Expired belief (ttl=30, created 60 days ago)
-    const expired = createAtom({ ...base(testDir), type: 'belief', slug: 'will-expire', body: 'Expired' });
+    // 1. Expired conflict (ttl=30, created 60 days ago)
+    const expired = createAtom({ ...base(testDir), type: 'conflict', slug: 'will-expire', body: 'Expired' });
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     expired.frontmatter.created_at = oldDate;
     writeAtom(expired, expired.filePath!);
@@ -1065,8 +1065,26 @@ describe('Retain operations', () => {
     const question = createAtom({ ...base(testDir), type: 'open_question', slug: 'ttl-q', body: 'Q' });
 
     expect(fact.frontmatter.ttl_days).toBeNull();
-    expect(belief.frontmatter.ttl_days).toBe(30);
+    expect(belief.frontmatter.ttl_days).toBeNull();
     expect(question.frontmatter.ttl_days).toBe(90);
+  });
+
+  it('should respect explicit ttl_days override on type with null default', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'fact', slug: 'ttl-override', body: 'Test', ttl_days: 7 });
+    expect(atom.frontmatter.ttl_days).toBe(7);
+  });
+
+  it('should allow null ttl_days override on type with numeric default', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'conflict', slug: 'no-ttl', body: 'Test', ttl_days: null });
+    expect(atom.frontmatter.ttl_days).toBeNull();
+  });
+
+  it('should allow ttl_days: 0 override (ephemeral)', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'decision', slug: 'ephemeral', body: 'Test', ttl_days: 0 });
+    expect(atom.frontmatter.ttl_days).toBe(0);
   });
 
   it('createAtom should throw on invalid frontmatter', () => {
@@ -1371,7 +1389,7 @@ describe('Index consistency', () => {
     initMemoryDir(testDir);
 
     // Expired atom
-    const expired = createAtom({ ...base(testDir), type: 'belief', slug: 'idx-expired', body: 'Old' });
+    const expired = createAtom({ ...base(testDir), type: 'conflict', slug: 'idx-expired', body: 'Old' });
     const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     expired.frontmatter.created_at = oldDate;
     writeAtom(expired, expired.filePath!);
@@ -1717,12 +1735,12 @@ describe('Sprint 1 — reflect keeps index in sync', () => {
 
     const atom = createAtom({
       ...base(testDir),
-      type: 'belief',
+      type: 'conflict',
       slug: 'will-expire',
       body: 'This will expire',
     });
 
-    // Manually backdate to make it expired (TTL for belief is 30 days)
+    // Manually backdate to make it expired (TTL for conflict is 30 days)
     const atomOnDisk = readAtom(atom.filePath!);
     atomOnDisk.frontmatter.created_at = pastDate.toISOString().replace(/\.\d{3}Z$/, 'Z');
     atomOnDisk.frontmatter.updated_at = pastDate.toISOString().replace(/\.\d{3}Z$/, 'Z');

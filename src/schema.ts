@@ -130,13 +130,13 @@ export function generateEventId(): string {
 // --- Default TTLs by atom type ---
 
 export const DEFAULT_TTLS: Record<AtomType, number | null> = {
-  decision: null, // Decisions persist
-  constraint: null, // Constraints persist (but need periodic review)
-  open_question: 90, // 90 days
-  belief: 30, // 30 days unless promoted
-  fact: null, // Facts persist
+  decision: null, // Decisions persist until explicitly reversed
+  constraint: null, // Constraints persist (need periodic review)
+  open_question: 90, // 90 days — should resolve or be re-asked
+  belief: null, // Beliefs persist until superseded; confidence scores handle evolution
+  fact: null, // Facts persist as reference data
   procedure: null, // Procedures persist
-  entity_summary: 180, // 6 months
-  preference: 180, // 6 months
-  conflict: 30, // 30 days to resolve
+  entity_summary: 180, // 6 months — stale summaries should refresh
+  preference: null, // Preferences persist until explicitly changed
+  conflict: 30, // 30 days — conflicts should resolve
 };
