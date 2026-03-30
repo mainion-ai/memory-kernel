@@ -45,6 +45,7 @@ export function createAtom(
     slug: string;
     body: string;
     confidence?: number;
+    ttl_days?: number | null;
     classification?: Classification;
     scope?: AtomFrontmatter['scope'];
     provenance?: AtomFrontmatter['provenance'];
@@ -61,7 +62,7 @@ export function createAtom(
     confidence: opts.confidence ?? (opts.type === 'belief' ? 0.5 : 0.8),
     created_at: now,
     updated_at: now,
-    ttl_days: DEFAULT_TTLS[opts.type] ?? null,
+    ttl_days: opts.ttl_days !== undefined ? opts.ttl_days : (DEFAULT_TTLS[opts.type] ?? null),
     scope: opts.scope,
     classification: opts.classification ?? 'TEAM',
     provenance: opts.provenance,
