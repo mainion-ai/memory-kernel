@@ -1069,6 +1069,24 @@ describe('Retain operations', () => {
     expect(question.frontmatter.ttl_days).toBe(90);
   });
 
+  it('should respect explicit ttl_days override on type with null default', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'fact', slug: 'ttl-override', body: 'Test', ttl_days: 7 });
+    expect(atom.frontmatter.ttl_days).toBe(7);
+  });
+
+  it('should allow null ttl_days override on type with numeric default', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'conflict', slug: 'no-ttl', body: 'Test', ttl_days: null });
+    expect(atom.frontmatter.ttl_days).toBeNull();
+  });
+
+  it('should allow ttl_days: 0 override (ephemeral)', () => {
+    initMemoryDir(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'decision', slug: 'ephemeral', body: 'Test', ttl_days: 0 });
+    expect(atom.frontmatter.ttl_days).toBe(0);
+  });
+
   it('createAtom should throw on invalid frontmatter', () => {
     initMemoryDir(testDir);
     expect(() => createAtom({
