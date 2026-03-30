@@ -60,7 +60,7 @@ function patchExpiry(filePath: string): void {
   fs.writeFileSync(
     filePath,
     c
-      .replace(/ttl_days: \d+/, 'ttl_days: 0')
+      .replace(/ttl_days: (\d+|null)/, 'ttl_days: 0')
       .replace(/created_at: [^\n]+/, 'created_at: 2000-01-01T00:00:00Z')
       .replace(/updated_at: [^\n]+/, 'updated_at: 2000-01-01T00:00:00Z'),
   );
