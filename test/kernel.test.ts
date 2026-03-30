@@ -111,7 +111,7 @@ describe('createAtom', () => {
 
     expect(atom.frontmatter.status).toBe('draft');
     expect(atom.frontmatter.confidence).toBe(0.5);
-    expect(atom.frontmatter.ttl_days).toBe(30);
+    expect(atom.frontmatter.ttl_days).toBeNull();
   });
 });
 
