@@ -323,6 +323,73 @@ const stats = embeddingStats('./memory');
 
 ---
 
+## Scoring & Retrieval Improvements (v1.4.0+)
+
+### Temporal decay, type weights, and graph-walk boost
+
+```typescript
+// Temporal decay — blend relevance with freshness
+const context = recall('./memory', {
+  task: 'database migration',
+  decay_half_life: 14,   // atoms 14 days old score 50% of fresh atoms
+  decay_weight: 0.3,     // 30% recency, 70% relevance
+});
+
+// Type-aware weighting — critical types surface even with lower relevance
+const context2 = recall('./memory', {
+  task: 'deploy checklist',
+  type_weights: { constraint: 2.0, decision: 1.5 }, // override defaults
+  type_reservations: { constraint: 600 },           // guarantee 600 tokens of constraints
+});
+
+// Disable graph-walk boost for a single call (overrides RECALL_GRAPH_BOOST env var)
+const context3 = recall('./memory', { task: 'auth', graph_boost: false });
+```
+
+### Relation edges
+
+```typescript
+import { createAtom, addRelation, getRelationsForAtom, getAllRelations, RELATION_TYPES } from 'memory-kernel';
+
+// Create atoms with inline relations
+const a = createAtom({ memoryDir: './memory', type: 'decision', slug: 'use-postgres',
+  body: 'Use PostgreSQL as primary datastore.',
+  relations: [{ target: 'CONS-2026-04-01-NO-NOSQL-abc1', type: 'contradicts' }],
+});
+
+// Add a relation imperatively (writes to frontmatter + index)
+addRelation('./memory', a.frontmatter.id, 'FACT-2026-04-01-POSTGRES-DEF-xyz9', 'supports');
+
+// Query relations for a specific atom
+const { outbound, inbound } = getRelationsForAtom('./memory', a.frontmatter.id);
+// outbound: [{ source_id, target_id, relation_type, created_at }]
+// inbound:  [{ source_id, target_id, relation_type, created_at }]
+
+// Get all edges (for custom graph analysis)
+const allEdges = getAllRelations('./memory');
+
+// Valid relation types
+console.log(RELATION_TYPES); // ['extends','contradicts','supports','caused_by','supersedes','related']
+```
+
+### Backfill existing relations
+
+```bash
+# Preview migrations without writing
+mk migrate-relations -d ./memory --dry-run
+
+# Apply: migrate links.related → relations[] + mine body text for atom ID references
+mk migrate-relations -d ./memory --apply
+
+# Add a relation edge manually
+mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-PERF-BENCH-xyz9 -d ./memory
+
+# Show all edges for an atom
+mk relations DECI-2026-04-01-USE-POSTGRES-abc1 -d ./memory
+```
+
+---
+
 ## Episode Store (v0.6.0+)
 
 ```typescript
