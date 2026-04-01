@@ -58,6 +58,7 @@ function getDecayWeight(): number {
  * Future-dated atoms are clamped to decay=1.0 (no boost beyond 1).
  */
 export function temporalDecay(createdAt: string, halfLifeDays: number): number {
+  if (halfLifeDays <= 0) return 0; // Guard against division by zero
   const ageMs = Date.now() - new Date(createdAt).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
@@ -105,10 +106,14 @@ export function recall(
     filtered = filterAtoms(allAtoms, query);
   }
 
-  // Base sort: status priority, then temporal decay (fresher atoms first)
+  // Base sort: status priority, then temporal decay (fresher atoms first).
+  // When decayWeight is 0, fall back to updated_at DESC (original behavior).
   filtered.sort((a, b) => {
     const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
     if (statusOrder !== 0) return statusOrder;
+    if (decayWeight === 0) {
+      return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
+    }
     const decayA = temporalDecay(a.frontmatter.created_at, halfLife);
     const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
     return decayB - decayA;

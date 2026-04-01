@@ -77,6 +77,12 @@ describe('temporalDecay function', () => {
     // Should be close to 1.0 (~0.944)
     expect(decay).toBeGreaterThan(0.9);
   });
+
+  it('halfLifeDays <= 0 returns 0 (guard against division by zero)', () => {
+    const now = new Date().toISOString();
+    expect(temporalDecay(now, 0)).toBe(0);
+    expect(temporalDecay(now, -5)).toBe(0);
+  });
 });
 
 describe('recall with temporal decay (task-aware)', () => {
@@ -191,6 +197,32 @@ describe('recall with temporal decay (no task)', () => {
     const oldIdx = ids.indexOf(old.frontmatter.id);
 
     expect(recentIdx).toBeLessThan(oldIdx);
+  });
+
+  it('decay_weight=0 falls back to updated_at DESC ordering', () => {
+    const base = { memoryDir: testDir, agent_id: 'a', session_id: 's' };
+
+    // Create two atoms: A is older (created 60 days ago) but recently updated,
+    // B is newer (created today) but not updated since creation.
+    const atomA = createAtom({ ...base, type: 'fact', slug: 'old-but-updated', body: 'Old but updated' });
+    const atomB = createAtom({ ...base, type: 'fact', slug: 'new-not-updated', body: 'New not updated' });
+
+    // Backdate A's created_at to 60 days ago, but leave updated_at as now
+    const fileA = atomA.filePath!;
+    const currentA = readAtom(fileA);
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+    currentA.frontmatter.created_at = sixtyDaysAgo.toISOString();
+    // Set updated_at to a moment after B's updated_at so A sorts first by updated_at
+    currentA.frontmatter.updated_at = new Date(Date.now() + 1000).toISOString();
+    writeAtom(currentA, fileA);
+
+    // With decay_weight=0, should use updated_at DESC → A first (more recently updated)
+    const bundle = recall(testDir, { decay_weight: 0 });
+
+    const ids = bundle.atoms.map((a) => a.frontmatter.id);
+    const idxA = ids.indexOf(atomA.frontmatter.id);
+    const idxB = ids.indexOf(atomB.frontmatter.id);
+    expect(idxA).toBeLessThan(idxB);
   });
 
   it('status priority still takes precedence over recency', () => {
