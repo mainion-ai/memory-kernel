@@ -100,6 +100,8 @@ export function recall(
         }
       })
       .filter((a): a is Atom => a !== null);
+    // Note: index query returns status+updated_at ordering, but we re-sort
+    // below to apply temporal decay — the index sort is insufficient.
   } else {
     // No index — full file scan + in-memory filter
     const allAtoms = listAtoms(memoryDir);
