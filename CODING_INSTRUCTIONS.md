@@ -31,6 +31,11 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/import.test.ts` | `importFromFile()`, `previewImport()`, `extractChunks()`: heading extraction, type/confidence inference, dry-run mode |
 | `test/compaction-loss.test.ts` | 13 PR-gate torture tests: section survival (Numbers, Conditional Logic, Rationale, Cross-links, Open Questions), multi-cycle stability, replay determinism, reflect idempotence, recall correctness |
 | `test/stress.test.ts` | Edge cases, error paths, and invariants across all subsystems |
+| `test/recall-temporal-decay.test.ts` | `temporalDecay()` unit tests; no-task recency sort; `decay_weight=0` fallback; status-priority ordering |
+| `test/recall-decay.test.ts` | Integration: decay ranking with `decay_half_life`/`decay_weight` query overrides |
+| `test/recall-scoring.test.ts` | Type-weight multipliers; confidence floor; token reservation two-pass; MCP schema coverage |
+| `test/relations.test.ts` | DDL creation; `indexAtom` edge sync; `getRelationsForAtom`; graph-walk boost in recall |
+| `test/migrate-relations.test.ts` | `links.related` migration; body-text atom ID mining; dry-run; idempotency |
 
 ### Standard test boilerplate
 
@@ -177,6 +182,33 @@ Use case-insensitive comparison when matching atom IDs from FTS results:
 // Atom created with slug 'pagination' gets ID like 'DECI-2026-03-11-PAGINATION-abc12'
 const results = searchFts(dir, 'pagination');
 expect(results![0].atom_id.toLowerCase()).toContain('pagination');  // correct
+```
+
+### `RecallQuery` scoring params — query overrides env var (v1.4.0+)
+
+`decay_half_life`, `decay_weight`, `type_weights`, `type_reservations` follow the pattern: query param beats env var beats default. `graph_boost` is tri-state: `true` forces on, `false` forces off, `undefined` follows `RECALL_GRAPH_BOOST` env var.
+
+```typescript
+// Force graph boost even when RECALL_GRAPH_BOOST=false is set in env
+recall(dir, { task: 'auth', graph_boost: true });
+
+// Zero decay weight = pure relevance ranking, no recency bias
+recall(dir, { task: 'auth', decay_weight: 0 });
+
+// Per-call type boosts: triple weight for constraints
+recall(dir, { task: 'deploy', type_weights: { constraint: 4.5 } });
+```
+
+### `openIndex()` required before `indexAtom()` in tests with relations
+
+`indexAtom()` calls `indexExists()` and no-ops when no index file exists. Tests that create atoms and then assert on relations must call `openIndex(testDir)` in `beforeEach`:
+
+```typescript
+beforeEach(() => {
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-test-'));
+  initMemoryDir(testDir);
+  openIndex(testDir);  // required for indexAtom to actually index
+});
 ```
 
 ### `ttl_days: 0` is valid (ephemeral atoms)

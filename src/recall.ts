@@ -9,11 +9,12 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex, searchFts, getAllEmbeddings } from './index-db.js';
+import { queryIndex, searchFts, getAllEmbeddings, getAllRelations } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
-import type { Atom, ContextBundle, RecallQuery } from './types.js';
+import { DEFAULT_TYPE_WEIGHTS, DEFAULT_CONFIDENCE_FLOOR, DEFAULT_TYPE_RESERVATIONS } from './schema.js';
+import type { Atom, ContextBundle, RecallQuery, AtomType } from './types.js';
 
 // --- Configurable hybrid ranking parameters ---
 
@@ -21,6 +22,12 @@ import type { Atom, ContextBundle, RecallQuery } from './types.js';
 const DEFAULT_SEMANTIC_WEIGHT = 0.6;
 /** Minimum cosine similarity to include an atom in semantic results. Default 0.3. */
 const DEFAULT_MIN_SIMILARITY = 0.3;
+/** Default temporal decay half-life in days. */
+const DEFAULT_DECAY_HALF_LIFE = 30;
+/** Default weight of recency in final score (0 = relevance only, 1 = recency only). */
+const DEFAULT_DECAY_WEIGHT = 0.2;
+/** Default neighbor boost factor for graph-walk spreading activation. */
+const DEFAULT_NEIGHBOR_BOOST = 0.15;
 
 function getSemanticWeight(): number {
   const v = parseFloat(process.env.SEMANTIC_WEIGHT || '');
@@ -36,21 +43,54 @@ function getMinSimilarity(): number {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_MIN_SIMILARITY;
 }
 
-// --- Temporal decay parameters ---
-
-/** Default half-life in days: decay factor = 0.5 at this age. */
-const DEFAULT_DECAY_HALF_LIFE = 30;
-/** Default weight of recency (temporal decay) in final score (0-1). */
-const DEFAULT_DECAY_WEIGHT = 0.2;
-
-function getDecayHalfLife(): number {
+function getDecayHalfLife(query: RecallQueryInternal): number {
+  if (query.decay_half_life !== undefined) return query.decay_half_life;
   const v = parseFloat(process.env.RECALL_DECAY_HALF_LIFE || '');
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_DECAY_HALF_LIFE;
 }
 
-function getDecayWeight(): number {
+function getDecayWeight(query: RecallQueryInternal): number {
+  if (query.decay_weight !== undefined) return query.decay_weight;
   const v = parseFloat(process.env.RECALL_DECAY_WEIGHT || '');
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_DECAY_WEIGHT;
+}
+
+function getTypeWeights(query: RecallQueryInternal): Record<AtomType, number> {
+  const base = { ...DEFAULT_TYPE_WEIGHTS };
+  const envRaw = process.env.RECALL_TYPE_WEIGHTS;
+  if (envRaw) {
+    try {
+      Object.assign(base, JSON.parse(envRaw));
+    } catch {
+      process.stderr.write('memory-kernel: RECALL_TYPE_WEIGHTS is not valid JSON, using defaults\n');
+    }
+  }
+  if (query.type_weights) Object.assign(base, query.type_weights);
+  return base;
+}
+
+function getTypeReservations(query: RecallQueryInternal): Partial<Record<AtomType, number>> {
+  const base = { ...DEFAULT_TYPE_RESERVATIONS };
+  const envRaw = process.env.RECALL_TYPE_RESERVATIONS;
+  if (envRaw) {
+    try {
+      Object.assign(base, JSON.parse(envRaw));
+    } catch {
+      process.stderr.write('memory-kernel: RECALL_TYPE_RESERVATIONS is not valid JSON, using defaults\n');
+    }
+  }
+  if (query.type_reservations) Object.assign(base, query.type_reservations);
+  return base;
+}
+
+function getConfidenceFloor(): number {
+  const v = parseFloat(process.env.RECALL_CONFIDENCE_FLOOR || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_CONFIDENCE_FLOOR;
+}
+
+function getNeighborBoost(): number {
+  const v = parseFloat(process.env.RECALL_NEIGHBOR_BOOST || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_NEIGHBOR_BOOST;
 }
 
 /**
@@ -81,10 +121,6 @@ export function recall(
   const handoff = readView(memoryDir, 'HANDOFF.md');
   const constraints = readView(memoryDir, 'CONSTRAINTS.md');
 
-  // Resolve decay parameters (query overrides > env vars > defaults)
-  const halfLife = query.decay_half_life ?? getDecayHalfLife();
-  const decayWeight = query.decay_weight ?? getDecayWeight();
-
   // Try indexed query first, fall back to file scan
   let filtered: Atom[];
   const indexResults = queryIndex(memoryDir, query);
@@ -108,18 +144,11 @@ export function recall(
     filtered = filterAtoms(allAtoms, query);
   }
 
-  // Base sort: status priority, then temporal decay (fresher atoms first).
-  // When decayWeight is 0, fall back to updated_at DESC (original behavior).
-  filtered.sort((a, b) => {
-    const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
-    if (statusOrder !== 0) return statusOrder;
-    if (decayWeight === 0) {
-      return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
-    }
-    const decayA = temporalDecay(a.frontmatter.created_at, halfLife);
-    const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
-    return decayB - decayA;
-  });
+  // --- Scoring setup (phases 1 + 2) ---
+  const halfLife = getDecayHalfLife(query);
+  const decayWeight = getDecayWeight(query);
+  const typeWeights = getTypeWeights(query);
+  const confFloor = getConfidenceFloor();
 
   // Task-aware re-ranking: if a task is provided, use FTS BM25 scores to re-order.
   // When embeddings are available and a query vector is provided, combine FTS + semantic scores.
@@ -163,45 +192,86 @@ export function recall(
     const hasFts = ftsScoreMap.size > 0;
     const hasSemantic = semanticScoreMap.size > 0;
 
+    // finalScoreMap is populated when signals exist; stays empty otherwise.
+    // An empty map degrades gracefully: applyTokenBudget falls back to
+    // insertion-order greedy fill (all scores 0 → stable sort).
+    let finalScoreMap = new Map<string, number>();
+
     if (hasFts || hasSemantic) {
-      // Combine scores using configurable weights (env SEMANTIC_WEIGHT, default 0.6)
+      // Combine scores using configurable weights (env SEMANTIC_WEIGHT, default 0.6).
       // When only one signal is available, it gets full weight.
       const FTS_WEIGHT = hasSemantic ? getFtsWeight() : 1.0;
       const SEMANTIC_WEIGHT = hasFts ? getSemanticWeight() : 1.0;
 
+      // Memoize final_score per atom before sorting (O(n)) to avoid re-computing
+      // decay + type_weight + conf_factor inside the comparator (O(n log n) otherwise).
+      for (const atom of filtered) {
+        const id = atom.frontmatter.id;
+        const fts = ftsScoreMap.get(id) ?? 0;
+        const sem = semanticScoreMap.get(id) ?? 0;
+        const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
+        const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
+        const baseScore = relevance * (1 - decayWeight) + recency * decayWeight;
+        const typeWeight = typeWeights[atom.frontmatter.type] ?? 1.0;
+        // conf_factor: floor + (1-floor)*confidence — ensures even 0-confidence atoms
+        // still contribute at `floor` level rather than being zeroed out
+        const confFactor = confFloor + (1 - confFloor) * atom.frontmatter.confidence;
+        finalScoreMap.set(id, baseScore * typeWeight * confFactor);
+      }
+
+      // Phase 3: graph-walk boost (single-hop spreading activation).
+      // query.graph_boost takes precedence over env var when explicitly set.
+      const useGraphBoost = query.graph_boost !== undefined
+        ? query.graph_boost
+        : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
+      if (useGraphBoost) {
+        const relations = getAllRelations(memoryDir);
+        if (relations.length > 0) {
+          applyGraphBoost(finalScoreMap, relations, getNeighborBoost());
+        }
+      }
+
       filtered.sort((a, b) => {
-        const ftsA = ftsScoreMap.get(a.frontmatter.id) ?? 0;
-        const ftsB = ftsScoreMap.get(b.frontmatter.id) ?? 0;
-        const semA = semanticScoreMap.get(a.frontmatter.id) ?? 0;
-        const semB = semanticScoreMap.get(b.frontmatter.id) ?? 0;
+        const scoreA = finalScoreMap.get(a.frontmatter.id) ?? 0;
+        const scoreB = finalScoreMap.get(b.frontmatter.id) ?? 0;
 
-        const relevanceA = ftsA * FTS_WEIGHT + semA * SEMANTIC_WEIGHT;
-        const relevanceB = ftsB * FTS_WEIGHT + semB * SEMANTIC_WEIGHT;
-
-        // Blend relevance with temporal decay
-        const recencyA = temporalDecay(a.frontmatter.created_at, halfLife);
-        const recencyB = temporalDecay(b.frontmatter.created_at, halfLife);
-        const scoreA = relevanceA * (1 - decayWeight) + recencyA * decayWeight;
-        const scoreB = relevanceB * (1 - decayWeight) + recencyB * decayWeight;
-
-        // Higher combined score = better match
         if (scoreA !== scoreB) return scoreB - scoreA;
 
-        // Fallback: status priority, then temporal decay
+        // Fallback: status priority, then recency
         const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
         if (statusOrder !== 0) return statusOrder;
-        return recencyB - recencyA;
+        return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
       });
     }
+
+    // Apply token budget — always when max_tokens is set, even if FTS had no results.
+    // When finalScoreMap is empty, applyTokenBudget degrades to greedy insertion-order fill.
+    if (query.max_tokens) {
+      const baseTokens = estimateTokens(index + handoff + constraints);
+      const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+      filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
+    }
+  } else {
+    // No task: status priority first, then temporal decay (or updated_at when decay_weight=0).
+    filtered.sort((a, b) => {
+      const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
+      if (statusOrder !== 0) return statusOrder;
+      if (decayWeight === 0) {
+        return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
+      }
+      const decayA = temporalDecay(a.frontmatter.created_at, halfLife);
+      const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
+      return decayB - decayA;
+    });
   }
 
   // Estimate base view tokens (rough: 4 chars per token)
   const baseTokens = estimateTokens(index + handoff + constraints);
 
-  // Apply token budget if specified (subtract base view cost first)
-  if (query.max_tokens) {
+  // Apply token budget for no-task path (task path applies budget inside its scoring block)
+  if (query.max_tokens && !(query.task && query.task.trim().length > 0)) {
     const atomBudget = Math.max(0, query.max_tokens - baseTokens);
-    filtered = applyTokenBudget(filtered, atomBudget);
+    filtered = applyTokenBudget(filtered, atomBudget, query, new Map());
   }
   const atomTokens = filtered.reduce(
     (sum, a) => sum + estimateTokens(a.body + JSON.stringify(a.frontmatter)),
@@ -351,19 +421,114 @@ function getStatusPriority(status: string): number {
 
 /**
  * Trim atom list to fit within token budget.
+ *
+ * Two-pass reservation-aware algorithm (Phase 2):
+ * Pass 1: fill reserved type quotas from atoms of that type (sorted by score).
+ * Pass 2: merge remaining atoms, greedy fill with remaining budget, re-sort by score.
+ *
+ * When finalScoreMap is empty (no-task path), reservation logic degrades to
+ * insertion-order greedy fill (scores all 0 → stable sort).
  */
-function applyTokenBudget(atoms: Atom[], maxTokens: number): Atom[] {
+function applyTokenBudget(
+  atoms: Atom[],
+  maxTokens: number,
+  query: RecallQueryInternal,
+  finalScoreMap: Map<string, number>,
+): Atom[] {
+  const reservations = getTypeReservations(query);
+  const reservedTypes = Object.keys(reservations) as AtomType[];
+
+  if (reservedTypes.length === 0) {
+    return greedyFill(atoms, maxTokens);
+  }
+
+  // Pass 1: fill reserved slots per type
+  const reserved: Atom[] = [];
+  const unreserved: Atom[] = [];
+  const reservedUsed: Partial<Record<AtomType, number>> = {};
+
+  for (const atom of atoms) {
+    const quota = reservations[atom.frontmatter.type];
+    if (quota !== undefined) {
+      const used = reservedUsed[atom.frontmatter.type] ?? 0;
+      const tokens = estimateTokens(atom.body + JSON.stringify(atom.frontmatter));
+      if (used + tokens <= quota) {
+        reserved.push(atom);
+        reservedUsed[atom.frontmatter.type] = used + tokens;
+        continue;
+      }
+    }
+    unreserved.push(atom);
+  }
+
+  const reservedTokens = reserved.reduce(
+    (sum, a) => sum + estimateTokens(a.body + JSON.stringify(a.frontmatter)),
+    0,
+  );
+  const remainingBudget = Math.max(0, maxTokens - reservedTokens);
+
+  // Pass 2: sort unreserved by score, fill remaining budget
+  unreserved.sort((a, b) =>
+    (finalScoreMap.get(b.frontmatter.id) ?? 0) - (finalScoreMap.get(a.frontmatter.id) ?? 0),
+  );
+  const fromUnreserved = greedyFill(unreserved, remainingBudget);
+
+  // Merge and re-sort by score for output ordering
+  const merged = [...reserved, ...fromUnreserved];
+  merged.sort((a, b) =>
+    (finalScoreMap.get(b.frontmatter.id) ?? 0) - (finalScoreMap.get(a.frontmatter.id) ?? 0),
+  );
+  return merged;
+}
+
+function greedyFill(atoms: Atom[], maxTokens: number): Atom[] {
   const result: Atom[] = [];
   let total = 0;
-
   for (const atom of atoms) {
     const tokens = estimateTokens(atom.body + JSON.stringify(atom.frontmatter));
     if (total + tokens > maxTokens) break;
     result.push(atom);
     total += tokens;
   }
-
   return result;
+}
+
+/**
+ * Single-hop graph-walk spreading activation (Phase 3).
+ *
+ * For each edge (source, target): boost the neighbor by source_score * boost_factor.
+ * The boost is undirected — high-scoring targets also lift their sources.
+ * Diminishing returns formula prevents runaway amplification in dense subgraphs:
+ *   accumulated_boost += score * boost * (1 / (1 + accumulated_boost))
+ */
+function applyGraphBoost(
+  scoreMap: Map<string, number>,
+  relations: { source_id: string; target_id: string }[],
+  boost: number,
+): void {
+  if (boost === 0) return;
+  const boostAccumulator = new Map<string, number>();
+
+  for (const rel of relations) {
+    const sourceScore = scoreMap.get(rel.source_id);
+    const targetScore = scoreMap.get(rel.target_id);
+
+    // Boost target from source
+    if (sourceScore !== undefined && sourceScore > 0) {
+      const current = boostAccumulator.get(rel.target_id) ?? 0;
+      boostAccumulator.set(rel.target_id, current + sourceScore * boost * (1 / (1 + current)));
+    }
+
+    // Boost source from target (undirected walk)
+    if (targetScore !== undefined && targetScore > 0) {
+      const current = boostAccumulator.get(rel.source_id) ?? 0;
+      boostAccumulator.set(rel.source_id, current + targetScore * boost * (1 / (1 + current)));
+    }
+  }
+
+  for (const [atomId, addedBoost] of boostAccumulator) {
+    scoreMap.set(atomId, (scoreMap.get(atomId) ?? 0) + addedBoost);
+  }
 }
 
 /**

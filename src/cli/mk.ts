@@ -46,6 +46,8 @@ import { renderClaudeMd } from '../render.js';
 import { wander, wanderFromFiles } from '../wander.js';
 import { embedAtom, embedAllAtoms } from '../embed-sync.js';
 import type { Classification } from '../types.js';
+import { registerRelateCommand, registerRelationsCommand } from './relate.js';
+import { registerMigrateRelationsCommand } from './migrate-relations.js';
 
 const program = new Command();
 
@@ -142,6 +144,8 @@ program
   .option('--decay-half-life <days>', 'Half-life for temporal decay in days (default: 30)', parseFloat)
   .option('--decay-weight <n>', 'Weight of recency in scoring, 0-1 (default: 0.2)', parseFloat)
   .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
+  .option('--graph', 'Enable graph-relation neighbor boost (default: on)')
+  .option('--no-graph', 'Disable graph-relation neighbor boost')
   .action((opts: {
     dir: string;
     task?: string;
@@ -151,6 +155,7 @@ program
     decayHalfLife?: number;
     decayWeight?: number;
     includeEpisodes?: boolean;
+    graph: boolean; // Commander sets this to true/false via --graph/--no-graph
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
@@ -166,6 +171,7 @@ program
       decay_half_life: opts.decayHalfLife,
       decay_weight: opts.decayWeight,
       include_episodes: opts.includeEpisodes,
+      graph_boost: opts.graph,
     });
 
     console.log(`=== Context Bundle (≈${bundle.token_estimate} tokens) ===\n`);
@@ -836,5 +842,10 @@ program
       console.log('\nNo collisions found. Try broader seeds or more steps.');
     }
   });
+
+// --- Phase 3: Relation commands ---
+registerRelateCommand(program);
+registerRelationsCommand(program);
+registerMigrateRelationsCommand(program);
 
 program.parse();

@@ -86,7 +86,7 @@ Everything the system does is one of these:
 
 **Retain** — Store knowledge. `createAtom()`, `updateAtom()`, `archiveAtom()`. Every action emits an event.
 
-**Recall** — Query knowledge. Filter by type, status, tags, paths. Hybrid re-ranking when a task description is provided: FTS5 BM25 (keyword match) + cosine similarity (semantic match) with configurable weights. Embeddings are opt-in — no API key means FTS-only, zero behavior change. Trim to token budget. Falls back to file scan when no index exists.
+**Recall** — Query knowledge. Filter by type, status, tags, paths. When a task description is provided, atoms are re-ranked by a composite score: `relevance * (1 - decay_weight) + recency * decay_weight`, multiplied by a per-type weight and a confidence factor. Relevance combines FTS5 BM25 (keyword match) and optional cosine similarity (semantic match). Recency uses exponential decay with a configurable half-life. Critical types (`constraint`, `decision`) carry higher weights and can reserve guaranteed token slots. A graph-walk boost lifts atoms connected to high-scoring neighbours. Token budget enforced with two-pass reservation. Embeddings are opt-in — no API key means FTS-only, zero behavior change. Falls back to file scan when no index exists.
 
 **Reflect** — Consolidate. Expire atoms past TTL. Deduplicate identical content. Promote beliefs with confidence >= 0.9 to facts. Detect conflicts between overlapping atoms. Regenerate all views.
 
@@ -127,7 +127,7 @@ my-memory/
 | `mk init [dir]` | Initialize memory directory |
 | `mk status -d <dir>` | Show atom counts, tag stats, index status |
 | `mk remember -d <dir> --type <type> "body"` | Create an atom |
-| `mk recall -d <dir> [--task "text"] [--include-episodes]` | Load context; `--task` enables hybrid FTS + semantic re-ranking |
+| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--half-life N] [--no-graph]` | Load context; `--task` enables hybrid FTS + semantic re-ranking with temporal decay and type weights |
 | `mk reflect -d <dir>` | Consolidate: dedup, expire, promote, detect conflicts |
 | `mk checkpoint -d <dir>` | Generate checkpoint/handoff bundle (stdout) |
 | `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
@@ -142,6 +142,9 @@ my-memory/
 | `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md |
 | `mk replay --from <file>` | Reconstruct state from events |
 | `mk bootstrap-events -d <dir>` | Migrate to V2 event format |
+| `mk relate <src-id> <type> <tgt-id> -d <dir>` | Create a typed relation edge between two atoms |
+| `mk relations <atom-id> -d <dir>` | Show inbound and outbound relation edges for an atom |
+| `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 
 ---
 

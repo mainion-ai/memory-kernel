@@ -42,6 +42,13 @@ npx mk wander -d /workspace/extra/memory --tags api,performance --json
 
 # Validate your memory setup
 npx mk doctor -d /workspace/extra/memory
+
+# Create a typed relation edge between two atoms (v1.4.0+)
+npx mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-BENCH-xyz9 \
+  -d /workspace/extra/memory
+
+# Show all edges for an atom (v1.4.0+)
+npx mk relations DECI-2026-04-01-USE-POSTGRES-abc1 -d /workspace/extra/memory
 ```
 
 ## Semantic Search (Optional)

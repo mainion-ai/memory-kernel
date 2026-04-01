@@ -69,6 +69,25 @@ export interface AtomFrontmatter {
     supersedes?: string[];
     blocked_by?: string[];
   };
+  relations?: Relation[]; // Phase 3: typed graph edges to other atoms
+}
+
+// --- Relation types (Phase 3) ---
+
+export const RELATION_TYPES = [
+  'extends',
+  'contradicts',
+  'supports',
+  'caused_by',
+  'supersedes',
+  'related',
+] as const;
+
+export type RelationType = (typeof RELATION_TYPES)[number];
+
+export interface Relation {
+  target: string; // Atom ID
+  type: RelationType;
 }
 
 // --- Atom (frontmatter + body) ---
@@ -128,11 +147,17 @@ export interface RecallQuery {
   tags?: string[]; // Filter by tags
   include_episodes?: boolean; // Include EPISODES/ session summaries in context bundle
   max_tokens?: number; // Budget for context
-  decay_half_life?: number; // Days until temporal decay factor = 0.5 (default: 30)
-  decay_weight?: number; // Weight of recency in final score, 0-1 (default: 0.2)
   // Read audit: if both set, an 'atom_read' event is emitted after recall completes
   agent_id?: string;
   session_id?: string;
+  // Phase 1: Temporal decay (overrides RECALL_DECAY_HALF_LIFE / RECALL_DECAY_WEIGHT env vars)
+  decay_half_life?: number; // Half-life in days (default 30)
+  decay_weight?: number; // Weight of recency in final score 0-1 (default 0.2)
+  // Phase 2: Type-aware weighting (overrides RECALL_TYPE_WEIGHTS / RECALL_TYPE_RESERVATIONS env vars)
+  type_weights?: Partial<Record<AtomType, number>>; // Per-type score multipliers
+  type_reservations?: Partial<Record<AtomType, number>>; // Min token slots per type
+  // Phase 3: Graph-walk boost
+  graph_boost?: boolean; // Enable/disable neighbor boost (default true)
 }
 
 // --- Episode types ---
