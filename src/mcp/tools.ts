@@ -158,6 +158,9 @@ const recallSchema = {
   max_tokens: z.number().int().min(0).optional().describe('Token budget'),
   decay_half_life: z.number().positive().optional().describe('Half-life for temporal decay in days (default: 30)'),
   decay_weight: z.number().min(0).max(1).optional().describe('Weight of recency vs relevance, 0-1 (default: 0.2)'),
+  type_weights: z.record(z.string(), z.number()).optional().describe('Per-type score multipliers, e.g. {"constraint": 2.0}'),
+  type_reservations: z.record(z.string(), z.number()).optional().describe('Minimum token slots reserved per type, e.g. {"decision": 800}'),
+  graph_boost: z.boolean().optional().describe('Enable graph-walk neighbour boost (default: true)'),
   agent_id: z.string().optional(),
   session_id: z.string().optional(),
 };
@@ -172,6 +175,9 @@ export type RecallInput = {
   max_tokens?: number;
   decay_half_life?: number;
   decay_weight?: number;
+  type_weights?: Record<string, number>;
+  type_reservations?: Record<string, number>;
+  graph_boost?: boolean;
   agent_id?: string;
   session_id?: string;
 };
@@ -190,6 +196,9 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
       max_tokens: input.max_tokens,
       decay_half_life: input.decay_half_life,
       decay_weight: input.decay_weight,
+      type_weights: input.type_weights as Record<import('../types.js').AtomType, number> | undefined,
+      type_reservations: input.type_reservations as Partial<Record<import('../types.js').AtomType, number>> | undefined,
+      graph_boost: input.graph_boost,
       agent_id: agentId,
       session_id: sessionId,
     });

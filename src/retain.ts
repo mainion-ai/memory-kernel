@@ -15,7 +15,7 @@ import {
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
 import { indexAtom, indexExists, removeFromIndex } from './index-db.js';
 import { encryptAtom, resolveKey } from './crypto.js';
-import type { Atom, AtomFrontmatter, AtomType, Classification } from './types.js';
+import type { Atom, AtomFrontmatter, AtomType, Classification, Relation } from './types.js';
 
 /**
  * Serialize an atom snapshot, encrypting it if the atom is SECRET and a key is available.
@@ -50,6 +50,7 @@ export function createAtom(
     scope?: AtomFrontmatter['scope'];
     provenance?: AtomFrontmatter['provenance'];
     links?: AtomFrontmatter['links'];
+    relations?: Relation[];
   },
 ): Atom {
   const now = normalizeTimestamp();
@@ -67,6 +68,7 @@ export function createAtom(
     classification: opts.classification ?? 'TEAM',
     provenance: opts.provenance,
     links: opts.links,
+    relations: opts.relations,
   };
 
   // Validate
@@ -111,7 +113,7 @@ export function createAtom(
 export function updateAtom(
   opts: RetainOptions & {
     filePath: string;
-    updates: Partial<Pick<AtomFrontmatter, 'status' | 'confidence' | 'scope' | 'links' | 'provenance'>>;
+    updates: Partial<Pick<AtomFrontmatter, 'status' | 'confidence' | 'scope' | 'links' | 'provenance' | 'relations'>>;
     body?: string;
   },
 ): Atom {
@@ -134,6 +136,7 @@ export function updateAtom(
   if ('links' in opts.updates) atom.frontmatter.links = opts.updates.links;
   if ('provenance' in opts.updates)
     atom.frontmatter.provenance = opts.updates.provenance;
+  if ('relations' in opts.updates) atom.frontmatter.relations = opts.updates.relations;
   if (opts.body !== undefined) atom.body = opts.body;
 
   atom.frontmatter.updated_at = now;

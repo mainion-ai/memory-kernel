@@ -24,7 +24,8 @@ export type {
 
 // Re-export runtime constants so downstream integrations (e.g. schema builders)
 // can stay in sync with the canonical atom type list.
-export { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS } from './types.js';
+export { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS, RELATION_TYPES } from './types.js';
+export type { Relation, RelationType } from './types.js';
 
 // Schema & validation
 export {
@@ -35,6 +36,9 @@ export {
   generateAtomId,
   generateEventId,
   DEFAULT_TTLS,
+  DEFAULT_TYPE_WEIGHTS,
+  DEFAULT_CONFIDENCE_FLOOR,
+  DEFAULT_TYPE_RESERVATIONS,
   MUTATION_ACTIONS,
   isMutationAction,
 } from './schema.js';
@@ -88,8 +92,11 @@ export {
   getAllEmbeddings,
   isEmbeddingStale,
   embeddingStats,
+  getRelationsForAtom,
+  addRelation,
+  getAllRelations,
 } from './index-db.js';
-export type { IndexQueryResult } from './index-db.js';
+export type { IndexQueryResult, AtomRelation } from './index-db.js';
 
 // Renderers
 export {
