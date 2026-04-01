@@ -139,7 +139,7 @@ program
   .option('--paths <paths...>', 'Scope paths to match')
   .option('--types <types...>', 'Filter by atom type')
   .option('--max-tokens <n>', 'Token budget', parseInt)
-  .option('--decay-half-life <days>', 'Half-life for temporal decay in days (default: 30)', parseInt)
+  .option('--decay-half-life <days>', 'Half-life for temporal decay in days (default: 30)', parseFloat)
   .option('--decay-weight <n>', 'Weight of recency in scoring, 0-1 (default: 0.2)', parseFloat)
   .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
   .action((opts: {
