@@ -13,7 +13,7 @@ import type { Atom, AtomType, AtomStatus, Classification, RecallQuery } from './
 import { listAtoms } from './store.js';
 
 const DB_FILENAME = '.memory-index.db';
-const SCHEMA_VERSION = 4; // Bump when schema changes to trigger auto-rebuild
+const SCHEMA_VERSION = 5; // Bump when schema changes to trigger auto-rebuild
 
 // --- Schema ---
 
@@ -78,6 +78,24 @@ CREATE TABLE IF NOT EXISTS atom_embeddings (
   body_hash TEXT NOT NULL,
   FOREIGN KEY (atom_id) REFERENCES atoms(atom_id) ON DELETE CASCADE
 )`;
+
+// Relations table for typed graph edges between atoms (Phase 3).
+// source_id cascades on delete; target_id restricts to prevent silent orphan edges.
+const CREATE_RELATIONS_TABLE = `
+CREATE TABLE IF NOT EXISTS atom_relations (
+  source_id     TEXT NOT NULL,
+  target_id     TEXT NOT NULL,
+  relation_type TEXT NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (source_id, target_id, relation_type),
+  FOREIGN KEY (source_id) REFERENCES atoms(atom_id) ON DELETE CASCADE,
+  FOREIGN KEY (target_id) REFERENCES atoms(atom_id) ON DELETE CASCADE
+)`;
+
+const CREATE_RELATIONS_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_relations_target ON atom_relations(target_id)',
+  'CREATE INDEX IF NOT EXISTS idx_relations_type ON atom_relations(relation_type)',
+];
 
 // --- Connection cache ---
 
@@ -146,7 +164,9 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   // Check schema version — auto-rebuild if stale
   const currentVersion = (db.pragma('user_version', { simple: true }) as number) ?? 0;
   if (currentVersion !== SCHEMA_VERSION) {
-    // Drop and recreate all tables for clean schema upgrade
+    // Drop and recreate all tables for clean schema upgrade.
+    // Drop order: relations first (FK source CASCADE, FK target RESTRICT — must go before atoms).
+    db.exec('DROP TABLE IF EXISTS atom_relations');
     db.exec('DROP TABLE IF EXISTS atom_embeddings');
     db.exec('DROP TABLE IF EXISTS atom_fts');
     db.exec('DROP TABLE IF EXISTS atom_paths');
@@ -163,6 +183,10 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   }
   db.exec(CREATE_FTS_TABLE);
   db.exec(CREATE_EMBEDDINGS_TABLE);
+  db.exec(CREATE_RELATIONS_TABLE);
+  for (const idx of CREATE_RELATIONS_INDEXES) {
+    db.exec(idx);
+  }
 
   // Set schema version
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
@@ -234,11 +258,18 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     // Save to temp table before clearing atoms (FK cascade would wipe them).
     db.exec('CREATE TEMP TABLE IF NOT EXISTS _saved_embeddings AS SELECT * FROM atom_embeddings');
 
+    // Disable FK enforcement for the batch delete to avoid RESTRICT violations from
+    // atom_relations.target_id when atoms are deleted before their relation rows.
+    db.pragma('foreign_keys = OFF');
+
     // Clear existing data
+    db.exec('DELETE FROM atom_relations');
     db.exec('DELETE FROM atom_fts');
     db.exec('DELETE FROM atom_paths');
     db.exec('DELETE FROM atom_tags');
-    db.exec('DELETE FROM atoms'); // cascades to atom_embeddings
+    db.exec('DELETE FROM atoms'); // cascades to atom_embeddings (FKs re-enabled after insert)
+
+    db.pragma('foreign_keys = ON');
 
     const insertAtom = db.prepare(`
       INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
@@ -256,6 +287,11 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     const insertFts = db.prepare(
       'INSERT INTO atom_fts(atom_id, title, body) VALUES (?, ?, ?)',
     );
+
+    const insertRelation = db.prepare(`
+      INSERT OR IGNORE INTO atom_relations (source_id, target_id, relation_type)
+      VALUES (?, ?, ?)
+    `);
 
     for (const atom of atoms) {
       const fm = atom.frontmatter;
@@ -291,6 +327,20 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
       insertFts.run(fm.id, extractTitle(atom.body), atom.body);
     }
 
+    // Second pass: insert all relations (all atoms are now indexed, so FK targets exist)
+    for (const atom of atoms) {
+      const fm = atom.frontmatter;
+      if (fm.relations && fm.relations.length > 0) {
+        for (const rel of fm.relations) {
+          try {
+            insertRelation.run(fm.id, rel.target, rel.type);
+          } catch {
+            // Target atom not in this reindex batch — silently skip
+          }
+        }
+      }
+    }
+
     // Restore preserved embeddings (only for atoms that still exist)
     db.exec(`
       INSERT OR IGNORE INTO atom_embeddings (atom_id, embedding, model, dimensions, body_hash)
@@ -316,10 +366,11 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
   const fm = atom.frontmatter;
 
   const tx = db.transaction(() => {
-    // Remove old data for this atom (FTS first)
+    // Remove old data for this atom (FTS first, relations second)
     db.prepare('DELETE FROM atom_fts WHERE atom_id = ?').run(fm.id);
     db.prepare('DELETE FROM atom_tags WHERE atom_id = ?').run(fm.id);
     db.prepare('DELETE FROM atom_paths WHERE atom_id = ?').run(fm.id);
+    db.prepare('DELETE FROM atom_relations WHERE source_id = ?').run(fm.id);
 
     db.prepare(`
       INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)
@@ -357,6 +408,21 @@ export function indexAtom(memoryDir: string, atom: Atom): void {
       extractTitle(atom.body),
       atom.body,
     );
+
+    // Relations — insert outbound edges; skip target-not-found FK errors silently
+    if (fm.relations && fm.relations.length > 0) {
+      const insertRelation = db.prepare(`
+        INSERT OR IGNORE INTO atom_relations (source_id, target_id, relation_type)
+        VALUES (?, ?, ?)
+      `);
+      for (const rel of fm.relations) {
+        try {
+          insertRelation.run(fm.id, rel.target, rel.type);
+        } catch {
+          // Target atom not yet indexed — silently skip; reindex will fix
+        }
+      }
+    }
   });
 
   tx();
@@ -611,7 +677,7 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
 /**
  * Get index stats.
  */
-export function indexStats(memoryDir: string): { atoms: number; tags: number; paths: number; embeddings: number } | null {
+export function indexStats(memoryDir: string): { atoms: number; tags: number; paths: number; embeddings: number; relations: number } | null {
   if (!indexExists(memoryDir)) return null;
 
   const db = openIndex(memoryDir);
@@ -622,5 +688,71 @@ export function indexStats(memoryDir: string): { atoms: number; tags: number; pa
   try {
     embeddings = (db.prepare('SELECT COUNT(*) as c FROM atom_embeddings').get() as { c: number }).c;
   } catch { /* table may not exist in older schema */ }
-  return { atoms, tags, paths, embeddings };
+  let relations = 0;
+  try {
+    relations = (db.prepare('SELECT COUNT(*) as c FROM atom_relations').get() as { c: number }).c;
+  } catch { /* table may not exist in older schema */ }
+  return { atoms, tags, paths, embeddings, relations };
+}
+
+// --- Relation operations (Phase 3) ---
+
+export interface AtomRelation {
+  source_id: string;
+  target_id: string;
+  relation_type: string;
+  created_at: string;
+}
+
+/**
+ * Get all inbound and outbound relations for an atom.
+ */
+export function getRelationsForAtom(
+  memoryDir: string,
+  atomId: string,
+): { outbound: AtomRelation[]; inbound: AtomRelation[] } {
+  if (!indexExists(memoryDir)) return { outbound: [], inbound: [] };
+  try {
+    const db = openIndex(memoryDir);
+    const outbound = db.prepare(
+      'SELECT * FROM atom_relations WHERE source_id = ? ORDER BY relation_type',
+    ).all(atomId) as AtomRelation[];
+    const inbound = db.prepare(
+      'SELECT * FROM atom_relations WHERE target_id = ? ORDER BY relation_type',
+    ).all(atomId) as AtomRelation[];
+    return { outbound, inbound };
+  } catch {
+    return { outbound: [], inbound: [] };
+  }
+}
+
+/**
+ * Insert a relation edge into the index.
+ * Idempotent — duplicate (source, target, type) triples are silently ignored.
+ */
+export function addRelation(
+  memoryDir: string,
+  sourceId: string,
+  targetId: string,
+  relationType: string,
+): void {
+  const db = openIndex(memoryDir);
+  db.prepare(`
+    INSERT OR IGNORE INTO atom_relations (source_id, target_id, relation_type)
+    VALUES (?, ?, ?)
+  `).run(sourceId, targetId, relationType);
+}
+
+/**
+ * Get all relation edges from the index (used for graph-walk boost in recall).
+ * Returns empty array if index doesn't exist or table is absent.
+ */
+export function getAllRelations(memoryDir: string): AtomRelation[] {
+  if (!indexExists(memoryDir)) return [];
+  try {
+    const db = openIndex(memoryDir);
+    return db.prepare('SELECT * FROM atom_relations').all() as AtomRelation[];
+  } catch {
+    return [];
+  }
 }

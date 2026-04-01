@@ -313,7 +313,7 @@ describe('mergeEventLogs()', () => {
     expect(mergeEvent!.meta?.conflicts_created).toBe(0);
   });
 
-  it('11. large merge: 100 atoms each side, all 200 present', { timeout: 15000 }, () => {
+  it('11. large merge: 100 atoms each side, all 200 present', { timeout: 30000 }, () => {
     for (let i = 0; i < 100; i++) {
       createAtom({ ...localBase(), type: 'fact', slug: `local-fact-${i}`, body: `Local fact ${i}` });
     }

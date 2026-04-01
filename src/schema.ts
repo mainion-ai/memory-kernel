@@ -10,6 +10,7 @@ import {
   ATOM_TYPES,
   CLASSIFICATIONS,
   EVENT_ACTIONS,
+  RELATION_TYPES,
 } from './types.js';
 
 // --- Atom frontmatter schema ---
@@ -42,6 +43,14 @@ export const AtomFrontmatterSchema = z.object({
       supersedes: z.array(z.string()).optional(),
       blocked_by: z.array(z.string()).optional(),
     })
+    .optional(),
+  relations: z
+    .array(
+      z.object({
+        target: z.string().min(1),
+        type: z.enum(RELATION_TYPES),
+      }),
+    )
     .optional(),
 });
 
@@ -139,4 +148,29 @@ export const DEFAULT_TTLS: Record<AtomType, number | null> = {
   entity_summary: 180, // 6 months — stale summaries should refresh
   preference: null, // Preferences persist until explicitly changed
   conflict: 30, // 30 days — conflicts should resolve
+};
+
+// --- Default scoring parameters (Phase 1 + 2) ---
+
+/** Score multipliers per atom type. Higher = surfaces more in recall. */
+export const DEFAULT_TYPE_WEIGHTS: Record<AtomType, number> = {
+  constraint:     1.5, // Always relevant, structural anchors
+  decision:       1.3, // Architectural decisions
+  procedure:      1.2, // Operational knowledge
+  conflict:       1.1, // Active conflicts need attention
+  fact:           1.0, // Baseline
+  preference:     1.0, // Baseline
+  open_question:  0.9, // Less urgent
+  belief:         0.8, // High volume, exploratory — slight discount
+  entity_summary: 0.8, // Reference material
+};
+
+/** Minimum confidence floor for the conf_factor multiplier (0.7 = 70% floor). */
+export const DEFAULT_CONFIDENCE_FLOOR = 0.7;
+
+/** Minimum token reservations per type — guarantee these atoms appear in context. */
+export const DEFAULT_TYPE_RESERVATIONS: Partial<Record<AtomType, number>> = {
+  decision:   800, // ~2–3 decisions always present
+  constraint: 400, // Constraints always visible
+  conflict:   400, // Active conflicts always surfaced
 };
