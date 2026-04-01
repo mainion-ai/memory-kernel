@@ -1,6 +1,6 @@
 ---
 name: memory-kernel
-description: Structured typed memory with event-log replay, confidence scoring, and conflict detection. Use for facts, decisions, constraints, beliefs, and open questions — when structure matters more than fuzzy recall.
+description: Structured typed memory with event-log replay, confidence scoring, temporal decay, type-aware ranking, typed relation edges, and conflict detection. Use for facts, decisions, constraints, beliefs, and open questions — when structure matters more than fuzzy recall.
 ---
 
 # memory-kernel

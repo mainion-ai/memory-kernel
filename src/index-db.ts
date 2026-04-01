@@ -80,7 +80,9 @@ CREATE TABLE IF NOT EXISTS atom_embeddings (
 )`;
 
 // Relations table for typed graph edges between atoms (Phase 3).
-// source_id cascades on delete; target_id restricts to prevent silent orphan edges.
+// Both FKs use ON DELETE CASCADE:
+//   source deleted → its outbound edges are removed (atom no longer exists as a source)
+//   target deleted → inbound edges pointing to it are removed (broken refs cleaned up)
 const CREATE_RELATIONS_TABLE = `
 CREATE TABLE IF NOT EXISTS atom_relations (
   source_id     TEXT NOT NULL,
@@ -258,18 +260,20 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     // Save to temp table before clearing atoms (FK cascade would wipe them).
     db.exec('CREATE TEMP TABLE IF NOT EXISTS _saved_embeddings AS SELECT * FROM atom_embeddings');
 
-    // Disable FK enforcement for the batch delete to avoid RESTRICT violations from
-    // atom_relations.target_id when atoms are deleted before their relation rows.
+    // Disable FK enforcement during the batch delete so that the explicit DELETE FROM
+    // atom_relations (below) isn't redundantly cascade-fired again when atoms are deleted.
+    // Re-enabled in finally to ensure the connection is never left with FKs off on error.
     db.pragma('foreign_keys = OFF');
-
-    // Clear existing data
-    db.exec('DELETE FROM atom_relations');
-    db.exec('DELETE FROM atom_fts');
-    db.exec('DELETE FROM atom_paths');
-    db.exec('DELETE FROM atom_tags');
-    db.exec('DELETE FROM atoms'); // cascades to atom_embeddings (FKs re-enabled after insert)
-
-    db.pragma('foreign_keys = ON');
+    try {
+      // Clear existing data
+      db.exec('DELETE FROM atom_relations');
+      db.exec('DELETE FROM atom_fts');
+      db.exec('DELETE FROM atom_paths');
+      db.exec('DELETE FROM atom_tags');
+      db.exec('DELETE FROM atoms'); // atom_embeddings cascade-deleted once FKs re-enabled
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
 
     const insertAtom = db.prepare(`
       INSERT OR REPLACE INTO atoms (atom_id, type, status, confidence, classification, created_at, updated_at, ttl_days, file_path, body_hash)

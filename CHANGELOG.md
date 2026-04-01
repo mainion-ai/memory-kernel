@@ -7,6 +7,80 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [1.4.0] — 2026-04-02
+
+### Added
+
+- **Temporal decay scoring (Phase 1)** — Recall now blends keyword/semantic relevance with freshness. Atoms decay exponentially from score 1.0 at age 0, to 0.5 at `decay_half_life` days, to 0.25 at 2× half-life.
+  - `RecallQuery.decay_half_life` — half-life in days (default: 30, env: `RECALL_DECAY_HALF_LIFE`)
+  - `RecallQuery.decay_weight` — weight of recency in final score, 0–1 (default: 0.2, env: `RECALL_DECAY_WEIGHT`)
+  - Score formula: `base = relevance * (1 - decay_weight) + recency * decay_weight`
+  - No-task path: atoms sorted by temporal decay instead of raw `updated_at`
+  - `decay_weight: 0` falls back to `updated_at DESC` ordering (original behavior preserved)
+  - Exported `temporalDecay(createdAt, halfLifeDays)` for testing and custom scoring
+  - `--decay-weight` and `--half-life` CLI flags added to `mk recall`
+  - `decay_half_life`/`decay_weight` added to `mk_recall` MCP tool schema
+
+- **Type-aware weighting (Phase 2)** — Per-type score multipliers and confidence factors ensure constraints and decisions surface above lower-priority noise.
+  - `DEFAULT_TYPE_WEIGHTS`: `constraint` 1.5×, `decision` 1.3×, `procedure` 1.2×, `conflict` 1.1×, `fact`/`preference` 1.0×, `open_question` 0.9×, `belief`/`entity_summary` 0.8×
+  - `DEFAULT_CONFIDENCE_FLOOR = 0.7` — `conf_factor = floor + (1 - floor) * confidence` prevents 0-confidence atoms from being entirely zeroed out
+  - `DEFAULT_TYPE_RESERVATIONS`: `decision` 800 tokens, `constraint` 400 tokens, `conflict` 400 tokens — guaranteed budget slots regardless of relevance rank
+  - `RecallQuery.type_weights` — per-call type multiplier overrides
+  - `RecallQuery.type_reservations` — per-call reservation overrides
+  - Two-pass token budget: reserved types fill first, then greedy fill with remainder
+  - Final score formula: `relevance * (1 - decay_weight) + recency * decay_weight`, multiplied by `typeWeight * confFactor`
+  - Env vars: `RECALL_TYPE_WEIGHTS` (JSON object), `RECALL_TYPE_RESERVATIONS` (JSON object), `RECALL_CONFIDENCE_FLOOR`
+  - `type_weights`, `type_reservations`, `graph_boost` added to `mk_recall` MCP tool schema
+  - Exports: `DEFAULT_TYPE_WEIGHTS`, `DEFAULT_CONFIDENCE_FLOOR`, `DEFAULT_TYPE_RESERVATIONS`
+
+- **Relationship edges (Phase 3)** — Typed graph edges between atoms, stored in SQLite, with single-hop spreading activation in recall.
+  - `AtomFrontmatter.relations?: Relation[]` — inline edge list in atom frontmatter
+  - `RELATION_TYPES`: `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `related`
+  - `atom_relations` SQLite table: PK `(source_id, target_id, relation_type)`, both FKs `ON DELETE CASCADE`
+  - SQLite schema bumped to **v5** — auto-rebuilds on first `mk reindex` after upgrade
+  - `reindex()` uses two-pass strategy: all atoms first, all relations second (avoids FK ordering violations)
+  - Graph-walk boost in `recall()`: single-hop spreading activation — high-scoring atoms lift their neighbours
+    - Default boost factor: 0.15, env: `RECALL_NEIGHBOR_BOOST`
+    - Diminishing returns formula: `boost += score * factor * (1 / (1 + accumulated))` prevents runaway amplification
+    - `RecallQuery.graph_boost` — per-call enable/disable (default: true, env: `RECALL_GRAPH_BOOST`)
+    - Query param takes precedence over env var
+  - New CLI commands:
+    - `mk relate <source-id> <type> <target-id>` — write a typed edge to atom frontmatter and index
+    - `mk relations <atom-id>` — print inbound and outbound relation table
+    - `mk migrate-relations [--dry-run | --apply]` — migrate `links.related` → `relations[]` and mine body text for atom ID references
+  - New SDK exports: `getRelationsForAtom`, `addRelation`, `getAllRelations`, `AtomRelation`, `RELATION_TYPES`, `Relation`, `RelationType`
+  - `indexStats()` now includes `relations: number`
+
+### Changed
+
+- `max_tokens` now applied even when FTS query matches zero atoms — previously the budget was silently skipped when neither FTS nor semantic signals existed, returning an unbounded response. Now degrades gracefully to greedy insertion-order fill.
+- `recall()` no-task sort order changed: status priority is checked **first**, then temporal decay (was decay-first, which caused draft atoms to outrank active ones when newer).
+
+### Environment Variables (v1.4.0)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RECALL_DECAY_HALF_LIFE` | `30` | Days until decay factor = 0.5 |
+| `RECALL_DECAY_WEIGHT` | `0.2` | Recency weight in final score (0–1) |
+| `RECALL_TYPE_WEIGHTS` | (see defaults) | JSON object of per-type multipliers |
+| `RECALL_TYPE_RESERVATIONS` | (see defaults) | JSON object of min token slots per type |
+| `RECALL_CONFIDENCE_FLOOR` | `0.7` | Min conf factor for zero-confidence atoms |
+| `RECALL_NEIGHBOR_BOOST` | `0.15` | Graph-walk spreading activation factor |
+| `RECALL_GRAPH_BOOST` | `true` | Enable/disable graph-walk boost globally |
+
+### Migration
+
+Schema v4 → v5: run `mk reindex -d <memory-dir>` once after upgrading. The `atom_relations` table is created automatically. No existing atom files need modification.
+
+Optionally back-fill relation edges from existing data:
+
+```bash
+mk migrate-relations -d <memory-dir> --dry-run   # preview what would change
+mk migrate-relations -d <memory-dir> --apply      # write changes to disk
+```
+
+---
+
 ## [1.3.0] — 2026-03-25
 
 ### Added

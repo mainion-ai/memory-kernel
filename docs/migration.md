@@ -41,6 +41,26 @@ mk doctor -d /path/to/memory    # Verify everything is healthy
 
 ---
 
+## Upgrading to v1.4.0 (schema v4 → v5)
+
+v1.4.0 adds relation edges (`atom_relations` table). The SQLite index schema version bumps from 4 to 5.
+
+**One-time migration:**
+```bash
+npm install memory-kernel@1.4.0
+
+# Rebuilds index with atom_relations table (safe — index is a derived cache)
+mk reindex -d /path/to/memory
+
+# Optional: backfill relation edges from existing links.related fields and atom ID references in bodies
+mk migrate-relations -d /path/to/memory --dry-run   # preview
+mk migrate-relations -d /path/to/memory --apply     # commit
+```
+
+No atom files need modification. The schema rebuild is automatic on first `mk reindex`. Existing atoms continue to work without any `relations` field — it's optional.
+
+---
+
 ## Path 2: From an existing memory-kernel (pre-v1.0)
 
 You already have a memory directory with atoms but want to upgrade to v1.0.

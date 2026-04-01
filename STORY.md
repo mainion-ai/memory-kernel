@@ -1073,3 +1073,60 @@ The plugin ships with its own `SKILL.md` — a routing guide that tells the agen
 v1.0.0 proved the system was solid. v1.0.1 made it approachable.
 
 If v1.0.0 was building the filing cabinet, v1.0.1 was labeling the drawers, writing the user manual, and putting up a sign that says *"you can use this now — here's how."*
+
+---
+
+## Chapter 20: Teaching the System to Care About Age and Type
+
+v1.0.0 proved memory-kernel could store and retrieve. v1.4.0 tackled the harder question: *what should surface first?*
+
+The original recall was democratic. Every active atom had an equal chance of appearing in the context window. The order was recency — whatever was updated most recently bubbled to the top. Simple, predictable, wrong.
+
+The problem became obvious in practice. An agent working on a deployment task would get back a mix of: a decision made six months ago that still mattered, a belief from yesterday that was probably stale, an open question from three weeks ago, and a constraint from last year that was absolutely non-negotiable. All scored the same. The constraint would often lose to the belief simply because the belief was newer.
+
+### Phase 1: Teaching the System About Time
+
+The first fix was temporal decay. Not expiry — atoms with non-zero TTL already handled the "throw it away" case. This was softer: a continuous score adjustment that made older atoms contribute less to ranking without removing them.
+
+The formula is exponential: `decay = 0.5 ^ (age_days / half_life)`. At age zero, the factor is 1.0. At half-life days, it's 0.5. At twice the half-life, it's 0.25. The half-life defaults to 30 days — a month-old atom is half as fresh as a new one — but agents working with longer-lived knowledge can raise it.
+
+The decay factor blends with relevance: `score = relevance * (1 - weight) + recency * weight`. The default weight of 0.2 means most of the score is still relevance — decay nudges, it doesn't dominate. An agent that wants pure relevance can set `decay_weight: 0`.
+
+One edge case took a moment to get right: future-dated atoms. Some atoms have `created_at` set in the future (scheduled decisions, planned constraints). The decay formula would produce a value greater than 1.0 for these. A `Math.max(0, age_days)` clamp fixed it.
+
+### Phase 2: Types Are Not Peers
+
+The second insight was simpler to state but harder to implement: a constraint is worth more than a belief. Not because of anything the user said — because of what the types *mean*. A constraint is a hard rule. A belief is a guess. When filling a 4000-token context window, you'd rather have the constraint and miss the belief than the other way around.
+
+The fix was a multiplier table. Constraint gets 1.5×. Decision gets 1.3×. Procedure 1.2×. Fact and preference 1.0×. Open question 0.9×. Belief and entity summary 0.8×. These aren't arbitrary — they reflect the semantic weight of each type in the context of task execution.
+
+The confidence factor is the other half of this: `conf_factor = floor + (1 - floor) * confidence`. With a floor of 0.7, a zero-confidence atom still counts at 70% rather than being zeroed out completely. A zero is a valid data point. You don't want to silently suppress what you don't know.
+
+Token reservations complete the picture. If you have 20 constraints in memory and a tight context window, the reservation mechanism guarantees at least 400 tokens of constraint content appears regardless of relevance rank. The second pass fills the remaining budget with everything else in score order.
+
+### Phase 3: Atoms Don't Live in Isolation
+
+The third phase came from a real failure mode: related atoms that should reinforce each other were being treated as independent. A decision that extended another decision — you'd want both, but if only one matched the FTS query, the other would score near zero.
+
+The solution was relation edges: typed links between atoms stored in the SQLite index. The types — `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `related` — let agents encode the semantic structure of their knowledge graph.
+
+Graph-walk recall uses single-hop spreading activation: for each relation edge, the higher-scoring atom partially boosts its neighbour. The boost uses a diminishing-returns formula: `boost += score * factor * (1 / (1 + accumulated_boost))`. The denominator prevents runaway amplification when an atom has many high-scoring neighbours.
+
+The schema implementation required care. Both foreign keys in `atom_relations` use `ON DELETE CASCADE` — when an atom is deleted, both its outbound and inbound edges are automatically cleaned up. The reindex operation uses a two-pass strategy: insert all atoms first, then insert all relations, to avoid FK ordering violations when a relation's target hasn't been indexed yet.
+
+### The Shape of v1.4.0
+
+What emerged is a coherent scoring pipeline:
+
+1. FTS5 BM25 + optional semantic cosine similarity → relevance score (0–1)
+2. Temporal decay → recency score (0–1)
+3. Blend: `base = relevance * (1 - w) + recency * w`
+4. Per-type multiplier × confidence factor → `final = base * typeWeight * confFactor`
+5. Graph-walk boost → neighbours of high-scoring atoms get a lift
+6. Token budget: reserved types fill first, then greedy fill with remainder
+
+Every parameter in this pipeline is configurable. The defaults are designed to work well without tuning, but agents with specific needs — working in a domain where all decisions are long-lived, or where constraint violations are catastrophic — can dial any knob directly per-call or via environment variable.
+
+The 690 tests are 690 promises that the pipeline behaves exactly as specified. The scoring is fast enough that adding all three phases barely moved the p95 benchmark — the memoised `finalScoreMap` approach computes each atom's score once before sorting, not once per comparison.
+
+If v1.0.1 was labeling the drawers, v1.4.0 is teaching the system which drawer matters most for what you're doing right now.

@@ -57,8 +57,18 @@ mk wander -d ~/mk-memory --tags architecture,performance --json
 # Full health check
 mk doctor -d ~/mk-memory
 
-# Rebuild index if queries are slow
+# Rebuild index if queries are slow (or after upgrading — rebuilds schema)
 mk reindex -d ~/mk-memory
+
+# Create a typed relation edge between two atoms
+mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-BENCH-xyz9 -d ~/mk-memory
+
+# Show all edges for an atom
+mk relations DECI-2026-04-01-USE-POSTGRES-abc1 -d ~/mk-memory
+
+# Backfill relation edges from links.related and body-text atom ID references
+mk migrate-relations -d ~/mk-memory --dry-run   # preview
+mk migrate-relations -d ~/mk-memory --apply     # commit
 
 # Rebuild index AND compute embeddings for semantic search
 # (requires EMBEDDING_PROVIDER + EMBEDDING_API_KEY env vars)
@@ -99,6 +109,15 @@ Once configured, `mk remember` **auto-embeds new atoms** — no extra step neede
 ```bash
 SEMANTIC_WEIGHT=0.6    # 0-1, semantic vs FTS balance (default: 0.6)
 MIN_SIMILARITY=0.3     # 0-1, filter noise below this threshold (default: 0.3)
+```
+
+### Upgrading from v1.3.x to v1.4.x
+
+Schema v4 → v5 adds the `atom_relations` table. Just run `mk reindex`:
+
+```bash
+mk reindex -d ~/mk-memory              # rebuild index (schema v5, creates atom_relations)
+mk migrate-relations -d ~/mk-memory --apply   # optional: backfill relation edges
 ```
 
 ### Upgrading from v1.1.x

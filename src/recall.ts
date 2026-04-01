@@ -192,6 +192,11 @@ export function recall(
     const hasFts = ftsScoreMap.size > 0;
     const hasSemantic = semanticScoreMap.size > 0;
 
+    // finalScoreMap is populated when signals exist; stays empty otherwise.
+    // An empty map degrades gracefully: applyTokenBudget falls back to
+    // insertion-order greedy fill (all scores 0 → stable sort).
+    let finalScoreMap = new Map<string, number>();
+
     if (hasFts || hasSemantic) {
       // Combine scores using configurable weights (env SEMANTIC_WEIGHT, default 0.6).
       // When only one signal is available, it gets full weight.
@@ -200,7 +205,6 @@ export function recall(
 
       // Memoize final_score per atom before sorting (O(n)) to avoid re-computing
       // decay + type_weight + conf_factor inside the comparator (O(n log n) otherwise).
-      const finalScoreMap = new Map<string, number>();
       for (const atom of filtered) {
         const id = atom.frontmatter.id;
         const fts = ftsScoreMap.get(id) ?? 0;
@@ -215,9 +219,11 @@ export function recall(
         finalScoreMap.set(id, baseScore * typeWeight * confFactor);
       }
 
-      // Phase 3: graph-walk boost (single-hop spreading activation)
-      const useGraphBoost = query.graph_boost !== false &&
-        (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
+      // Phase 3: graph-walk boost (single-hop spreading activation).
+      // query.graph_boost takes precedence over env var when explicitly set.
+      const useGraphBoost = query.graph_boost !== undefined
+        ? query.graph_boost
+        : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
       if (useGraphBoost) {
         const relations = getAllRelations(memoryDir);
         if (relations.length > 0) {
@@ -236,13 +242,14 @@ export function recall(
         if (statusOrder !== 0) return statusOrder;
         return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
       });
+    }
 
-      // Apply token budget using reservation-aware two-pass algorithm
-      if (query.max_tokens) {
-        const baseTokens = estimateTokens(index + handoff + constraints);
-        const atomBudget = Math.max(0, query.max_tokens - baseTokens);
-        filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
-      }
+    // Apply token budget — always when max_tokens is set, even if FTS had no results.
+    // When finalScoreMap is empty, applyTokenBudget degrades to greedy insertion-order fill.
+    if (query.max_tokens) {
+      const baseTokens = estimateTokens(index + handoff + constraints);
+      const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+      filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
     }
   } else {
     // No task: status priority first, then temporal decay (or updated_at when decay_weight=0).

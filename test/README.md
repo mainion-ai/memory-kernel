@@ -22,7 +22,7 @@ This directory also includes:
 npm test
 ```
 
-**Total: 551 tests across 21 files** (as of v1.0.0). See `CODING_INSTRUCTIONS.md` for the full test file inventory and what each file covers.
+**Total: 690 tests across 33 files** (as of v1.4.0). See `CODING_INSTRUCTIONS.md` for the full test file inventory and what each file covers.
 
 ## Notes
 
