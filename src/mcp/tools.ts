@@ -156,6 +156,8 @@ const recallSchema = {
   tags: z.array(z.string()).optional().describe('Filter by scope tags'),
   include_episodes: z.boolean().optional().describe('Include episode summaries'),
   max_tokens: z.number().int().min(0).optional().describe('Token budget'),
+  decay_half_life: z.number().positive().optional().describe('Half-life for temporal decay in days (default: 30)'),
+  decay_weight: z.number().min(0).max(1).optional().describe('Weight of recency vs relevance, 0-1 (default: 0.2)'),
   agent_id: z.string().optional(),
   session_id: z.string().optional(),
 };
@@ -168,6 +170,8 @@ export type RecallInput = {
   tags?: string[];
   include_episodes?: boolean;
   max_tokens?: number;
+  decay_half_life?: number;
+  decay_weight?: number;
   agent_id?: string;
   session_id?: string;
 };
@@ -184,6 +188,8 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
       tags: input.tags,
       include_episodes: input.include_episodes,
       max_tokens: input.max_tokens,
+      decay_half_life: input.decay_half_life,
+      decay_weight: input.decay_weight,
       agent_id: agentId,
       session_id: sessionId,
     });

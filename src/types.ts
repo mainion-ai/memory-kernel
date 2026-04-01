@@ -128,6 +128,8 @@ export interface RecallQuery {
   tags?: string[]; // Filter by tags
   include_episodes?: boolean; // Include EPISODES/ session summaries in context bundle
   max_tokens?: number; // Budget for context
+  decay_half_life?: number; // Days until temporal decay factor = 0.5 (default: 30)
+  decay_weight?: number; // Weight of recency in final score, 0-1 (default: 0.2)
   // Read audit: if both set, an 'atom_read' event is emitted after recall completes
   agent_id?: string;
   session_id?: string;
