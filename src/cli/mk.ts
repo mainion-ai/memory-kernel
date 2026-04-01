@@ -139,6 +139,8 @@ program
   .option('--paths <paths...>', 'Scope paths to match')
   .option('--types <types...>', 'Filter by atom type')
   .option('--max-tokens <n>', 'Token budget', parseInt)
+  .option('--decay-half-life <days>', 'Half-life for temporal decay in days (default: 30)', parseFloat)
+  .option('--decay-weight <n>', 'Weight of recency in scoring, 0-1 (default: 0.2)', parseFloat)
   .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
   .action((opts: {
     dir: string;
@@ -146,6 +148,8 @@ program
     paths?: string[];
     types?: string[];
     maxTokens?: number;
+    decayHalfLife?: number;
+    decayWeight?: number;
     includeEpisodes?: boolean;
   }) => {
     const memoryDir = path.resolve(opts.dir);
@@ -159,6 +163,8 @@ program
       paths: opts.paths,
       types: opts.types as any,
       max_tokens: opts.maxTokens,
+      decay_half_life: opts.decayHalfLife,
+      decay_weight: opts.decayWeight,
       include_episodes: opts.includeEpisodes,
     });
 

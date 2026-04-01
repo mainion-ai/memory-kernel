@@ -36,6 +36,34 @@ function getMinSimilarity(): number {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_MIN_SIMILARITY;
 }
 
+// --- Temporal decay parameters ---
+
+/** Default half-life in days: decay factor = 0.5 at this age. */
+const DEFAULT_DECAY_HALF_LIFE = 30;
+/** Default weight of recency (temporal decay) in final score (0-1). */
+const DEFAULT_DECAY_WEIGHT = 0.2;
+
+function getDecayHalfLife(): number {
+  const v = parseFloat(process.env.RECALL_DECAY_HALF_LIFE || '');
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_DECAY_HALF_LIFE;
+}
+
+function getDecayWeight(): number {
+  const v = parseFloat(process.env.RECALL_DECAY_WEIGHT || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_DECAY_WEIGHT;
+}
+
+/**
+ * Exponential temporal decay: 1.0 at age=0, 0.5 at age=halfLife, 0.25 at age=2*halfLife.
+ * Future-dated atoms are clamped to decay=1.0 (no boost beyond 1).
+ */
+export function temporalDecay(createdAt: string, halfLifeDays: number): number {
+  if (halfLifeDays <= 0) return 0; // Guard against division by zero
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
+}
+
 /** @internal Extended query with pre-computed embedding vector — not part of the public API. */
 export interface RecallQueryInternal extends RecallQuery {
   queryVector?: number[];
@@ -53,6 +81,10 @@ export function recall(
   const handoff = readView(memoryDir, 'HANDOFF.md');
   const constraints = readView(memoryDir, 'CONSTRAINTS.md');
 
+  // Resolve decay parameters (query overrides > env vars > defaults)
+  const halfLife = query.decay_half_life ?? getDecayHalfLife();
+  const decayWeight = query.decay_weight ?? getDecayWeight();
+
   // Try indexed query first, fall back to file scan
   let filtered: Atom[];
   const indexResults = queryIndex(memoryDir, query);
@@ -68,19 +100,26 @@ export function recall(
         }
       })
       .filter((a): a is Atom => a !== null);
-    // Already sorted by index query (status priority, updated_at DESC)
+    // Note: index query returns status+updated_at ordering, but we re-sort
+    // below to apply temporal decay — the index sort is insufficient.
   } else {
     // No index — full file scan + in-memory filter
     const allAtoms = listAtoms(memoryDir);
     filtered = filterAtoms(allAtoms, query);
-
-    // Sort by relevance: active first, then by updated_at descending
-    filtered.sort((a, b) => {
-      const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
-      if (statusOrder !== 0) return statusOrder;
-      return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
-    });
   }
+
+  // Base sort: status priority, then temporal decay (fresher atoms first).
+  // When decayWeight is 0, fall back to updated_at DESC (original behavior).
+  filtered.sort((a, b) => {
+    const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
+    if (statusOrder !== 0) return statusOrder;
+    if (decayWeight === 0) {
+      return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
+    }
+    const decayA = temporalDecay(a.frontmatter.created_at, halfLife);
+    const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
+    return decayB - decayA;
+  });
 
   // Task-aware re-ranking: if a task is provided, use FTS BM25 scores to re-order.
   // When embeddings are available and a query vector is provided, combine FTS + semantic scores.
@@ -136,16 +175,22 @@ export function recall(
         const semA = semanticScoreMap.get(a.frontmatter.id) ?? 0;
         const semB = semanticScoreMap.get(b.frontmatter.id) ?? 0;
 
-        const scoreA = ftsA * FTS_WEIGHT + semA * SEMANTIC_WEIGHT;
-        const scoreB = ftsB * FTS_WEIGHT + semB * SEMANTIC_WEIGHT;
+        const relevanceA = ftsA * FTS_WEIGHT + semA * SEMANTIC_WEIGHT;
+        const relevanceB = ftsB * FTS_WEIGHT + semB * SEMANTIC_WEIGHT;
+
+        // Blend relevance with temporal decay
+        const recencyA = temporalDecay(a.frontmatter.created_at, halfLife);
+        const recencyB = temporalDecay(b.frontmatter.created_at, halfLife);
+        const scoreA = relevanceA * (1 - decayWeight) + recencyA * decayWeight;
+        const scoreB = relevanceB * (1 - decayWeight) + recencyB * decayWeight;
 
         // Higher combined score = better match
         if (scoreA !== scoreB) return scoreB - scoreA;
 
-        // Fallback: status priority, then recency
+        // Fallback: status priority, then temporal decay
         const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
         if (statusOrder !== 0) return statusOrder;
-        return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
+        return recencyB - recencyA;
       });
     }
   }
