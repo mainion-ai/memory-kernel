@@ -62,7 +62,7 @@ export interface Collision {
   atom_a: string;
   /** Second atom in the collision */
   atom_b: string;
-  /** Tags shared between the two atoms */
+  /** Tags shared between the two atoms (may be empty for fully disjoint pairs) */
   shared_tags: string[];
   /** Combined activation score */
   score: number;
@@ -158,7 +158,7 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
   const graph = new Map<string, GraphNode>();
   for (const atom of atoms) {
     graph.set(atom.atom_id, {
-      tags: tagsByAtom.get(atom.atom_id) ?? [],
+      tags: [...new Set(tagsByAtom.get(atom.atom_id) ?? [])],
       type: atom.type,
       updated_at: atom.updated_at,
       base_activation: baseLevelActivation(atom.updated_at, now),
@@ -282,8 +282,8 @@ function tagDistance(
  *    b. Spread activation through shared tags, modulated by base-level (recency)
  *    c. Lateral inhibition: keep top-K atoms
  *    d. Prune below threshold
- * 3. Detect collisions: activated atom pairs from different types
- *    with shared tags, scored by activation_product * distance
+ * 3. Detect collisions: activated atom pairs with high tag Jaccard
+ *    dissimilarity (> 0.7), scored by activation_product * dissimilarity
  */
 function wanderWithGraph(
   graph: Map<string, GraphNode>,
@@ -555,7 +555,7 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
 
     graph.set(fm.id, {
-      tags: fm.scope?.tags ?? [],
+      tags: [...new Set(fm.scope?.tags ?? [])],
       type: fm.type,
       updated_at: fm.updated_at,
       base_activation: baseLevelActivation(fm.updated_at, now),
