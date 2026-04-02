@@ -13,9 +13,11 @@ import os from 'os';
 import {
   initMemoryDir,
   createAtom,
+  updateAtom,
   reindex,
   indexExists,
   closeAllIndexes,
+  addRelation,
 } from '../src/index.js';
 import { wander, wanderFromFiles } from '../src/wander.js';
 import type { WanderResult } from '../src/wander.js';
@@ -714,6 +716,227 @@ describe('wander — spreading activation', () => {
       expect(activatedIds.every(id =>
         id.toLowerCase().includes('island-a')
       )).toBe(true);
+    });
+  });
+
+  // --- Relation spreading ---
+
+  describe('relation spreading', () => {
+    it('spreads activation through explicit relations with zero shared tags', () => {
+      // Two atoms with completely different tags, connected by a relation
+      const atomA = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'rel-source',
+        body: 'Source atom.',
+        scope: { tags: ['alpha', 'beta'] },
+      });
+      const atomB = createAtom({
+        ...base(testDir),
+        type: 'decision',
+        slug: 'rel-target',
+        body: 'Target atom.',
+        scope: { tags: ['gamma', 'delta'] },
+      });
+
+      reindex(testDir);
+      addRelation(testDir, atomA.frontmatter.id, atomB.frontmatter.id, 'related');
+
+      const result = wander({
+        memoryDir: testDir,
+        seeds: [atomA.frontmatter.id],
+        steps: 2,
+        threshold: 0.001,
+      });
+
+      const activatedIds = result.activated.map(a => a.atom_id);
+      expect(activatedIds).toContain(atomB.frontmatter.id);
+    });
+
+    it('does not spread through relations when relationWeight is 0', () => {
+      const atomA = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'rw-zero-src',
+        body: 'Source.',
+        scope: { tags: ['only-here'] },
+      });
+      const atomB = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'rw-zero-tgt',
+        body: 'Target.',
+        scope: { tags: ['only-there'] },
+      });
+
+      reindex(testDir);
+      addRelation(testDir, atomA.frontmatter.id, atomB.frontmatter.id, 'extends');
+
+      const result = wander({
+        memoryDir: testDir,
+        seeds: [atomA.frontmatter.id],
+        steps: 3,
+        threshold: 0.001,
+        relationWeight: 0,
+      });
+
+      const activatedIds = result.activated.map(a => a.atom_id);
+      expect(activatedIds).not.toContain(atomB.frontmatter.id);
+    });
+
+    it('spreads bidirectionally — seeding target reaches source', () => {
+      const atomA = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'bidir-src',
+        body: 'Source atom.',
+        scope: { tags: ['x-only'] },
+      });
+      const atomB = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'bidir-tgt',
+        body: 'Target atom.',
+        scope: { tags: ['y-only'] },
+      });
+
+      reindex(testDir);
+      addRelation(testDir, atomA.frontmatter.id, atomB.frontmatter.id, 'caused_by');
+
+      // Seed B, expect A to be activated
+      const result = wander({
+        memoryDir: testDir,
+        seeds: [atomB.frontmatter.id],
+        steps: 2,
+        threshold: 0.001,
+      });
+
+      const activatedIds = result.activated.map(a => a.atom_id);
+      expect(activatedIds).toContain(atomA.frontmatter.id);
+    });
+
+    it('activation is additive when connected by both tags and relations', () => {
+      const atomA = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'hybrid-src',
+        body: 'Source.',
+        scope: { tags: ['shared-tag', 'src-only'] },
+      });
+      const atomB = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'hybrid-tgt',
+        body: 'Target.',
+        scope: { tags: ['shared-tag', 'tgt-only'] },
+      });
+
+      reindex(testDir);
+
+      // Without relation
+      const resultNoRel = wander({
+        memoryDir: testDir,
+        seeds: [atomA.frontmatter.id],
+        steps: 2,
+        threshold: 0.001,
+      });
+      const actNoRel = resultNoRel.activated.find(a => a.atom_id === atomB.frontmatter.id)?.activation ?? 0;
+
+      // Add relation
+      addRelation(testDir, atomA.frontmatter.id, atomB.frontmatter.id, 'supports');
+
+      const resultWithRel = wander({
+        memoryDir: testDir,
+        seeds: [atomA.frontmatter.id],
+        steps: 2,
+        threshold: 0.001,
+      });
+      const actWithRel = resultWithRel.activated.find(a => a.atom_id === atomB.frontmatter.id)?.activation ?? 0;
+
+      // Relation adds extra activation
+      expect(actWithRel).toBeGreaterThan(actNoRel);
+    });
+
+    it('wanderFromFiles spreads through frontmatter relations', () => {
+      // Create atomB first so we know its ID for the relation
+      const atomB = createAtom({
+        ...base(testDir),
+        type: 'decision',
+        slug: 'file-rel-tgt',
+        body: 'Target.',
+        scope: { tags: ['file-omega'] },
+      });
+
+      const atomA = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'file-rel-src',
+        body: 'Source.',
+        scope: { tags: ['file-alpha'] },
+        relations: [{ target: atomB.frontmatter.id, type: 'related' }],
+      });
+
+      // wanderFromFiles — no reindex needed
+      const result = wanderFromFiles({
+        memoryDir: testDir,
+        seeds: [atomA.frontmatter.id],
+        steps: 2,
+        threshold: 0.001,
+      });
+
+      const activatedIds = result.activated.map(a => a.atom_id);
+      expect(activatedIds).toContain(atomB.frontmatter.id);
+    });
+
+    it('produces collisions between relation-connected distant atoms', () => {
+      // Chain: A --related--> B --related--> C
+      // A and C share zero tags, should collide if both activated
+      const atomA = createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'chain-a',
+        body: 'Chain start.',
+        scope: { tags: ['domain-a', 'alpha'] },
+      });
+      const atomB = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'chain-b',
+        body: 'Chain middle.',
+        scope: { tags: ['bridge'] },
+      });
+      const atomC = createAtom({
+        ...base(testDir),
+        type: 'decision',
+        slug: 'chain-c',
+        body: 'Chain end.',
+        scope: { tags: ['domain-c', 'omega'] },
+      });
+
+      reindex(testDir);
+      addRelation(testDir, atomA.frontmatter.id, atomB.frontmatter.id, 'related');
+      addRelation(testDir, atomB.frontmatter.id, atomC.frontmatter.id, 'related');
+
+      const result = wander({
+        memoryDir: testDir,
+        seeds: [atomA.frontmatter.id],
+        steps: 3,
+        threshold: 0.001,
+        maxCollisions: 10,
+      });
+
+      // Both B and C should be activated
+      const activatedIds = result.activated.map(a => a.atom_id);
+      expect(activatedIds).toContain(atomB.frontmatter.id);
+      expect(activatedIds).toContain(atomC.frontmatter.id);
+
+      // A and C have zero shared tags — dissimilarity = 1.0, should collide
+      const acCollision = result.collisions.find(
+        c => (c.atom_a === atomA.frontmatter.id && c.atom_b === atomC.frontmatter.id) ||
+             (c.atom_a === atomC.frontmatter.id && c.atom_b === atomA.frontmatter.id),
+      );
+      expect(acCollision).toBeDefined();
+      expect(acCollision!.dissimilarity).toBe(1);
     });
   });
 });

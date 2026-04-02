@@ -27,6 +27,7 @@ interface GraphNode {
   type: string;
   updated_at: string;
   base_activation: number;
+  neighbors: Set<string>;
 }
 
 export interface WanderOptions {
@@ -47,6 +48,8 @@ export interface WanderOptions {
   decay?: number;
   /** Number of collision candidates to return (default: 5) */
   maxCollisions?: number;
+  /** Weight for activation flow through explicit relations (default: 0.5) */
+  relationWeight?: number;
 }
 
 export interface ActivatedAtom {
@@ -127,7 +130,7 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
     AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
   `;
 
-  const { atoms, tagRows } = db.transaction(() => {
+  const { atoms, tagRows, relationRows } = db.transaction(() => {
     const atoms = db.prepare(`
       SELECT a.atom_id, a.type, a.updated_at
       FROM atoms a
@@ -141,7 +144,16 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
       WHERE ${ATOM_FILTER}
     `).all() as { atom_id: string; tag: string }[];
 
-    return { atoms, tagRows };
+    const relationRows = db.prepare(`
+      SELECT r.source_id, r.target_id
+      FROM atom_relations r
+      INNER JOIN atoms s ON r.source_id = s.atom_id
+      INNER JOIN atoms t ON r.target_id = t.atom_id
+      WHERE ${ATOM_FILTER.replace(/\ba\./g, 's.')}
+        AND ${ATOM_FILTER.replace(/\ba\./g, 't.')}
+    `).all() as { source_id: string; target_id: string }[];
+
+    return { atoms, tagRows, relationRows };
   })();
 
   // Build tag lookup
@@ -162,7 +174,18 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
       type: atom.type,
       updated_at: atom.updated_at,
       base_activation: baseLevelActivation(atom.updated_at, now),
+      neighbors: new Set(),
     });
+  }
+
+  // Populate relation neighbors (bidirectional)
+  for (const rel of relationRows) {
+    const sourceNode = graph.get(rel.source_id);
+    const targetNode = graph.get(rel.target_id);
+    if (sourceNode && targetNode) {
+      sourceNode.neighbors.add(rel.target_id);
+      targetNode.neighbors.add(rel.source_id);
+    }
   }
 
   return graph;
@@ -280,6 +303,7 @@ function tagDistance(
  * 2. For each step:
  *    a. Self-decay existing activation
  *    b. Spread activation through shared tags, modulated by base-level (recency)
+ *    b2. Spread activation through explicit relation neighbors
  *    c. Lateral inhibition: keep top-K atoms
  *    d. Prune below threshold
  * 3. Detect collisions: activated atom pairs with high tag Jaccard
@@ -367,6 +391,31 @@ function wanderWithGraph(
 
           // Modulate by base-level activation (recency boost)
           // Normalize to 0-1 range with sigmoid
+          const baseBoost = 1 / (1 + Math.exp(-neighborData.base_activation));
+          const incoming = spreadPerNeighbor * baseBoost;
+
+          newActivation.set(
+            neighborId,
+            (newActivation.get(neighborId) ?? 0) + incoming,
+          );
+        }
+      }
+    }
+
+    // Spread through explicit relation neighbors
+    const relationWeight = options.relationWeight ?? 0.5;
+    if (relationWeight > 0) {
+      for (const [atomId, act] of activation) {
+        const atomData = graph.get(atomId);
+        if (!atomData || atomData.neighbors.size === 0) continue;
+
+        const spreadPerNeighbor = (act * decay * relationWeight) / atomData.neighbors.size;
+
+        for (const neighborId of atomData.neighbors) {
+          if (neighborId === atomId) continue;
+          const neighborData = graph.get(neighborId);
+          if (!neighborData) continue;
+
           const baseBoost = 1 / (1 + Math.exp(-neighborData.base_activation));
           const incoming = spreadPerNeighbor * baseBoost;
 
@@ -559,7 +608,22 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
       type: fm.type,
       updated_at: fm.updated_at,
       base_activation: baseLevelActivation(fm.updated_at, now),
+      neighbors: new Set(),
     });
+  }
+
+  // Populate relation neighbors from frontmatter (bidirectional)
+  for (const atom of atoms) {
+    const fm = atom.frontmatter;
+    if (!fm.id || !fm.relations) continue;
+    const sourceNode = graph.get(fm.id);
+    if (!sourceNode) continue;
+    for (const rel of fm.relations) {
+      const targetNode = graph.get(rel.target);
+      if (!targetNode) continue;
+      sourceNode.neighbors.add(rel.target);
+      targetNode.neighbors.add(fm.id);
+    }
   }
 
   return wanderWithGraph(graph, options, start);

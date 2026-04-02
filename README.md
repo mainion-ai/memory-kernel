@@ -193,11 +193,11 @@ Full API covers event sourcing, replay, episodes, multi-agent merge, encryption,
 
 ## Wander — Spreading Activation
 
-`mk wander` finds unexpected connections between atoms by walking the tag co-occurrence graph. Pure computation — no LLM calls, runs in milliseconds.
+`mk wander` finds unexpected connections between atoms by walking the tag co-occurrence graph and explicit relation edges (`extends`, `supports`, `caused_by`, etc.). Pure computation — no LLM calls, runs in milliseconds.
 
 Inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975) spreading activation. This is Tier 1 of a two-tier architecture: cheap associative walks that surface candidates for expensive reasoning.
 
-**How it works:** Seed from atoms or tags → spread activation through shared tags (modulated by recency) → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
+**How it works:** Seed from atoms or tags → spread activation through shared tags and relation neighbors (modulated by recency) → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
 
 ```bash
 mk wander -d ./memory --tags philosophy accounting --steps 5 --json
@@ -212,6 +212,7 @@ mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 | `topK` | 20 | Lateral inhibition limit |
 | `decay` | 0.5 | Spread decay factor |
 | `maxCollisions` | 5 | Max collision candidates |
+| `relationWeight` | 0.5 | Activation weight for explicit relation edges |
 
 ---
 
