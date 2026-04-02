@@ -62,7 +62,7 @@ export interface Collision {
   atom_a: string;
   /** Second atom in the collision */
   atom_b: string;
-  /** Tags shared between the two atoms */
+  /** Tags shared between the two atoms (may be empty for fully disjoint pairs) */
   shared_tags: string[];
   /** Combined activation score */
   score: number;
@@ -72,6 +72,8 @@ export interface Collision {
   type_b: string;
   /** Minimum hops between the two atoms in the tag graph (capped at maxDepth+1 if unreachable) */
   distance: number;
+  /** Tag Jaccard dissimilarity (1 - |A∩B|/|A∪B|), range [0,1] */
+  dissimilarity: number;
 }
 
 export interface WanderResult {
@@ -156,7 +158,7 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
   const graph = new Map<string, GraphNode>();
   for (const atom of atoms) {
     graph.set(atom.atom_id, {
-      tags: tagsByAtom.get(atom.atom_id) ?? [],
+      tags: [...new Set(tagsByAtom.get(atom.atom_id) ?? [])],
       type: atom.type,
       updated_at: atom.updated_at,
       base_activation: baseLevelActivation(atom.updated_at, now),
@@ -280,8 +282,8 @@ function tagDistance(
  *    b. Spread activation through shared tags, modulated by base-level (recency)
  *    c. Lateral inhibition: keep top-K atoms
  *    d. Prune below threshold
- * 3. Detect collisions: activated atom pairs from different types
- *    with shared tags, scored by activation_product * distance
+ * 3. Detect collisions: activated atom pairs with high tag Jaccard
+ *    dissimilarity (> 0.7), scored by activation_product * dissimilarity
  */
 function wanderWithGraph(
   graph: Map<string, GraphNode>,
@@ -406,8 +408,8 @@ function wanderWithGraph(
       };
     });
 
-  // Detect collisions — pairs of activated atoms from different types
-  // Score = combined_activation * distance (higher distance = more surprising)
+  // Detect collisions — pairs of activated atoms with high tag dissimilarity
+  // Score = combined_activation * Jaccard dissimilarity (higher dissimilarity = more surprising)
   // Distance cache avoids redundant BFS walks (O(n^2) pairs with topK=20 → 190 lookups)
   const collisions: Collision[] = [];
   const activatedIds = activated.map((a) => a.atom_id);
@@ -420,15 +422,18 @@ function wanderWithGraph(
       const dataA = graph.get(idA)!;
       const dataB = graph.get(idB)!;
 
-      // Skip same-type pairs (less interesting)
-      if (dataA.type === dataB.type) continue;
-
-      // Find shared tags
+      // Find shared tags and compute Jaccard dissimilarity
       const tagsA = new Set(dataA.tags);
       const sharedTags = dataB.tags.filter((t) => tagsA.has(t));
+      const unionSize = new Set([...dataA.tags, ...dataB.tags]).size;
 
-      // Skip if no shared tags (no structural overlap)
-      if (sharedTags.length === 0) continue;
+      // Skip if either atom has no tags (no data to judge)
+      if (unionSize === 0) continue;
+
+      const dissimilarity = 1 - sharedTags.length / unionSize;
+
+      // Skip if tags are too similar (threshold: 0.7)
+      if (dissimilarity <= 0.7) continue;
 
       // Compute distance (memoized — BFS is symmetric)
       const pairKey = idA < idB ? `${idA}\0${idB}` : `${idB}\0${idA}`;
@@ -438,11 +443,10 @@ function wanderWithGraph(
         distanceCache.set(pairKey, dist);
       }
 
-      // Score: activation product * distance bonus
+      // Score: activation product * dissimilarity
       const actA = activation.get(idA) ?? 0;
       const actB = activation.get(idB) ?? 0;
-      const distanceBonus = Math.max(dist, 1);
-      const score = actA * actB * distanceBonus;
+      const score = actA * actB * dissimilarity;
 
       collisions.push({
         atom_a: idA,
@@ -452,6 +456,7 @@ function wanderWithGraph(
         type_a: dataA.type,
         type_b: dataB.type,
         distance: dist,
+        dissimilarity: Math.round(dissimilarity * 1000) / 1000,
       });
     }
   }
@@ -550,7 +555,7 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
 
     graph.set(fm.id, {
-      tags: fm.scope?.tags ?? [],
+      tags: [...new Set(fm.scope?.tags ?? [])],
       type: fm.type,
       updated_at: fm.updated_at,
       base_activation: baseLevelActivation(fm.updated_at, now),

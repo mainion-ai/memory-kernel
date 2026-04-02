@@ -177,7 +177,7 @@ mk wander -d ~/mk-memory --seed BELI-2026-03-14-NOTATION-AS-ERASURE --steps 3 --
 ```
 
 The output tells you:
-- `collisions` — atom pairs from different domains that activated together (most interesting)
+- `collisions` — atom pairs with high tag dissimilarity that activated together (most interesting)
 - `activated` — all atoms that lit up during the walk
 - `duration_ms` — should be <30ms for ~200 atoms
 

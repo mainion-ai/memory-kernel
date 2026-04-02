@@ -279,12 +279,13 @@ The `--json` flag outputs:
   "collisions": [
     {
       "atom_a": "BELI-notation-as-erasure",
-      "atom_b": "DECI-accounting-trust-hierarchy",
-      "shared_tags": ["notation", "architecture"],
+      "atom_b": "BELI-identity-as-repair",
+      "shared_tags": [],
       "score": 0.42,
       "type_a": "belief",
-      "type_b": "decision",
-      "distance": 3
+      "type_b": "belief",
+      "distance": 4,
+      "dissimilarity": 1.0
     }
   ],
   "activated": [
@@ -304,7 +305,7 @@ When wander finds collisions, format them as context for the drift session:
 const collisionBlock = wanderResult?.collisions?.length
   ? `\nCOLLISION SEEDS (from spreading activation):
 ${wanderResult.collisions.map((c) =>
-  `• ${c.type_a} "${c.atom_a}" ↔ ${c.type_b} "${c.atom_b}" (shared: ${c.shared_tags.join(', ')}, score: ${c.score})`,
+  `• ${c.type_a} "${c.atom_a}" ↔ ${c.type_b} "${c.atom_b}" (dissimilarity: ${c.dissimilarity}, shared: ${c.shared_tags.join(', ') || 'none'}, score: ${c.score})`,
 ).join('\n')}
 
 Explore these connections.\n`
