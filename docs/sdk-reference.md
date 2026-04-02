@@ -540,7 +540,7 @@ console.log(`Created: ${imported.atoms_created}, Skipped: ${imported.atoms_skipp
 
 ## Wander — Spreading Activation (v1.2.0+)
 
-Find unexpected connections between atoms by walking the tag co-occurrence graph. Pure computation — no LLM calls, runs in milliseconds.
+Find unexpected connections between atoms by walking the tag co-occurrence graph and explicit relation edges. Pure computation — no LLM calls, runs in milliseconds.
 
 ```typescript
 import { wander, wanderFromFiles, closeIndex } from 'memory-kernel';
@@ -554,6 +554,7 @@ const result = wander({
   threshold: 0.05,   // minimum activation to survive (default: 0.05)
   decay: 0.5,        // spread decay factor (default: 0.5)
   maxCollisions: 5,  // max collision candidates (default: 5)
+  relationWeight: 0.5, // activation weight for explicit relation edges (default: 0.5)
 });
 
 // result.collisions — atom pairs with high tag dissimilarity (Jaccard > 0.7)
