@@ -96,7 +96,6 @@ function buildBeliefArcs(
     const atom = beliefById.get(atomId);
     if (!atom) return;
     entries.push({ atom, depth });
-    inArc.add(atomId);
 
     const children = (extendedBy.get(atomId) ?? [])
       .filter((cid) => !visited.has(cid) && beliefById.has(cid))
@@ -123,6 +122,7 @@ function buildBeliefArcs(
     const entries: BeliefArcEntry[] = [];
     walkDfs(rootId, 0, entries);
     if (entries.length >= 2) {
+      for (const e of entries) inArc.add(e.atom.frontmatter.id);
       const dates = entries.map((e) => e.atom.frontmatter.created_at).sort();
       const lastEntry = entries[entries.length - 1];
       arcs.push({

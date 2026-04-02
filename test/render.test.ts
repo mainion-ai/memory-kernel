@@ -246,6 +246,29 @@ describe('renderClaudeMd', () => {
       expect(posB).toBeLessThan(posA);
     });
 
+    it('single-node arc candidate does not vanish when coexisting with valid arcs', () => {
+      // Valid 2-node arc
+      const arcRoot = createAtom({ ...base(), type: 'belief', slug: 'arc-root', body: 'Arc root.' });
+      createAtom({
+        ...base(), type: 'belief', slug: 'arc-child', body: 'Arc child.',
+        relations: [{ target: arcRoot.frontmatter.id, type: 'extends' }],
+      });
+      // Belief extending a non-belief — single-node candidate, must appear in standalone
+      const decision = createAtom({ ...base(), type: 'decision', slug: 'some-dec', body: 'A decision.' });
+      createAtom({
+        ...base(), type: 'belief', slug: 'orphan-belief', body: 'Orphan extending decision.',
+        relations: [{ target: decision.frontmatter.id, type: 'extends' }],
+      });
+
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('## Beliefs (developmental arcs)');
+      expect(output).toContain('Arc root.');
+      expect(output).toContain('Arc child.');
+      // The orphan belief must NOT vanish — it should appear in standalone
+      expect(output).toContain('### Standalone beliefs');
+      expect(output).toContain('Orphan extending decision.');
+    });
+
     it('cycle in extends does not hang', () => {
       // Create two beliefs, then manually add cyclic relations via the index
       const a = createAtom({ ...base(), type: 'belief', slug: 'cycle-a', body: 'Cycle A.' });
