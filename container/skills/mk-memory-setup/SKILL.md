@@ -403,7 +403,7 @@ If NanoClaw has drift enabled (`DRIFT_ENABLED=true`), you can add a cheap pre-fi
 MEMORY_DIR={MEMORY_DIR}
 ```
 
-When set, NanoClaw runs `mk wander --json` (~30ms, no LLM) before each drift session. If no cross-domain collisions are found, drift is skipped entirely. If collisions are found, their context is injected into the drift prompt for directed exploration.
+When set, NanoClaw runs `mk wander --json` (~30ms, no LLM) before each drift session. If no high-dissimilarity collisions are found, drift is skipped entirely. If collisions are found (atom pairs with Jaccard tag dissimilarity > 0.7), their context is injected into the drift prompt for directed exploration.
 
 See the [drift integration docs](../../../docs/nanoclaw-integration.md#drift-integration-wander-pre-filter) for details.
 

@@ -55,6 +55,7 @@ All notable changes to this project will be documented in this file.
 
 - `max_tokens` now applied even when FTS query matches zero atoms — previously the budget was silently skipped when neither FTS nor semantic signals existed, returning an unbounded response. Now degrades gracefully to greedy insertion-order fill.
 - `recall()` no-task sort order changed: status priority is checked **first**, then temporal decay (was decay-first, which caused draft atoms to outrank active ones when newer).
+- **Wander collision criteria: dissimilarity instead of type-difference** — Collision detection no longer requires `type_a !== type_b`. Instead, pairs are filtered by tag Jaccard dissimilarity > 0.7 (`1 - |A∩B|/|A∪B|`). Score formula changed from `activation × distance` to `activation × dissimilarity`. This surfaces belief↔belief connections with disjoint tag vocabularies, which were previously discarded (~90% of explicit relations in belief-heavy knowledge bases). New `dissimilarity` field added to `Collision` interface. Tags are now deduplicated during graph construction.
 
 ### Environment Variables (v1.4.0)
 
@@ -119,7 +120,7 @@ mk migrate-relations -d <memory-dir> --apply      # write changes to disk
 
 ### Added
 
-- **`mk wander` — spreading activation for associative memory exploration** (`src/wander.ts`, `src/cli/mk.ts`) — Tier 1 (no LLM) graph walk through the tag co-occurrence network. ACT-R-inspired base-level activation with recency weighting, lateral inhibition, and collision detection between atoms from different domains with unexpected structural overlap. Pure computation — runs in <30ms for 200 atoms.
+- **`mk wander` — spreading activation for associative memory exploration** (`src/wander.ts`, `src/cli/mk.ts`) — Tier 1 (no LLM) graph walk through the tag co-occurrence network. ACT-R-inspired base-level activation with recency weighting, lateral inhibition, and collision detection between atoms with high tag Jaccard dissimilarity (> 0.7). Pure computation — runs in <30ms for 200 atoms.
   - `wander(options)` — index-backed (SQLite). Requires `mk reindex`. Reuses module-level connection cache.
   - `wanderFromFiles(options)` — file-scan fallback. No SQLite needed. Slower but works anywhere.
   - `mk wander` CLI with `--seed`, `--tags`, `--steps`, `--threshold`, `--top-k`, `--decay`, `--max-collisions`, `--json` flags. Auto-falls back to file scan when no index exists.

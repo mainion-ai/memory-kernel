@@ -197,7 +197,7 @@ Full API covers event sourcing, replay, episodes, multi-agent merge, encryption,
 
 Inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975) spreading activation. This is Tier 1 of a two-tier architecture: cheap associative walks that surface candidates for expensive reasoning.
 
-**How it works:** Seed from atoms or tags → spread activation through shared tags (modulated by recency) → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs from different types with shared tags).
+**How it works:** Seed from atoms or tags → spread activation through shared tags (modulated by recency) → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
 
 ```bash
 mk wander -d ./memory --tags philosophy accounting --steps 5 --json
