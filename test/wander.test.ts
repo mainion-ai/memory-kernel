@@ -375,14 +375,11 @@ describe('wander — spreading activation', () => {
         threshold: 0.01,
       });
 
-      // Should find collisions between philosophy atoms and accounting atoms
-      // through the bridging 'two-tiers-meaning' atom
+      // Should find collisions between atoms with high tag dissimilarity
       if (result.collisions.length > 0) {
         for (const c of result.collisions) {
-          // Each collision should have two different types
-          expect(c.type_a).not.toBe(c.type_b);
-          // Should have shared tags
-          expect(c.shared_tags.length).toBeGreaterThan(0);
+          // Each collision should have high tag dissimilarity
+          expect(c.dissimilarity).toBeGreaterThan(0.7);
           // Score should be positive
           expect(c.score).toBeGreaterThan(0);
         }
@@ -419,7 +416,7 @@ describe('wander — spreading activation', () => {
       }
     });
 
-    it('should not report same-type pairs as collisions', () => {
+    it('should only report pairs with tag dissimilarity > 0.7', () => {
       createTestGraph(testDir);
       reindex(testDir);
 
@@ -431,7 +428,83 @@ describe('wander — spreading activation', () => {
       });
 
       for (const c of result.collisions) {
-        expect(c.type_a).not.toBe(c.type_b);
+        expect(c.dissimilarity).toBeGreaterThan(0.7);
+        expect(c.dissimilarity).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it('should skip pairs where both atoms have no tags', () => {
+      // Create two tagless atoms
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'no-tags-a',
+        body: 'No tags A',
+      });
+      createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'no-tags-b',
+        body: 'No tags B',
+      });
+      reindex(testDir);
+
+      const result = wander({
+        memoryDir: testDir,
+        steps: 3,
+        threshold: 0.001,
+        maxCollisions: 50,
+      });
+
+      // No collisions should involve tagless atoms (dissimilarity = 0 when union is empty)
+      for (const c of result.collisions) {
+        expect(c.dissimilarity).toBeGreaterThan(0);
+      }
+    });
+
+    it('should allow same-type collisions with disjoint tags', () => {
+      // Two beliefs with completely different tags
+      createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'math-belief',
+        body: 'Math is beautiful.',
+        scope: { tags: ['mathematics', 'beauty', 'abstraction'] },
+      });
+      createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'cooking-belief',
+        body: 'Cooking is an art.',
+        scope: { tags: ['cooking', 'art', 'craft'] },
+      });
+      // Bridge atom to help activate both
+      createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'art-math-bridge',
+        body: 'Art and math share structure.',
+        scope: { tags: ['mathematics', 'art', 'structure'] },
+      });
+      reindex(testDir);
+
+      const result = wander({
+        memoryDir: testDir,
+        seedTags: ['mathematics', 'cooking'],
+        steps: 5,
+        threshold: 0.001,
+        maxCollisions: 50,
+      });
+
+      // Same-type pairs should now be possible
+      const sameTypePairs = result.collisions.filter((c) => c.type_a === c.type_b);
+      // All collisions must still have high dissimilarity
+      for (const c of result.collisions) {
+        expect(c.dissimilarity).toBeGreaterThan(0.7);
+      }
+      // At least verify the interface includes dissimilarity
+      if (result.collisions.length > 0) {
+        expect(typeof result.collisions[0].dissimilarity).toBe('number');
       }
     });
   });
@@ -540,7 +613,7 @@ describe('wander — spreading activation', () => {
       expect(result.collisions).toEqual([]);
     });
 
-    it('should handle atoms with many shared tags', () => {
+    it('should skip atoms with identical tags (low dissimilarity)', () => {
       const sharedTags = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'];
 
       createAtom({
@@ -562,9 +635,8 @@ describe('wander — spreading activation', () => {
 
       const result = wander({ memoryDir: testDir, steps: 1 });
       expect(result.activated.length).toBe(2);
-      // Should find collision (different types, many shared tags)
-      expect(result.collisions.length).toBeGreaterThan(0);
-      expect(result.collisions[0].shared_tags.length).toBe(5);
+      // Identical tags → dissimilarity = 0 → no collision
+      expect(result.collisions.length).toBe(0);
     });
 
     it('should handle zero steps (seeds initialized but no spreading)', () => {

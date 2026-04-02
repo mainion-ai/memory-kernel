@@ -556,9 +556,9 @@ const result = wander({
   maxCollisions: 5,  // max collision candidates (default: 5)
 });
 
-// result.collisions — atom pairs from different types with shared tags
+// result.collisions — atom pairs with high tag dissimilarity (Jaccard > 0.7)
 for (const c of result.collisions) {
-  console.log(`${c.atom_a} <-> ${c.atom_b} (score: ${c.score}, shared: ${c.shared_tags})`);
+  console.log(`${c.atom_a} <-> ${c.atom_b} (score: ${c.score}, dissimilarity: ${c.dissimilarity}, shared: ${c.shared_tags})`);
 }
 
 // result.activated — all activated atoms sorted by activation score

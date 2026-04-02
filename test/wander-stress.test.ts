@@ -138,8 +138,7 @@ describe('wander — stress tests', () => {
 
     // Verify collision quality
     for (const c of result.collisions) {
-      expect(c.type_a).not.toBe(c.type_b);
-      expect(c.shared_tags.length).toBeGreaterThan(0);
+      expect(c.dissimilarity).toBeGreaterThan(0.7);
       expect(c.score).toBeGreaterThan(0);
     }
     console.log(`150 atoms, topK=10: ${result.collisions.length} collisions found`);
