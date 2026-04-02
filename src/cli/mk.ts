@@ -773,6 +773,7 @@ program
   .option('--top-k <n>', 'Max active atoms per step (lateral inhibition)', parseInt)
   .option('--decay <n>', 'Spread decay factor (0-1)', parseFloat)
   .option('--max-collisions <n>', 'Max collision candidates to return', parseInt)
+  .option('--relation-weight <n>', 'Activation weight for explicit relation edges (0-1)', parseFloat)
   .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
@@ -783,6 +784,7 @@ program
     topK?: number;
     decay?: number;
     maxCollisions?: number;
+    relationWeight?: number;
     json?: boolean;
   }) => {
     const memoryDir = path.resolve(opts.dir);
@@ -807,6 +809,7 @@ program
       topK: opts.topK,
       decay: opts.decay,
       maxCollisions: opts.maxCollisions,
+      relationWeight: opts.relationWeight,
     });
 
     if (opts.json) {
