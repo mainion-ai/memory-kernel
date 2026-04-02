@@ -13,7 +13,6 @@ import os from 'os';
 import {
   initMemoryDir,
   createAtom,
-  updateAtom,
   reindex,
   indexExists,
   closeAllIndexes,

@@ -21,7 +21,7 @@ import { listAtoms } from './store.js';
 
 // --- Types ---
 
-/** Graph node: one atom with its tags, type, and precomputed base activation. */
+/** Graph node: one atom with its tags, type, precomputed base activation, and explicit relation neighbors. */
 interface GraphNode {
   tags: string[];
   type: string;
@@ -573,7 +573,8 @@ export function wander(options: WanderOptions): WanderResult {
 
 /**
  * Convenience: wander from file-scan when no index exists.
- * Builds a temporary in-memory graph from atom files.
+ * Builds a temporary in-memory graph from atom files, including
+ * relation neighbors from frontmatter.
  * Slower but works without pre-built index.
  *
  * No SQLite connection is opened — safe for any environment.
