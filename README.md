@@ -139,7 +139,7 @@ my-memory/
 | `mk merge -d <dir> --from <path> [--dry-run]` | Merge remote event log |
 | `mk gc -d <dir>` | Archive expired atoms |
 | `mk doctor -d <dir>` | Validate schema, links, conflicts |
-| `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md |
+| `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
 | `mk replay --from <file>` | Reconstruct state from events |
 | `mk bootstrap-events -d <dir>` | Migrate to V2 event format |
 | `mk relate <src-id> <type> <tgt-id> -d <dir>` | Create a typed relation edge between two atoms |

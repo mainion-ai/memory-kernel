@@ -7,7 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { initMemoryDir, createAtom, closeAllIndexes } from '../src/index.js';
+import { initMemoryDir, createAtom, closeAllIndexes, openIndex } from '../src/index.js';
+import { addRelation } from '../src/index-db.js';
 import { renderClaudeMd } from '../src/render.js';
 
 let testDir: string;
@@ -21,6 +22,7 @@ const base = () => ({
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-render-'));
   initMemoryDir(testDir);
+  openIndex(testDir); // ensure DB exists for relation indexing
 });
 
 afterEach(() => {
@@ -137,5 +139,150 @@ describe('renderClaudeMd', () => {
   it('returns a string ending with a newline', () => {
     const output = renderClaudeMd(testDir);
     expect(output.endsWith('\n')).toBe(true);
+  });
+
+  // --- Graph-ordered belief rendering ---
+
+  describe('belief developmental arcs', () => {
+    it('renders belief extends chain as developmental arc', () => {
+      const a = createAtom({ ...base(), type: 'belief', slug: 'ma-intervals', body: 'Silence between notes matters.', confidence: 0.6 });
+      const b = createAtom({
+        ...base(), type: 'belief', slug: 'kintsugi', body: 'Repair reveals beauty.',
+        confidence: 0.7,
+        relations: [{ target: a.frontmatter.id, type: 'extends' }],
+      });
+      createAtom({
+        ...base(), type: 'belief', slug: 'notation', body: 'Writing is discovery.',
+        confidence: 0.7,
+        relations: [{ target: b.frontmatter.id, type: 'extends' }],
+      });
+
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('## Beliefs (developmental arcs)');
+      expect(output).toContain('### Arc:');
+      expect(output).toContain('ma-intervals');
+      expect(output).toContain('notation');
+      expect(output).toContain('\u2192 **'); // arrow before child
+      expect(output).toContain('Silence between notes matters.');
+      expect(output).toContain('Repair reveals beauty.');
+      expect(output).toContain('Writing is discovery.');
+    });
+
+    it('renders standalone beliefs separately from arcs', () => {
+      const a = createAtom({ ...base(), type: 'belief', slug: 'root-idea', body: 'Root idea.' });
+      createAtom({
+        ...base(), type: 'belief', slug: 'child-idea', body: 'Child idea.',
+        relations: [{ target: a.frontmatter.id, type: 'extends' }],
+      });
+      createAtom({ ...base(), type: 'belief', slug: 'lone-wolf', body: 'Standalone belief.' });
+
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('## Beliefs (developmental arcs)');
+      expect(output).toContain('### Arc:');
+      expect(output).toContain('### Standalone beliefs');
+      expect(output).toContain('Standalone belief.');
+    });
+
+    it('belief extending non-belief shows as standalone', () => {
+      const decision = createAtom({ ...base(), type: 'decision', slug: 'use-sql', body: 'Use SQL.' });
+      createAtom({
+        ...base(), type: 'belief', slug: 'sql-fast', body: 'SQL is fast enough.',
+        relations: [{ target: decision.frontmatter.id, type: 'extends' }],
+      });
+
+      const output = renderClaudeMd(testDir);
+      // Belief renders, but decision does not appear in beliefs section
+      expect(output).toContain('SQL is fast enough.');
+      // Single belief extending non-belief => standalone (arc needs ≥2 belief nodes)
+      expect(output).toContain('## Beliefs (unverified)');
+      expect(output).not.toContain('## Beliefs (developmental arcs)');
+    });
+
+    it('all beliefs standalone when no extends relations', () => {
+      createAtom({ ...base(), type: 'belief', slug: 'idea-one', body: 'First idea.' });
+      createAtom({ ...base(), type: 'belief', slug: 'idea-two', body: 'Second idea.' });
+
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('## Beliefs (unverified)');
+      expect(output).not.toContain('## Beliefs (developmental arcs)');
+      expect(output).toContain('First idea.');
+      expect(output).toContain('Second idea.');
+    });
+
+    it('arc header shows correct node count', () => {
+      const a = createAtom({ ...base(), type: 'belief', slug: 'step-one', body: 'Step 1.' });
+      const b = createAtom({
+        ...base(), type: 'belief', slug: 'step-two', body: 'Step 2.',
+        relations: [{ target: a.frontmatter.id, type: 'extends' }],
+      });
+      createAtom({
+        ...base(), type: 'belief', slug: 'step-three', body: 'Step 3.',
+        relations: [{ target: b.frontmatter.id, type: 'extends' }],
+      });
+
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('3 nodes');
+    });
+
+    it('arc children sorted chronologically', () => {
+      const parent = createAtom({ ...base(), type: 'belief', slug: 'parent', body: 'Parent.' });
+      // Create child-b first, child-a second — but child-a should still come after child-b
+      // since createAtom auto-generates timestamps in order
+      createAtom({
+        ...base(), type: 'belief', slug: 'child-b', body: 'Child B.',
+        relations: [{ target: parent.frontmatter.id, type: 'extends' }],
+      });
+      createAtom({
+        ...base(), type: 'belief', slug: 'child-a', body: 'Child A.',
+        relations: [{ target: parent.frontmatter.id, type: 'extends' }],
+      });
+
+      const output = renderClaudeMd(testDir);
+      const posB = output.indexOf('Child B.');
+      const posA = output.indexOf('Child A.');
+      expect(posB).toBeGreaterThan(-1);
+      expect(posA).toBeGreaterThan(-1);
+      // B was created first, so B appears before A
+      expect(posB).toBeLessThan(posA);
+    });
+
+    it('single-node arc candidate does not vanish when coexisting with valid arcs', () => {
+      // Valid 2-node arc
+      const arcRoot = createAtom({ ...base(), type: 'belief', slug: 'arc-root', body: 'Arc root.' });
+      createAtom({
+        ...base(), type: 'belief', slug: 'arc-child', body: 'Arc child.',
+        relations: [{ target: arcRoot.frontmatter.id, type: 'extends' }],
+      });
+      // Belief extending a non-belief — single-node candidate, must appear in standalone
+      const decision = createAtom({ ...base(), type: 'decision', slug: 'some-dec', body: 'A decision.' });
+      createAtom({
+        ...base(), type: 'belief', slug: 'orphan-belief', body: 'Orphan extending decision.',
+        relations: [{ target: decision.frontmatter.id, type: 'extends' }],
+      });
+
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('## Beliefs (developmental arcs)');
+      expect(output).toContain('Arc root.');
+      expect(output).toContain('Arc child.');
+      // The orphan belief must NOT vanish — it should appear in standalone
+      expect(output).toContain('### Standalone beliefs');
+      expect(output).toContain('Orphan extending decision.');
+    });
+
+    it('cycle in extends does not hang', () => {
+      // Create two beliefs, then manually add cyclic relations via the index
+      const a = createAtom({ ...base(), type: 'belief', slug: 'cycle-a', body: 'Cycle A.' });
+      const b = createAtom({
+        ...base(), type: 'belief', slug: 'cycle-b', body: 'Cycle B.',
+        relations: [{ target: a.frontmatter.id, type: 'extends' }],
+      });
+      // Add reverse edge to create cycle
+      addRelation(testDir, a.frontmatter.id, b.frontmatter.id, 'extends');
+
+      // Should return without hanging
+      const output = renderClaudeMd(testDir);
+      expect(output).toContain('Cycle A.');
+      expect(output).toContain('Cycle B.');
+    });
   });
 });
