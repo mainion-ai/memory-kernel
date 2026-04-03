@@ -760,3 +760,17 @@ export function getAllRelations(memoryDir: string): AtomRelation[] {
     return [];
   }
 }
+
+/**
+ * Return all atom IDs from the index. Fast: single SQL query.
+ */
+export function getAllAtomIds(memoryDir: string): Set<string> {
+  if (!indexExists(memoryDir)) return new Set();
+  try {
+    const db = openIndex(memoryDir);
+    const rows = db.prepare('SELECT atom_id FROM atoms').all() as { atom_id: string }[];
+    return new Set(rows.map((r) => r.atom_id));
+  } catch {
+    return new Set();
+  }
+}
