@@ -13,8 +13,9 @@ import {
   validateAtomFrontmatter,
 } from './schema.js';
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
-import { indexAtom, indexExists, removeFromIndex } from './index-db.js';
+import { indexAtom, indexExists, removeFromIndex, getAllAtomIds } from './index-db.js';
 import { encryptAtom, resolveKey } from './crypto.js';
+import { extractBodyReferences } from './relink.js';
 import type { Atom, AtomFrontmatter, AtomType, Classification, Relation } from './types.js';
 
 /**
@@ -102,6 +103,22 @@ export function createAtom(
   // Keep index in sync if it exists
   if (indexExists(opts.memoryDir)) {
     indexAtom(opts.memoryDir, atom);
+  }
+
+  // Auto-relink: extract body-text references and add as relations.
+  // Only runs when index exists (needs atom ID lookup). Skips if the caller
+  // already provided explicit relations to avoid double-linking.
+  if (!opts.relations?.length && indexExists(opts.memoryDir)) {
+    const knownIds = getAllAtomIds(opts.memoryDir);
+    const bodyRefs = extractBodyReferences(atom.body, id, knownIds);
+    if (bodyRefs.length > 0) {
+      atom.frontmatter.relations = [
+        ...(atom.frontmatter.relations ?? []),
+        ...bodyRefs.map((r) => ({ target: r.targetId, type: r.type })),
+      ];
+      writeAtom(atom, fp);
+      indexAtom(opts.memoryDir, atom);
+    }
   }
 
   return atom;
