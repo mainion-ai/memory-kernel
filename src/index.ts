@@ -95,6 +95,7 @@ export {
   getRelationsForAtom,
   addRelation,
   getAllRelations,
+  getAllAtomIds,
 } from './index-db.js';
 export type { IndexQueryResult, AtomRelation } from './index-db.js';
 
@@ -182,3 +183,14 @@ export type { EmbeddingProvider, EmbeddingConfig, EmbedResult } from './embeddin
 
 // Embed sync (async embedding operations)
 export { embedAtom, embedAllAtoms, semanticSearch, semanticSearchSync } from './embed-sync.js';
+
+// Relink (body-text relation extraction)
+export {
+  relinkAll,
+  relinkAtom,
+  extractBodyReferences,
+  inferRelationType,
+  ATOM_ID_PATTERN,
+  RELATION_CONTEXT,
+} from './relink.js';
+export type { ProposedRelation, RelinkResult } from './relink.js';

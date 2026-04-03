@@ -13,8 +13,9 @@ import {
   validateAtomFrontmatter,
 } from './schema.js';
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
-import { indexAtom, indexExists, removeFromIndex } from './index-db.js';
+import { indexAtom, indexExists, removeFromIndex, getAllAtomIds } from './index-db.js';
 import { encryptAtom, resolveKey } from './crypto.js';
+import { extractBodyReferences } from './relink.js';
 import type { Atom, AtomFrontmatter, AtomType, Classification, Relation } from './types.js';
 
 /**
@@ -89,7 +90,29 @@ export function createAtom(
   writeAtom(atom, fp);
   atom.filePath = fp;
 
-  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
+  // Index first so this atom's ID is available for lookups
+  if (indexExists(opts.memoryDir)) {
+    indexAtom(opts.memoryDir, atom);
+  }
+
+  // Auto-relink: extract body-text references and add as relations.
+  // Runs before event emission so the snapshot includes extracted relations.
+  // Skips if the caller already provided explicit relations to avoid double-linking.
+  if (!opts.relations?.length && indexExists(opts.memoryDir)) {
+    const knownIds = getAllAtomIds(opts.memoryDir);
+    const bodyRefs = extractBodyReferences(atom.body, id, knownIds);
+    if (bodyRefs.length > 0) {
+      atom.frontmatter.relations = [
+        ...(atom.frontmatter.relations ?? []),
+        ...bodyRefs.map((r) => ({ target: r.targetId, type: r.type })),
+      ];
+      writeAtom(atom, fp);
+      indexAtom(opts.memoryDir, atom);
+    }
+  }
+
+  // Emit event (v2 with snapshot — encrypted for SECRET atoms).
+  // Placed after auto-relink so the snapshot captures extracted relations.
   appendEvent(opts.memoryDir, 'atom_created', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
@@ -98,11 +121,6 @@ export function createAtom(
     schema_version: 2,
     atom_snapshot: snapshotAtom(atom),
   });
-
-  // Keep index in sync if it exists
-  if (indexExists(opts.memoryDir)) {
-    indexAtom(opts.memoryDir, atom);
-  }
 
   return atom;
 }

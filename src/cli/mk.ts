@@ -48,6 +48,7 @@ import { embedAtom, embedAllAtoms } from '../embed-sync.js';
 import type { Classification } from '../types.js';
 import { registerRelateCommand, registerRelationsCommand } from './relate.js';
 import { registerMigrateRelationsCommand } from './migrate-relations.js';
+import { registerRelinkCommand } from './relink.js';
 
 const program = new Command();
 
@@ -850,5 +851,6 @@ program
 registerRelateCommand(program);
 registerRelationsCommand(program);
 registerMigrateRelationsCommand(program);
+registerRelinkCommand(program);
 
 program.parse();
