@@ -90,24 +90,14 @@ export function createAtom(
   writeAtom(atom, fp);
   atom.filePath = fp;
 
-  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
-  appendEvent(opts.memoryDir, 'atom_created', {
-    agent_id: opts.agent_id,
-    session_id: opts.session_id,
-    atom_refs: [id],
-    touched_paths: opts.scope?.paths,
-    schema_version: 2,
-    atom_snapshot: snapshotAtom(atom),
-  });
-
-  // Keep index in sync if it exists
+  // Index first so this atom's ID is available for lookups
   if (indexExists(opts.memoryDir)) {
     indexAtom(opts.memoryDir, atom);
   }
 
   // Auto-relink: extract body-text references and add as relations.
-  // Only runs when index exists (needs atom ID lookup). Skips if the caller
-  // already provided explicit relations to avoid double-linking.
+  // Runs before event emission so the snapshot includes extracted relations.
+  // Skips if the caller already provided explicit relations to avoid double-linking.
   if (!opts.relations?.length && indexExists(opts.memoryDir)) {
     const knownIds = getAllAtomIds(opts.memoryDir);
     const bodyRefs = extractBodyReferences(atom.body, id, knownIds);
@@ -120,6 +110,17 @@ export function createAtom(
       indexAtom(opts.memoryDir, atom);
     }
   }
+
+  // Emit event (v2 with snapshot — encrypted for SECRET atoms).
+  // Placed after auto-relink so the snapshot captures extracted relations.
+  appendEvent(opts.memoryDir, 'atom_created', {
+    agent_id: opts.agent_id,
+    session_id: opts.session_id,
+    atom_refs: [id],
+    touched_paths: opts.scope?.paths,
+    schema_version: 2,
+    atom_snapshot: snapshotAtom(atom),
+  });
 
   return atom;
 }
