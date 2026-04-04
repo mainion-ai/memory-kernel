@@ -13,7 +13,7 @@ import type { Atom, AtomType, AtomStatus, Classification, RecallQuery } from './
 import { listAtoms } from './store.js';
 
 const DB_FILENAME = '.memory-index.db';
-const SCHEMA_VERSION = 5; // Bump when schema changes to trigger auto-rebuild
+const SCHEMA_VERSION = 6; // Bump when schema changes to trigger auto-rebuild
 
 // --- Schema ---
 
@@ -99,6 +99,23 @@ const CREATE_RELATIONS_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_relations_type ON atom_relations(relation_type)',
 ];
 
+// Citations table for concept-name and atom-ID citation counts (ACT-R frequency).
+// Populated by `mk citations` or `indexCitations()`. Used by wander for base_activation.
+const CREATE_CITATIONS_TABLE = `
+CREATE TABLE IF NOT EXISTS atom_citations (
+  source_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 1,
+  type TEXT NOT NULL DEFAULT 'concept_name',
+  PRIMARY KEY (source_id, target_id, type),
+  FOREIGN KEY (source_id) REFERENCES atoms(atom_id) ON DELETE CASCADE,
+  FOREIGN KEY (target_id) REFERENCES atoms(atom_id) ON DELETE CASCADE
+)`;
+
+const CREATE_CITATIONS_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_citations_target ON atom_citations(target_id)',
+];
+
 // --- Connection cache ---
 
 const connectionCache = new Map<string, Database.Database>();
@@ -167,7 +184,8 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   const currentVersion = (db.pragma('user_version', { simple: true }) as number) ?? 0;
   if (currentVersion !== SCHEMA_VERSION) {
     // Drop and recreate all tables for clean schema upgrade.
-    // Drop order: relations first (FK source CASCADE, FK target RESTRICT — must go before atoms).
+    // Drop order: dependent tables first (FK CASCADE), then atoms last.
+    db.exec('DROP TABLE IF EXISTS atom_citations');
     db.exec('DROP TABLE IF EXISTS atom_relations');
     db.exec('DROP TABLE IF EXISTS atom_embeddings');
     db.exec('DROP TABLE IF EXISTS atom_fts');
@@ -187,6 +205,10 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   db.exec(CREATE_EMBEDDINGS_TABLE);
   db.exec(CREATE_RELATIONS_TABLE);
   for (const idx of CREATE_RELATIONS_INDEXES) {
+    db.exec(idx);
+  }
+  db.exec(CREATE_CITATIONS_TABLE);
+  for (const idx of CREATE_CITATIONS_INDEXES) {
     db.exec(idx);
   }
 
@@ -266,6 +288,7 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     db.pragma('foreign_keys = OFF');
     try {
       // Clear existing data
+      db.exec('DELETE FROM atom_citations');
       db.exec('DELETE FROM atom_relations');
       db.exec('DELETE FROM atom_fts');
       db.exec('DELETE FROM atom_paths');
@@ -681,7 +704,7 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
 /**
  * Get index stats.
  */
-export function indexStats(memoryDir: string): { atoms: number; tags: number; paths: number; embeddings: number; relations: number } | null {
+export function indexStats(memoryDir: string): { atoms: number; tags: number; paths: number; embeddings: number; relations: number; citations: number } | null {
   if (!indexExists(memoryDir)) return null;
 
   const db = openIndex(memoryDir);
@@ -696,7 +719,11 @@ export function indexStats(memoryDir: string): { atoms: number; tags: number; pa
   try {
     relations = (db.prepare('SELECT COUNT(*) as c FROM atom_relations').get() as { c: number }).c;
   } catch { /* table may not exist in older schema */ }
-  return { atoms, tags, paths, embeddings, relations };
+  let citations = 0;
+  try {
+    citations = (db.prepare('SELECT COUNT(*) as c FROM atom_citations').get() as { c: number }).c;
+  } catch { /* table may not exist in older schema */ }
+  return { atoms, tags, paths, embeddings, relations, citations };
 }
 
 // --- Relation operations (Phase 3) ---
