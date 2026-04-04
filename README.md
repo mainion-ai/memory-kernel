@@ -145,13 +145,15 @@ my-memory/
 | `mk relate <src-id> <type> <tgt-id> -d <dir>` | Create a typed relation edge between two atoms |
 | `mk relations <atom-id> -d <dir>` | Show inbound and outbound relation edges for an atom |
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
+| `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
+| `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
 
 ---
 
 ## SDK
 
 ```typescript
-import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander } from 'memory-kernel';
+import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander, indexCitations } from 'memory-kernel';
 
 // Initialize
 initMemoryDir('./memory');
@@ -197,7 +199,7 @@ Full API covers event sourcing, replay, episodes, multi-agent merge, encryption,
 
 Inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975) spreading activation. This is Tier 1 of a two-tier architecture: cheap associative walks that surface candidates for expensive reasoning.
 
-**How it works:** Seed from atoms or tags → spread activation through shared tags and relation neighbors (modulated by recency) → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
+**How it works:** Seed from atoms or tags → spread activation through shared tags and relation neighbors (modulated by ACT-R base-level activation: recency × citation frequency) → sqrt-sigmoid modulation preserves important hub atoms → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
 
 ```bash
 mk wander -d ./memory --tags philosophy accounting --steps 5 --json
@@ -212,7 +214,7 @@ mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 | `topK` | 20 | Lateral inhibition limit |
 | `decay` | 0.5 | Spread decay factor |
 | `maxCollisions` | 5 | Max collision candidates |
-| `relationWeight` | 0.5 | Activation weight for explicit relation edges |
+| `relationWeight` | 1.0 | Activation weight for explicit relation edges (1.0 = ~2× tag co-occurrence) |
 
 ---
 

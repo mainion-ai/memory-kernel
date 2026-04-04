@@ -7,6 +7,59 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [1.6.0] — 2026-04-04
+
+### Added
+
+- **ACT-R base-level activation with citation frequency** — Wander's base-level activation now follows the ACT-R power-law model: `B_i = ln(n) - d·ln(t)` where `n` = citation count + 1, `t` = age in days, `d` = 0.5 (standard ACT-R decay). Foundational beliefs cited 28 times receive a `ln(28) ≈ 3.3` boost over uncited atoms, making them outrank recent-but-isolated ones. Previously activation used only recency with an effective decay of 1.0 (too aggressive).
+
+- **Concept-name citation extractor** (`src/citations.ts`) — Discovers informal references between atoms by deriving searchable concept names from atom ID slugs and matching against body text. Three citation layers: explicit relations (frontmatter), atom-ID references (body text), and concept-name references (body text, 3.5× larger than atom-ID refs). Stores counts in `atom_citations` SQLite table.
+  - `deriveConceptNames(atomId)` — extract searchable keywords from atom slug
+  - `extractCitations(memoryDir)` — scan all atoms for cross-references (no DB write)
+  - `indexCitations(memoryDir)` — extract and store citations in SQLite (idempotent)
+  - `mk citations -d <dir> [--json]` — CLI command showing total mentions, breakdown by type, unique targets, top 10 cited atoms
+  - Exports: `extractCitations`, `indexCitations`, `deriveConceptNames`, `CitationEntry`, `CitationResult`
+
+- **`atom_citations` SQLite table** — Schema bumped to **v6**. Table: `(source_id, target_id, count, type)` with FK CASCADE on both columns. Created by index-db.ts DDL alongside all other tables. Cleared on reindex. Included in `indexStats()`.
+
+### Changed
+
+- **Sqrt-sigmoid baseBoost** — Activation modulation changed from `1/(1+exp(-B_i))` (range [0.5, 1.0]) to `1/sqrt(1+exp(-B_i))` (range [0.707, 1.0]). Gentler compression preserves activation flow to structurally important but temporally old hub atoms.
+
+- **`relationWeight` default: 0.5 → 1.0** — Explicit relation edges now carry ~2× the weight of tag co-occurrence (which is diluted by fanout). Previously explicit edges and coincidental shared tags had similar weight. Calibrated down from initial 2.0 after code review (chain dominance at 4×).
+
+- **`indexStats()` return type** — Now includes `citations: number` field.
+
+- **`GraphNode` interface** — Added `citation_count: number` field for wander graph nodes.
+
+### Migration
+
+Schema v5 → v6: run `mk reindex -d <memory-dir>` once after upgrading. The `atom_citations` table is created automatically. Then run `mk citations -d <memory-dir>` to populate citation counts (optional — wander works without them, defaulting to frequency=1).
+
+### Tests
+
+- 12 new tests in `test/citations.test.ts`: concept name derivation (4), citation extraction (4), SQLite storage and idempotency (4).
+
+---
+
+## [1.5.0] — 2026-04-02
+
+### Added
+
+- **`mk relink` — body-text relation extraction** (`src/relink.ts`) — Scans atom bodies for atom ID references and infers relation types from surrounding context (e.g., "extends" near an ID → `extends` edge). Auto-relinks on atom creation.
+  - `relinkAll(memoryDir, options)` — scan all atoms, extract references, write relation edges
+  - `relinkAtom(memoryDir, atom)` — relink a single atom (called automatically after `createAtom`)
+  - `extractBodyReferences(body)` — extract atom ID patterns from text
+  - `inferRelationType(context)` — infer relation type from surrounding text
+  - `mk relink -d <dir> [--dry-run | --apply]` — CLI with preview mode
+  - Exports: `relinkAll`, `relinkAtom`, `extractBodyReferences`, `inferRelationType`, `ATOM_ID_PATTERN`, `RELATION_CONTEXT`, `ProposedRelation`, `RelinkResult`
+
+### Changed
+
+- Auto-relink on `createAtom` — new atoms automatically get relation edges extracted from body text. Event snapshot includes extracted relations.
+
+---
+
 ## [1.4.0] — 2026-04-02
 
 ### Added

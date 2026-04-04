@@ -58,6 +58,20 @@ import {
   getAllEmbeddings,
   isEmbeddingStale,
   embeddingStats,
+  // Relations (v1.4.0+)
+  getRelationsForAtom,
+  addRelation,
+  getAllRelations,
+  getAllAtomIds,
+  // Relink — body-text relation extraction (v1.5.0+)
+  relinkAll,
+  relinkAtom,
+  extractBodyReferences,
+  inferRelationType,
+  // Citations — concept-name citation extraction (v1.6.0+)
+  extractCitations,
+  indexCitations,
+  deriveConceptNames,
 } from 'memory-kernel';
 ```
 
