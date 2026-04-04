@@ -46,10 +46,10 @@ describe('atom_relations DDL', () => {
     expect(tables).toHaveLength(1);
   });
 
-  it('schema version is 5', () => {
+  it('schema version is 6', () => {
     const db = openIndex(testDir);
     const version = db.pragma('user_version', { simple: true }) as number;
-    expect(version).toBe(5);
+    expect(version).toBe(6);
   });
 
   it('indexStats includes relations count', () => {

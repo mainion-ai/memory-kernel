@@ -49,6 +49,7 @@ import type { Classification } from '../types.js';
 import { registerRelateCommand, registerRelationsCommand } from './relate.js';
 import { registerMigrateRelationsCommand } from './migrate-relations.js';
 import { registerRelinkCommand } from './relink.js';
+import { registerCitationsCommand } from './citations.js';
 
 const program = new Command();
 
@@ -852,5 +853,6 @@ registerRelateCommand(program);
 registerRelationsCommand(program);
 registerMigrateRelationsCommand(program);
 registerRelinkCommand(program);
+registerCitationsCommand(program);
 
 program.parse();
