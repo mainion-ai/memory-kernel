@@ -182,7 +182,8 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
     }
   }
 
-  // Load citation counts from atom_citations table (if it exists)
+  // Load citation counts from atom_citations table (schema v6+).
+  // Populated by `mk citations` / indexCitations(). Empty until first run.
   const citationCounts = new Map<string, number>();
   try {
     const citationRows = db.prepare(`
@@ -194,7 +195,7 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
       citationCounts.set(row.target_id, row.total);
     }
   } catch {
-    // Table doesn't exist yet — fine, all counts stay 0
+    // Table empty or not yet populated — all counts stay 0
   }
 
   const graph = new Map<string, GraphNode>();
@@ -422,8 +423,9 @@ function wanderWithGraph(
           if (!neighborData) continue;
 
           // Modulate by base-level activation (recency + frequency).
-          // Use sqrt-sigmoid: 1/sqrt(1 + exp(-B_i)) — gentler than full
-          // sigmoid, avoids crushing old-but-important atoms.
+          // sqrt-sigmoid: 1/sqrt(1 + exp(-B_i)) — compresses to [0.707, 1.0].
+          // Gentler than full sigmoid [0.5, 1.0], preserves activation of
+          // important but infrequently-updated (old) hub atoms.
           const baseBoost = 1 / Math.sqrt(1 + Math.exp(-neighborData.base_activation));
           const incoming = spreadPerNeighbor * baseBoost;
 
@@ -435,8 +437,10 @@ function wanderWithGraph(
       }
     }
 
-    // Spread through explicit relation neighbors
-    const relationWeight = options.relationWeight ?? 2.0;
+    // Spread through explicit relation neighbors.
+    // Default 1.0 = explicit edges carry ~2x the weight of tag co-occurrence
+    // (which is diluted by tag fanout). Higher values risk chain dominance.
+    const relationWeight = options.relationWeight ?? 1.0;
     if (relationWeight > 0) {
       for (const [atomId, act] of activation) {
         const atomData = graph.get(atomId);
@@ -449,6 +453,7 @@ function wanderWithGraph(
           const neighborData = graph.get(neighborId);
           if (!neighborData) continue;
 
+          // sqrt-sigmoid baseBoost — same as tag spreading above.
           const baseBoost = 1 / Math.sqrt(1 + Math.exp(-neighborData.base_activation));
           const incoming = spreadPerNeighbor * baseBoost;
 
@@ -637,6 +642,10 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     if (fm.type === 'conflict') continue;
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
 
+    // NOTE: citation_count is always 0 in file-scan mode because citation
+    // counts live in SQLite (atom_citations table). The ACT-R frequency
+    // component (ln(n)) degrades to ln(1)=0 here. This is an acceptable
+    // limitation — file-scan is the fallback path when no index exists.
     graph.set(fm.id, {
       tags: [...new Set(fm.scope?.tags ?? [])],
       type: fm.type,
