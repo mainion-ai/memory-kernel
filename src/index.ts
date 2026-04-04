@@ -194,3 +194,11 @@ export {
   RELATION_CONTEXT,
 } from './relink.js';
 export type { ProposedRelation, RelinkResult } from './relink.js';
+
+// Citations (concept-name citation extraction)
+export {
+  extractCitations,
+  indexCitations,
+  deriveConceptNames,
+} from './citations.js';
+export type { CitationEntry, CitationResult } from './citations.js';
