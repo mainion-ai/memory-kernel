@@ -28,6 +28,8 @@ interface GraphNode {
   updated_at: string;
   base_activation: number;
   neighbors: Set<string>;
+  /** Number of times this atom is cited by other atoms (concept-name + ID refs). */
+  citation_count: number;
 }
 
 export interface WanderOptions {
@@ -95,19 +97,32 @@ export interface WanderResult {
 // --- ACT-R base-level activation ---
 
 /**
- * Compute base-level activation for an atom using ACT-R-inspired
- * recency weighting. More recently updated atoms get higher activation.
+ * Compute base-level activation using ACT-R power-law decay with frequency.
  *
- * B_i = ln(1 / age_days)  (clamped to avoid -Infinity)
+ *   B_i = ln(n · t^{-d})  =  ln(n) − d·ln(t)
  *
- * Age is measured in days since last update. Minimum age = 0.01 days (~14 min)
- * to avoid ln(Infinity).
+ * Where:
+ *   n = citation count + 1 (minimum 1 so uncited atoms still have recency signal)
+ *   t = age in days since last update (clamped to ≥0.01)
+ *   d = 0.5 (ACT-R standard decay, vs the previous effective d=1.0)
+ *
+ * The frequency term ln(n) means a belief cited 28 times gets ln(28)≈3.3
+ * boost over an uncited belief. This makes foundational beliefs outrank
+ * recent-but-isolated ones — the correct behavior for constitution and drift.
+ *
+ * Reference: Anderson & Lebiere (1998), The Atomic Components of Thought.
  */
-function baseLevelActivation(updatedAt: string, now: number): number {
+function baseLevelActivation(
+  updatedAt: string,
+  now: number,
+  citationCount: number = 0,
+): number {
   const updatedMs = new Date(updatedAt).getTime();
   if (Number.isNaN(updatedMs)) return 0;
   const ageDays = Math.max((now - updatedMs) / (1000 * 60 * 60 * 24), 0.01);
-  return Math.log(1 / ageDays);
+  const n = Math.max(citationCount + 1, 1);
+  const d = 0.5; // ACT-R standard decay (was effectively 1.0 before)
+  return Math.log(n) - d * Math.log(ageDays);
 }
 
 // --- Graph construction ---
@@ -167,14 +182,31 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
     }
   }
 
+  // Load citation counts from atom_citations table (if it exists)
+  const citationCounts = new Map<string, number>();
+  try {
+    const citationRows = db.prepare(`
+      SELECT target_id, SUM(count) as total
+      FROM atom_citations
+      GROUP BY target_id
+    `).all() as { target_id: string; total: number }[];
+    for (const row of citationRows) {
+      citationCounts.set(row.target_id, row.total);
+    }
+  } catch {
+    // Table doesn't exist yet — fine, all counts stay 0
+  }
+
   const graph = new Map<string, GraphNode>();
   for (const atom of atoms) {
+    const citations = citationCounts.get(atom.atom_id) ?? 0;
     graph.set(atom.atom_id, {
       tags: [...new Set(tagsByAtom.get(atom.atom_id) ?? [])],
       type: atom.type,
       updated_at: atom.updated_at,
-      base_activation: baseLevelActivation(atom.updated_at, now),
+      base_activation: baseLevelActivation(atom.updated_at, now, citations),
       neighbors: new Set(),
+      citation_count: citations,
     });
   }
 
@@ -389,9 +421,10 @@ function wanderWithGraph(
           const neighborData = graph.get(neighborId);
           if (!neighborData) continue;
 
-          // Modulate by base-level activation (recency boost)
-          // Normalize to 0-1 range with sigmoid
-          const baseBoost = 1 / (1 + Math.exp(-neighborData.base_activation));
+          // Modulate by base-level activation (recency + frequency).
+          // Use sqrt-sigmoid: 1/sqrt(1 + exp(-B_i)) — gentler than full
+          // sigmoid, avoids crushing old-but-important atoms.
+          const baseBoost = 1 / Math.sqrt(1 + Math.exp(-neighborData.base_activation));
           const incoming = spreadPerNeighbor * baseBoost;
 
           newActivation.set(
@@ -403,7 +436,7 @@ function wanderWithGraph(
     }
 
     // Spread through explicit relation neighbors
-    const relationWeight = options.relationWeight ?? 0.5;
+    const relationWeight = options.relationWeight ?? 2.0;
     if (relationWeight > 0) {
       for (const [atomId, act] of activation) {
         const atomData = graph.get(atomId);
@@ -416,7 +449,7 @@ function wanderWithGraph(
           const neighborData = graph.get(neighborId);
           if (!neighborData) continue;
 
-          const baseBoost = 1 / (1 + Math.exp(-neighborData.base_activation));
+          const baseBoost = 1 / Math.sqrt(1 + Math.exp(-neighborData.base_activation));
           const incoming = spreadPerNeighbor * baseBoost;
 
           newActivation.set(
@@ -608,8 +641,9 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
       tags: [...new Set(fm.scope?.tags ?? [])],
       type: fm.type,
       updated_at: fm.updated_at,
-      base_activation: baseLevelActivation(fm.updated_at, now),
+      base_activation: baseLevelActivation(fm.updated_at, now, 0),
       neighbors: new Set(),
+      citation_count: 0,
     });
   }
 
