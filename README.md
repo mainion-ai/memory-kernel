@@ -33,6 +33,8 @@ npm install memory-kernel
 - [Native/Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
 - [Self-diagnostic](container/skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
 
+**OpenClaw / orchestrators:** See [CLI integration guide](docs/cli-integration.md) for direct CLI usage with `--json` output (no MCP required).
+
 **MCP server:** See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for tool integration with any MCP-capable agent.
 
 ---
