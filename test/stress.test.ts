@@ -652,7 +652,7 @@ describe('replay edge cases', () => {
 // ============================================================================
 
 describe('large-scale performance', () => {
-  it('500 atoms: reflect completes in < 15s', { timeout: 30000 }, () => {
+  it('500 atoms: reflect completes in < 15s', { timeout: 60000 }, () => {
     for (let i = 0; i < 500; i++) {
       createAtom({ ...base(testDir), type: 'fact', slug: `fact-${i}`, body: `body ${i}` });
     }

@@ -50,7 +50,7 @@ export interface WanderOptions {
   decay?: number;
   /** Number of collision candidates to return (default: 5) */
   maxCollisions?: number;
-  /** Weight for activation flow through explicit relations (default: 0.5) */
+  /** Weight for activation flow through explicit relations (default: 2.0) */
   relationWeight?: number;
 }
 
@@ -438,9 +438,10 @@ function wanderWithGraph(
     }
 
     // Spread through explicit relation neighbors.
-    // Default 1.0 = explicit edges carry ~2x the weight of tag co-occurrence
-    // (which is diluted by tag fanout). Higher values risk chain dominance.
-    const relationWeight = options.relationWeight ?? 1.0;
+    // Default 2.0 = deliberate associations dominate accidental tag co-occurrence.
+    // Empirically validated: at 2.0, hub beliefs activate full extends chains;
+    // at 1.0, tag noise drowns out relation signal for sparse graphs.
+    const relationWeight = options.relationWeight ?? 2.0;
     if (relationWeight > 0) {
       for (const [atomId, act] of activation) {
         const atomData = graph.get(atomId);

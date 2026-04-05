@@ -53,6 +53,16 @@ import { registerCitationsCommand } from './citations.js';
 
 const program = new Command();
 
+/** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
+function exitWithError(message: string, json?: boolean): never {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`✗ ${message}`);
+  }
+  process.exit(1);
+}
+
 program
   .name('mk')
   .description('Memory Kernel CLI — manage AI agent memory')
@@ -77,12 +87,11 @@ program
   .command('status')
   .description('Show memory statistics')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
-  .action((opts: { dir: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const atoms = listAtoms(memoryDir);
@@ -94,6 +103,21 @@ program
     for (const atom of atoms) {
       byType.set(atom.frontmatter.type, (byType.get(atom.frontmatter.type) ?? 0) + 1);
       byStatus.set(atom.frontmatter.status, (byStatus.get(atom.frontmatter.status) ?? 0) + 1);
+    }
+
+    if (opts.json) {
+      const idxStatus = indexExists(memoryDir) ? indexStats(memoryDir) : null;
+      const eStats = idxStatus?.embeddings ? embeddingStats(memoryDir) : null;
+      console.log(JSON.stringify({
+        memory_dir: memoryDir,
+        atom_count: atoms.length,
+        event_count: eventCount,
+        by_type: Object.fromEntries(byType),
+        by_status: Object.fromEntries(byStatus),
+        index: idxStatus ? { exists: true, atoms: idxStatus.atoms, tags: idxStatus.tags, paths: idxStatus.paths } : { exists: false },
+        embeddings: eStats ? { exists: true, count: idxStatus!.embeddings, model: eStats.model ?? 'unknown' } : { exists: false },
+      }, null, 2));
+      return;
     }
 
     console.log(`Memory: ${memoryDir}`);
@@ -148,6 +172,7 @@ program
   .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
   .option('--graph', 'Enable graph-relation neighbor boost (default: on)')
   .option('--no-graph', 'Disable graph-relation neighbor boost')
+  .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
     task?: string;
@@ -158,12 +183,11 @@ program
     decayWeight?: number;
     includeEpisodes?: boolean;
     graph: boolean; // Commander sets this to true/false via --graph/--no-graph
+    json?: boolean;
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     const bundle = recall(memoryDir, {
       task: opts.task,
@@ -175,6 +199,11 @@ program
       include_episodes: opts.includeEpisodes,
       graph_boost: opts.graph,
     });
+
+    if (opts.json) {
+      console.log(JSON.stringify(bundle, null, 2));
+      return;
+    }
 
     console.log(`=== Context Bundle (≈${bundle.token_estimate} tokens) ===\n`);
     console.log('--- INDEX ---');
@@ -210,14 +239,14 @@ program
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .option('--no-reflect', 'Skip reflect before checkpoint')
+  .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string; task?: string; maxTokens?: number;
-    agentId: string; sessionId: string; reflect: boolean;
+    agentId: string; sessionId: string; reflect: boolean; json?: boolean;
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
     const result = checkpoint({
@@ -228,6 +257,17 @@ program
       max_tokens: opts.maxTokens,
       skipReflect: !opts.reflect,
     });
+
+    if (opts.json) {
+      console.log(JSON.stringify({
+        event_id: result.event_id,
+        token_estimate: result.bundle.token_estimate,
+        atom_count: result.bundle.atoms.length,
+        markdown: result.markdown,
+        error: result.error ?? null,
+      }, null, 2));
+      return;
+    }
 
     // Markdown to stdout (pipeable)
     process.stdout.write(result.markdown);
@@ -248,18 +288,22 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-session')
-  .action((opts: { dir: string; agentId: string; sessionId: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     const result = reflect({
       memoryDir,
       agent_id: opts.agentId,
       session_id: opts.sessionId,
     });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
 
     console.log('✓ Reflect completed:');
     console.log(`  Deduped:    ${result.deduped}`);
@@ -277,12 +321,11 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-session')
-  .action((opts: { dir: string; agentId: string; sessionId: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     // GC is just reflect with focus on expiry
     const result = reflect({
@@ -290,6 +333,11 @@ program
       agent_id: opts.agentId,
       session_id: opts.sessionId,
     });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
 
     console.log('✓ GC completed:');
     console.log(`  Expired:    ${result.expired}`);
@@ -304,12 +352,11 @@ program
   .command('doctor')
   .description('Validate memory: schema, links, conflicts')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
-  .action((opts: { dir: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     const atoms = listAtoms(memoryDir);
     const issues: string[] = [];
@@ -343,6 +390,16 @@ program
     );
     for (const c of conflicts) {
       issues.push(`Active conflict: ${c.frontmatter.id}`);
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify({
+        healthy: issues.length === 0,
+        issue_count: issues.length,
+        issues,
+      }, null, 2));
+      if (issues.length > 0) process.exit(1);
+      return;
     }
 
     if (issues.length === 0) {
@@ -403,15 +460,15 @@ program
   .option('--tags <tags...>', 'Tags for scope')
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-session')
+  .option('--json', 'Output as JSON')
   .action(async (body: string, opts: {
     dir: string; type: string; confidence?: number;
     slug?: string; tags?: string[];
-    agentId: string; sessionId: string;
+    agentId: string; sessionId: string; json?: boolean;
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
     // Generate slug from body if not provided; fall back to timestamp if body yields empty string
@@ -432,13 +489,29 @@ program
       scope: opts.tags ? { tags: opts.tags } : undefined,
     });
 
+    // Async: embed the atom if embeddings are configured
+    const embedded = await embedAtom(memoryDir, atom);
+
+    if (opts.json) {
+      console.log(JSON.stringify({
+        id: atom.frontmatter.id,
+        type: atom.frontmatter.type,
+        status: atom.frontmatter.status,
+        confidence: atom.frontmatter.confidence,
+        tags: atom.frontmatter.scope?.tags ?? [],
+        embedded: !!embedded,
+        embedding_warning: (!embedded && process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_PROVIDER !== 'none')
+          ? 'Embedding failed — run "mk reindex --embed" to retry'
+          : null,
+      }, null, 2));
+      return;
+    }
+
     console.log(`✓ Created: ${atom.frontmatter.id}`);
     console.log(`  Type: ${atom.frontmatter.type}, Status: ${atom.frontmatter.status}`);
     console.log(`  Confidence: ${atom.frontmatter.confidence}`);
     if (opts.tags) console.log(`  Tags: ${opts.tags.join(', ')}`);
 
-    // Async: embed the atom if embeddings are configured
-    const embedded = await embedAtom(memoryDir, atom);
     if (embedded) {
       console.log(`  Embedded: ✓`);
     } else if (process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_PROVIDER !== 'none') {
@@ -605,12 +678,11 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--tags <tags...>', 'Tags for this episode')
   .option('--agent-id <id>', 'Agent ID', 'cli')
-  .action((opts: { dir: string; sessionId: string; summary: string; tags?: string[]; agentId: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; sessionId: string; summary: string; tags?: string[]; agentId: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const id = writeEpisode(
@@ -620,6 +692,11 @@ program
       { tags: opts.tags },
       { agent_id: opts.agentId },
     );
+
+    if (opts.json) {
+      console.log(JSON.stringify({ episode_id: id, file: `EPISODES/${id}.md` }, null, 2));
+      return;
+    }
 
     console.log(`✓ Episode written: ${id}`);
     console.log(`  File: EPISODES/${id}.md`);
@@ -631,15 +708,20 @@ program
   .description('List recent episode summaries from EPISODES/')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--limit <n>', 'Max episodes to show', parseInt)
-  .action((opts: { dir: string; limit?: number }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; limit?: number; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const episodes = listEpisodes(memoryDir, { limit: opts.limit });
+
+    if (opts.json) {
+      console.log(JSON.stringify(episodes, null, 2));
+      return;
+    }
+
     if (episodes.length === 0) {
       console.log('No episodes found. Use "mk episode --session-id <id> --summary <text>" to add one.');
       return;
@@ -775,7 +857,7 @@ program
   .option('--top-k <n>', 'Max active atoms per step (lateral inhibition)', parseInt)
   .option('--decay <n>', 'Spread decay factor (0-1)', parseFloat)
   .option('--max-collisions <n>', 'Max collision candidates to return', parseInt)
-  .option('--relation-weight <n>', 'Activation weight for explicit relation edges (0-1)', parseFloat)
+  .option('--relation-weight <n>', 'Activation weight for explicit relation edges (default: 2.0)', parseFloat)
   .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
@@ -791,13 +873,11 @@ program
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const useFiles = !indexExists(memoryDir);
-    if (useFiles) {
+    if (useFiles && !opts.json) {
       console.error('⚠ No index found — falling back to file scan (slower). Run "mk reindex" for faster results.');
     }
 
