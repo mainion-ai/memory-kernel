@@ -29,7 +29,8 @@ export function registerRelateCommand(program: Command): void {
     .argument('<relation-type>', 'Relation type (extends, contradicts, supports, caused_by, supersedes, related)')
     .argument('<target-id>', 'Target atom ID')
     .option('-d, --dir <dir>', 'Memory directory', './memory')
-    .action((sourceId: string, relationType: string, targetId: string, opts: { dir: string }) => {
+    .option('--json', 'Output as JSON')
+    .action((sourceId: string, relationType: string, targetId: string, opts: { dir: string; json?: boolean }) => {
       const memoryDir = path.resolve(opts.dir);
       if (!fs.existsSync(memoryDir)) {
         console.error(`✗ Memory directory not found: ${memoryDir}`);
@@ -65,6 +66,10 @@ export function registerRelateCommand(program: Command): void {
         (r) => r.target === targetId && r.type === relationType as Relation['type'],
       );
       if (alreadyExists) {
+        if (opts.json) {
+          console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: false }, null, 2));
+          return;
+        }
         console.log(`✓ Relation already exists: ${sourceId} --[${relationType}]--> ${targetId}`);
         return;
       }
@@ -83,6 +88,11 @@ export function registerRelateCommand(program: Command): void {
         indexAtom(memoryDir, atom);
       }
 
+      if (opts.json) {
+        console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: true }, null, 2));
+        return;
+      }
+
       console.log(`✓ Related: ${sourceId} --[${relationType}]--> ${targetId}`);
     });
 }
@@ -96,7 +106,8 @@ export function registerRelationsCommand(program: Command): void {
     .description("Show an atom's inbound and outbound relations")
     .argument('<atom-id>', 'Atom ID')
     .option('-d, --dir <dir>', 'Memory directory', './memory')
-    .action((atomId: string, opts: { dir: string }) => {
+    .option('--json', 'Output as JSON')
+    .action((atomId: string, opts: { dir: string; json?: boolean }) => {
       const memoryDir = path.resolve(opts.dir);
       if (!fs.existsSync(memoryDir)) {
         console.error(`✗ Memory directory not found: ${memoryDir}`);
@@ -109,6 +120,11 @@ export function registerRelationsCommand(program: Command): void {
       }
 
       const { outbound, inbound } = getRelationsForAtom(memoryDir, atomId);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ atom_id: atomId, outbound, inbound }, null, 2));
+        return;
+      }
 
       if (outbound.length === 0 && inbound.length === 0) {
         console.log(`No relations found for ${atomId}`);
