@@ -33,6 +33,8 @@ npm install memory-kernel
 - [Native/Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
 - [Self-diagnostic](container/skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
 
+**OpenClaw / orchestrators:** See [CLI integration guide](docs/cli-integration.md) for direct CLI usage with `--json` output (no MCP required).
+
 **MCP server:** See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for tool integration with any MCP-capable agent.
 
 ---
@@ -125,25 +127,25 @@ my-memory/
 | Command | Description |
 |---------|-------------|
 | `mk init [dir]` | Initialize memory directory |
-| `mk status -d <dir>` | Show atom counts, tag stats, index status |
-| `mk remember -d <dir> --type <type> "body"` | Create an atom |
-| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--half-life N] [--no-graph]` | Load context; `--task` enables hybrid FTS + semantic re-ranking with temporal decay and type weights |
-| `mk reflect -d <dir>` | Consolidate: dedup, expire, promote, detect conflicts |
-| `mk checkpoint -d <dir>` | Generate checkpoint/handoff bundle (stdout) |
+| `mk status -d <dir> [--json]` | Show atom counts, tag stats, index status |
+| `mk remember -d <dir> --type <type> "body" [--json]` | Create an atom |
+| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--half-life N] [--no-graph] [--json]` | Load context; `--task` enables hybrid FTS + semantic re-ranking with temporal decay and type weights |
+| `mk reflect -d <dir> [--json]` | Consolidate: dedup, expire, promote, detect conflicts |
+| `mk checkpoint -d <dir> [--json]` | Generate checkpoint/handoff bundle (stdout) |
 | `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
 | `mk import --from <file> [--dry-run]` | Import markdown as atoms |
-| `mk episode --session-id <id> --summary "text"` | Write session episode |
-| `mk episodes [--limit N]` | List recent episodes |
+| `mk episode --session-id <id> --summary "text" [--json]` | Write session episode |
+| `mk episodes [--limit N] [--json]` | List recent episodes |
 | `mk reindex -d <dir> [--embed]` | Rebuild SQLite index; `--embed` computes embeddings for all atoms |
 | `mk compact -d <dir>` | Compact event log |
 | `mk merge -d <dir> --from <path> [--dry-run]` | Merge remote event log |
-| `mk gc -d <dir>` | Archive expired atoms |
-| `mk doctor -d <dir>` | Validate schema, links, conflicts |
+| `mk gc -d <dir> [--json]` | Archive expired atoms |
+| `mk doctor -d <dir> [--json]` | Validate schema, links, conflicts |
 | `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
 | `mk replay --from <file>` | Reconstruct state from events |
 | `mk bootstrap-events -d <dir>` | Migrate to V2 event format |
-| `mk relate <src-id> <type> <tgt-id> -d <dir>` | Create a typed relation edge between two atoms |
-| `mk relations <atom-id> -d <dir>` | Show inbound and outbound relation edges for an atom |
+| `mk relate <src-id> <type> <tgt-id> -d <dir> [--json]` | Create a typed relation edge between two atoms |
+| `mk relations <atom-id> -d <dir> [--json]` | Show inbound and outbound relation edges for an atom |
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
@@ -201,7 +203,10 @@ Inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975) spreadin
 
 **How it works:** Seed from atoms or tags → spread activation through shared tags and relation neighbors (modulated by ACT-R base-level activation: recency × citation frequency) → sqrt-sigmoid modulation preserves important hub atoms → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
 
+**Tip:** Run `mk citations` before `mk wander` to index concept-name references — this provides frequency data for ACT-R activation scoring, significantly improving wander quality for stores with cross-referencing atoms.
+
 ```bash
+mk citations -d ./memory          # Index concept-name citations (run once after changes)
 mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 ```
 
@@ -214,7 +219,7 @@ mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 | `topK` | 20 | Lateral inhibition limit |
 | `decay` | 0.5 | Spread decay factor |
 | `maxCollisions` | 5 | Max collision candidates |
-| `relationWeight` | 1.0 | Activation weight for explicit relation edges (1.0 = ~2× tag co-occurrence) |
+| `relationWeight` | 2.0 | Activation weight for explicit relation edges (deliberate associations dominate tag co-occurrence) |
 
 ---
 
@@ -274,7 +279,7 @@ Run `npm run bench` to measure on your machine. Pin a baseline with `npm run ben
 Memory Kernel renders atoms into `CLAUDE.md`, which NanoClaw loads at session start — persistent memory with zero NanoClaw code changes.
 
 ```
-Nightly: mk reflect → mk render CLAUDE.md → git push
+Nightly: mk reflect → mk citations → mk render CLAUDE.md → git push
 Next session: NanoClaw loads CLAUDE.md as context
 ```
 

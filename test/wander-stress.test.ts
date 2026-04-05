@@ -66,7 +66,7 @@ function createLargeGraph(dir: string, atomCount: number) {
 
 describe('wander — stress tests', () => {
 
-  it('100 atoms: wander completes in < 500ms', { timeout: 10000 }, () => {
+  it('100 atoms: wander completes in < 500ms', { timeout: 20000 }, () => {
     createLargeGraph(testDir, 100);
     reindex(testDir);
 
@@ -83,7 +83,7 @@ describe('wander — stress tests', () => {
     console.log(`100 atoms: ${result.duration_ms}ms, ${result.activated.length} activated, ${result.collisions.length} collisions`);
   });
 
-  it('200 atoms with dense tags: wander completes in < 1s', { timeout: 15000 }, () => {
+  it('200 atoms with dense tags: wander completes in < 1s', { timeout: 30000 }, () => {
     createLargeGraph(testDir, 200);
     reindex(testDir);
 

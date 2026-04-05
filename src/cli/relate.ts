@@ -18,6 +18,16 @@ import {
 import { RELATION_TYPES } from '../types.js';
 import type { Relation } from '../types.js';
 
+/** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
+function exitWithError(message: string, json?: boolean): never {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`✗ ${message}`);
+  }
+  process.exit(1);
+}
+
 /**
  * Register `mk relate <source-id> <relation-type> <target-id>` command.
  */
@@ -29,25 +39,22 @@ export function registerRelateCommand(program: Command): void {
     .argument('<relation-type>', 'Relation type (extends, contradicts, supports, caused_by, supersedes, related)')
     .argument('<target-id>', 'Target atom ID')
     .option('-d, --dir <dir>', 'Memory directory', './memory')
-    .action((sourceId: string, relationType: string, targetId: string, opts: { dir: string }) => {
+    .option('--json', 'Output as JSON')
+    .action((sourceId: string, relationType: string, targetId: string, opts: { dir: string; json?: boolean }) => {
       const memoryDir = path.resolve(opts.dir);
       if (!fs.existsSync(memoryDir)) {
-        console.error(`✗ Memory directory not found: ${memoryDir}`);
-        process.exit(1);
+        exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }
 
       // Validate relation type
       if (!(RELATION_TYPES as readonly string[]).includes(relationType)) {
-        console.error(`✗ Invalid relation type: ${relationType}`);
-        console.error(`  Valid types: ${RELATION_TYPES.join(', ')}`);
-        process.exit(1);
+        exitWithError(`Invalid relation type: ${relationType}\n  Valid types: ${RELATION_TYPES.join(', ')}`, opts.json);
       }
 
       // Find source atom file
       const sourceFile = findAtomFile(memoryDir, sourceId);
       if (!sourceFile) {
-        console.error(`✗ Source atom not found: ${sourceId}`);
-        process.exit(1);
+        exitWithError(`Source atom not found: ${sourceId}`, opts.json);
       }
 
       // Warn if target atom doesn't exist (don't abort — target may not be indexed yet)
@@ -65,6 +72,10 @@ export function registerRelateCommand(program: Command): void {
         (r) => r.target === targetId && r.type === relationType as Relation['type'],
       );
       if (alreadyExists) {
+        if (opts.json) {
+          console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: false }, null, 2));
+          return;
+        }
         console.log(`✓ Relation already exists: ${sourceId} --[${relationType}]--> ${targetId}`);
         return;
       }
@@ -83,6 +94,11 @@ export function registerRelateCommand(program: Command): void {
         indexAtom(memoryDir, atom);
       }
 
+      if (opts.json) {
+        console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: true }, null, 2));
+        return;
+      }
+
       console.log(`✓ Related: ${sourceId} --[${relationType}]--> ${targetId}`);
     });
 }
@@ -96,19 +112,23 @@ export function registerRelationsCommand(program: Command): void {
     .description("Show an atom's inbound and outbound relations")
     .argument('<atom-id>', 'Atom ID')
     .option('-d, --dir <dir>', 'Memory directory', './memory')
-    .action((atomId: string, opts: { dir: string }) => {
+    .option('--json', 'Output as JSON')
+    .action((atomId: string, opts: { dir: string; json?: boolean }) => {
       const memoryDir = path.resolve(opts.dir);
       if (!fs.existsSync(memoryDir)) {
-        console.error(`✗ Memory directory not found: ${memoryDir}`);
-        process.exit(1);
+        exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }
 
       if (!indexExists(memoryDir)) {
-        console.error('✗ No index found. Run `mk reindex` first.');
-        process.exit(1);
+        exitWithError('No index found. Run `mk reindex` first.', opts.json);
       }
 
       const { outbound, inbound } = getRelationsForAtom(memoryDir, atomId);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ atom_id: atomId, outbound, inbound }, null, 2));
+        return;
+      }
 
       if (outbound.length === 0 && inbound.length === 0) {
         console.log(`No relations found for ${atomId}`);
