@@ -53,6 +53,16 @@ import { registerCitationsCommand } from './citations.js';
 
 const program = new Command();
 
+/** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
+function exitWithError(message: string, json?: boolean): never {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`✗ ${message}`);
+  }
+  process.exit(1);
+}
+
 program
   .name('mk')
   .description('Memory Kernel CLI — manage AI agent memory')
@@ -81,9 +91,7 @@ program
   .action((opts: { dir: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const atoms = listAtoms(memoryDir);
@@ -179,9 +187,7 @@ program
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     const bundle = recall(memoryDir, {
       task: opts.task,
@@ -240,8 +246,7 @@ program
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
     const result = checkpoint({
@@ -287,9 +292,7 @@ program
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     const result = reflect({
       memoryDir,
@@ -322,9 +325,7 @@ program
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     // GC is just reflect with focus on expiry
     const result = reflect({
@@ -355,9 +356,7 @@ program
   .action((opts: { dir: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
     const atoms = listAtoms(memoryDir);
     const issues: string[] = [];
@@ -469,8 +468,7 @@ program
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
     // Generate slug from body if not provided; fall back to timestamp if body yields empty string
@@ -502,6 +500,9 @@ program
         confidence: atom.frontmatter.confidence,
         tags: atom.frontmatter.scope?.tags ?? [],
         embedded: !!embedded,
+        embedding_warning: (!embedded && process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_PROVIDER !== 'none')
+          ? 'Embedding failed — run "mk reindex --embed" to retry'
+          : null,
       }, null, 2));
       return;
     }
@@ -681,9 +682,7 @@ program
   .action((opts: { dir: string; sessionId: string; summary: string; tags?: string[]; agentId: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const id = writeEpisode(
@@ -713,9 +712,7 @@ program
   .action((opts: { dir: string; limit?: number; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const episodes = listEpisodes(memoryDir, { limit: opts.limit });
@@ -876,13 +873,11 @@ program
   }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const useFiles = !indexExists(memoryDir);
-    if (useFiles) {
+    if (useFiles && !opts.json) {
       console.error('⚠ No index found — falling back to file scan (slower). Run "mk reindex" for faster results.');
     }
 
