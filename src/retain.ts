@@ -15,7 +15,7 @@ import {
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
 import { indexAtom, indexExists, removeFromIndex, getAllAtomIds } from './index-db.js';
 import { encryptAtom, resolveKey } from './crypto.js';
-import { extractBodyReferences } from './relink.js';
+import { extractBodyReferences, extractConceptReferences, buildConceptMap } from './relink.js';
 import type { Atom, AtomFrontmatter, AtomType, Classification, Relation } from './types.js';
 
 /**
@@ -98,13 +98,30 @@ export function createAtom(
   // Auto-relink: extract body-text references and add as relations.
   // Runs before event emission so the snapshot includes extracted relations.
   // Skips if the caller already provided explicit relations to avoid double-linking.
+  // Extracts both atom-ID references and concept-name references.
   if (!opts.relations?.length && indexExists(opts.memoryDir)) {
     const knownIds = getAllAtomIds(opts.memoryDir);
-    const bodyRefs = extractBodyReferences(atom.body, id, knownIds);
-    if (bodyRefs.length > 0) {
+    const idRefs = extractBodyReferences(atom.body, id, knownIds);
+
+    // Concept-name references: build map from atom IDs (cheap SQLite query)
+    const conceptMap = buildConceptMap(knownIds);
+    const conceptRefs = extractConceptReferences(atom.body, id, conceptMap);
+
+    // Merge and deduplicate (atom-ID refs take priority)
+    const seen = new Set<string>();
+    const allRefs: Array<{ targetId: string; type: string }> = [];
+    for (const ref of [...idRefs, ...conceptRefs]) {
+      const key = `${ref.targetId}:${ref.type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        allRefs.push(ref);
+      }
+    }
+
+    if (allRefs.length > 0) {
       atom.frontmatter.relations = [
         ...(atom.frontmatter.relations ?? []),
-        ...bodyRefs.map((r) => ({ target: r.targetId, type: r.type })),
+        ...allRefs.map((r) => ({ target: r.targetId, type: r.type as import('./types.js').RelationType })),
       ];
       writeAtom(atom, fp);
       indexAtom(opts.memoryDir, atom);

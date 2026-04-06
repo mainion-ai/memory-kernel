@@ -15,6 +15,7 @@ import {
   indexExists,
   indexAtom,
 } from './index.js';
+import { deriveConceptNames } from './citations.js';
 import type { Atom, Relation, RelationType } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -95,24 +96,124 @@ export function extractBodyReferences(
   return results;
 }
 
+// ---------------------------------------------------------------------------
+// Concept-name extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a map from concept names to their owning atom IDs.
+ * Uses deriveConceptNames() from citations.ts to extract slugs.
+ *
+ * Accepts either Atom[] or Set<string>/Iterable<string> of atom IDs.
+ * The Set<string> overload avoids loading full atoms from disk when
+ * only IDs are needed (e.g., at remember-time from getAllAtomIds).
+ */
+export function buildConceptMap(
+  atomsOrIds: Atom[] | Set<string>,
+): Map<string, string> {
+  const map = new Map<string, string>();
+
+  // Extract IDs from either Atom[] or Set<string>
+  const ids: Iterable<string> = atomsOrIds instanceof Set
+    ? atomsOrIds
+    : (atomsOrIds as Atom[]).map(a => a.frontmatter.id).filter(Boolean) as string[];
+
+  for (const id of ids) {
+    for (const name of deriveConceptNames(id)) {
+      if (!map.has(name)) {
+        map.set(name, id);
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Extract concept-name references from a single atom's body.
+ * Similar to extractBodyReferences but matches concept names (e.g.,
+ * "notation-as-erasure") instead of atom IDs.
+ *
+ * Uses the same inferRelationType() for context-based relation typing.
+ */
+export function extractConceptReferences(
+  body: string,
+  selfId: string,
+  conceptMap: Map<string, string>,
+): Array<{ targetId: string; type: RelationType }> {
+  const results: Array<{ targetId: string; type: RelationType }> = [];
+  const seen = new Set<string>();
+
+  for (const [conceptName, targetId] of conceptMap) {
+    if (targetId === selfId) continue;
+
+    // Build word-boundary-aware regex (hyphens match hyphens/spaces/underscores)
+    const escaped = conceptName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = escaped.replace(/-/g, '[-\\s_]');
+    const regex = new RegExp(`\\b${pattern}\\b`, 'gi');
+    const match = regex.exec(body);
+
+    if (match && !seen.has(targetId)) {
+      seen.add(targetId);
+      const relType = inferRelationType(body, match.index);
+      results.push({ targetId, type: relType });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Deduplicate references by (targetId, type) pair.
+ * When atom-ID and concept-name extraction find the same reference,
+ * keep only one (atom-ID refs come first, so they take priority).
+ */
+function deduplicateRefs(
+  refs: Array<{ targetId: string; type: RelationType }>,
+): Array<{ targetId: string; type: RelationType }> {
+  const seen = new Set<string>();
+  const result: Array<{ targetId: string; type: RelationType }> = [];
+  for (const ref of refs) {
+    const key = `${ref.targetId}:${ref.type}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(ref);
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Relink logic
+// ---------------------------------------------------------------------------
+
 /**
  * Compute new relations for a single atom, excluding any that already exist.
  */
 export function relinkAtom(
   atom: Atom,
   knownIds: Set<string>,
+  conceptMap?: Map<string, string>,
 ): ProposedRelation[] {
   const selfId = atom.frontmatter.id;
   const existingKeys = new Set(
     (atom.frontmatter.relations ?? []).map((r) => `${r.target}:${r.type}`),
   );
 
-  const bodyRefs = extractBodyReferences(atom.body, selfId, knownIds);
-  const proposed: ProposedRelation[] = [];
+  // Atom-ID references (existing behavior)
+  const idRefs = extractBodyReferences(atom.body, selfId, knownIds);
 
-  for (const ref of bodyRefs) {
+  // Concept-name references (new)
+  const conceptRefs = conceptMap
+    ? extractConceptReferences(atom.body, selfId, conceptMap)
+    : [];
+
+  // Merge and deduplicate (atom-ID refs take priority)
+  const allRefs = deduplicateRefs([...idRefs, ...conceptRefs]);
+
+  const proposed: ProposedRelation[] = [];
+  for (const ref of allRefs) {
     const key = `${ref.targetId}:${ref.type}`;
-    if (existingKeys.has(key)) continue;  // already has this relation
+    if (existingKeys.has(key)) continue;
     proposed.push({
       sourceId: selfId,
       targetId: ref.targetId,
@@ -132,12 +233,13 @@ export function relinkAll(
 ): RelinkResult {
   const atoms = listAtoms(memoryDir);
   const knownIds = new Set(atoms.map((a) => a.frontmatter.id));
+  const conceptMap = buildConceptMap(atoms);
 
   const allProposed: ProposedRelation[] = [];
   const changeMap = new Map<string, { atom: Atom; newRelations: ProposedRelation[] }>();
 
   for (const atom of atoms) {
-    const proposed = relinkAtom(atom, knownIds);
+    const proposed = relinkAtom(atom, knownIds, conceptMap);
     if (proposed.length > 0) {
       allProposed.push(...proposed);
       changeMap.set(atom.frontmatter.id, { atom, newRelations: proposed });

@@ -189,6 +189,8 @@ export {
   relinkAll,
   relinkAtom,
   extractBodyReferences,
+  extractConceptReferences,
+  buildConceptMap,
   inferRelationType,
   ATOM_ID_PATTERN,
   RELATION_CONTEXT,
