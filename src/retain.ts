@@ -15,7 +15,7 @@ import {
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
 import { indexAtom, indexExists, removeFromIndex, getAllAtomIds } from './index-db.js';
 import { encryptAtom, resolveKey } from './crypto.js';
-import { extractBodyReferences, extractConceptReferences, buildConceptMap } from './relink.js';
+import { extractBodyReferences, extractConceptReferences, buildConceptMap, deduplicateRefs } from './relink.js';
 import type { Atom, AtomFrontmatter, AtomType, Classification, Relation } from './types.js';
 
 /**
@@ -107,21 +107,13 @@ export function createAtom(
     const conceptMap = buildConceptMap(knownIds);
     const conceptRefs = extractConceptReferences(atom.body, id, conceptMap);
 
-    // Merge and deduplicate (atom-ID refs take priority)
-    const seen = new Set<string>();
-    const allRefs: Array<{ targetId: string; type: string }> = [];
-    for (const ref of [...idRefs, ...conceptRefs]) {
-      const key = `${ref.targetId}:${ref.type}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        allRefs.push(ref);
-      }
-    }
+    // Merge and deduplicate (atom-ID refs take priority since they come first)
+    const allRefs = deduplicateRefs([...idRefs, ...conceptRefs]);
 
     if (allRefs.length > 0) {
       atom.frontmatter.relations = [
         ...(atom.frontmatter.relations ?? []),
-        ...allRefs.map((r) => ({ target: r.targetId, type: r.type as import('./types.js').RelationType })),
+        ...allRefs.map((r) => ({ target: r.targetId, type: r.type })),
       ];
       writeAtom(atom, fp);
       indexAtom(opts.memoryDir, atom);

@@ -191,6 +191,7 @@ export {
   extractBodyReferences,
   extractConceptReferences,
   buildConceptMap,
+  deduplicateRefs,
   inferRelationType,
   ATOM_ID_PATTERN,
   RELATION_CONTEXT,
