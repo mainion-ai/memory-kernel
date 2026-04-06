@@ -146,7 +146,11 @@ export function extractConceptReferences(
   for (const [conceptName, targetId] of conceptMap) {
     if (targetId === selfId) continue;
 
-    // Build word-boundary-aware regex (hyphens match hyphens/spaces/underscores)
+    // Build word-boundary-aware regex (hyphens match hyphens/spaces/underscores).
+    // \b works here because concept names start/end with word characters (letters/digits),
+    // so the word boundary fires correctly even though internal hyphens are non-word chars.
+    // e.g., "notation-as-erasure" matches \bnotation[-\s_]as[-\s_]erasure\b because
+    // 'n' and 'e' are word chars at the edges.
     const escaped = conceptName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = escaped.replace(/-/g, '[-\\s_]');
     const regex = new RegExp(`\\b${pattern}\\b`, 'gi');
@@ -167,7 +171,7 @@ export function extractConceptReferences(
  * When atom-ID and concept-name extraction find the same reference,
  * keep only one (atom-ID refs come first, so they take priority).
  */
-function deduplicateRefs(
+export function deduplicateRefs(
   refs: Array<{ targetId: string; type: RelationType }>,
 ): Array<{ targetId: string; type: RelationType }> {
   const seen = new Set<string>();
