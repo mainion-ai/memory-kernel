@@ -364,6 +364,11 @@ function wanderWithGraph(
 
   if (seedIds && seedIds.length > 0) {
     seeds = seedIds.filter((id) => graph.has(id));
+    // Warn about unresolved seeds — silent fallback to autoSeeds is a testing trap
+    const unresolved = seedIds.filter((id) => !graph.has(id));
+    if (unresolved.length > 0) {
+      console.error(`⚠ Seed(s) not found in graph: ${unresolved.join(', ')}`);
+    }
   }
 
   if (seedTags && seedTags.length > 0) {
