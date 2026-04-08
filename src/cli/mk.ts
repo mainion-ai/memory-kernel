@@ -12,6 +12,7 @@
  *   mk doctor                  Validate schema, links, conflicts
  *   mk status                  Show memory stats
  *   mk wander                  Explore memory via spreading activation
+ *   mk closure                 Compute operational closure metrics
  */
 
 import { Command } from 'commander';
@@ -50,6 +51,7 @@ import { registerRelateCommand, registerRelationsCommand } from './relate.js';
 import { registerMigrateRelationsCommand } from './migrate-relations.js';
 import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
+import { closure } from '../closure.js';
 
 const program = new Command();
 
@@ -925,6 +927,75 @@ program
       }
     } else {
       console.log('\nNo collisions found. Try broader seeds or more steps.');
+    }
+  });
+
+// --- mk closure ---
+program
+  .command('closure')
+  .description('Compute operational closure metrics for a memory store')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--json', 'Output as JSON')
+  .option('--trajectory', 'Include daily closure trajectory')
+  .option('--trajectory-days <n>', 'Limit trajectory to last N days', parseInt)
+  .action((opts: { dir: string; json?: boolean; trajectory?: boolean; trajectoryDays?: number }) => {
+    const memoryDir = path.resolve(opts.dir);
+    if (!fs.existsSync(memoryDir)) {
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
+    }
+
+    const result = closure(memoryDir, {
+      trajectory: opts.trajectory,
+      trajectoryDays: opts.trajectoryDays,
+    });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    // Human-readable output
+    console.log(`Memory: ${memoryDir}`);
+    console.log(`Atoms: ${result.atom_count}`);
+    console.log(`Beliefs: ${result.belief_count} (${result.belief_pct}%)`);
+    console.log('');
+
+    console.log('Closure Metrics:');
+    console.log(`  Closure index:    ${result.closure_index}`);
+    console.log(`  Avg relations:    ${result.avg_relations}`);
+    console.log(`  Avg body refs:    ${result.avg_body_refs}`);
+    console.log(`  Entanglement:     ${result.entanglement_pct}%`);
+    console.log(`  Phase:            ${result.phase}`);
+    console.log('');
+
+    if (Object.keys(result.by_type).length > 0) {
+      console.log('By type:');
+      for (const [type, count] of Object.entries(result.by_type).sort()) {
+        console.log(`  ${type}: ${count}`);
+      }
+      console.log('');
+    }
+
+    if (Object.keys(result.relation_types).length > 0) {
+      console.log('Relation types:');
+      for (const [type, count] of Object.entries(result.relation_types).sort()) {
+        console.log(`  ${type}: ${count}`);
+      }
+      console.log('');
+    }
+
+    console.log('Predictions:');
+    for (const p of result.predictions) {
+      const icon = p.status === 'reliable' ? '✓' : p.status === 'degraded' ? '⚠' : '?';
+      console.log(`  ${icon} ${p.tool}: ${p.detail}`);
+    }
+
+    if (result.trajectory.length > 0) {
+      console.log('\nTrajectory:');
+      console.log('  Date         Atoms  Beliefs  Belief%  AvgRel  AvgRef  Closure');
+      for (const t of result.trajectory) {
+        console.log(`  ${t.date}  ${String(t.atoms).padStart(5)}  ${String(t.beliefs).padStart(7)}  ${String(t.belief_pct).padStart(6)}%  ${String(t.avg_relations).padStart(6)}  ${String(t.avg_body_refs).padStart(6)}  ${String(t.closure_index).padStart(7)}`);
+      }
     }
   });
 
