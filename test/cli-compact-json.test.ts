@@ -7,7 +7,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { initMemoryDir, createAtom, closeAllIndexes } from '../src/index.js';
+import { initMemoryDir, createAtom, updateAtom, closeAllIndexes } from '../src/index.js';
 
 const CLI = path.resolve('dist/cli/mk.js');
 
@@ -53,10 +53,10 @@ describe('mk compact --json', () => {
   });
 
   it('returns JSON with all fields after compacting events', () => {
-    // Create an atom then mutate it to produce compactable intermediate events
-    const id = createAtom({ memoryDir: testDir, type: 'fact', slug: 'compact-test', body: 'v1', agent_id: 'test', session_id: 'test' });
-    // Overwrite body to generate a second mutation event
-    createAtom({ memoryDir: testDir, type: 'fact', slug: 'compact-test', body: 'v2', agent_id: 'test', session_id: 'test' });
+    // Create an atom then update it to produce compactable intermediate events
+    const atom = createAtom({ memoryDir: testDir, type: 'fact', slug: 'compact-test', body: 'v1', agent_id: 'test', session_id: 'test' });
+    // Update the same atom to generate a second mutation event on the same ID
+    updateAtom({ memoryDir: testDir, filePath: atom.filePath!, updates: {}, body: 'v2', agent_id: 'test', session_id: 'test' });
 
     const { stdout, exitCode } = mk('compact', '-d', testDir, '--json');
     expect(exitCode).toBe(0);
@@ -64,7 +64,8 @@ describe('mk compact --json', () => {
     expect(json).toHaveProperty('events_before');
     expect(json).toHaveProperty('events_after');
     expect(json).toHaveProperty('removed');
-    expect(json.events_before).toBeGreaterThanOrEqual(json.events_after);
+    expect(json.events_before).toBeGreaterThan(json.events_after);
+    expect(json.removed).toBeGreaterThan(0);
   });
 
   it('returns JSON error for nonexistent directory', () => {
