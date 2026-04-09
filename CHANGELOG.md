@@ -7,6 +7,57 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [1.9.0] — 2026-04-09
+
+### Added
+
+- **`mk closure` — Operational closure metrics** (`src/closure.ts`) — Computes how self-referential a memory store is. Based on Luhmann's operational closure: a system that responds based on internal structure rather than external input. Single closure index predicts both automation resistance (LLM classifier accuracy) and cross-agent transplant compatibility.
+  - `closure(memoryDir, options)` — compute all metrics
+  - `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` — CLI with human-readable and JSON output
+  - Metrics: `closure_index`, `entanglement_pct`, `phase` (early/type-composition/entanglement), `predictions`
+  - Trajectory mode shows daily closure evolution
+  - Exports: `closure`, `ClosureResult`, `TrajectoryPoint`, `ToolPrediction`
+
+### Tests
+
+- 13 new tests in `test/closure.test.ts`: unit tests for empty store, belief counting, relations, phase detection (3 phases), predictions, body-text cross-references, self-reference exclusion; CLI tests for JSON output, trajectory, error handling, human-readable format.
+
+---
+
+## [1.8.0] — 2026-04-06
+
+### Added
+
+- **Concept-name graph edges** — `mk relink` now creates relation edges from concept-name references in body text (not just atom ID references). Significantly increases graph connectivity for stores with informal cross-references.
+
+### Fixed
+
+- **Wander seed resolution warning** — `mk wander` now warns when seed IDs don't resolve in the graph instead of silently falling back to auto-seeds.
+
+### Changed
+
+- Export `deduplicateRefs` from public API.
+- Type fixes and additional code comments from code review.
+
+---
+
+## [1.7.0] — 2026-04-05
+
+### Added
+
+- **`--json` on all CLI commands** — Every command now supports `--json` for machine-readable output. Error paths return `{"error": "..."}` with exit code 1.
+- **CLI integration guide** (`docs/cli-integration.md`) — Guide for orchestrators consuming CLI output.
+
+### Fixed
+
+- **`relationWeight` default** — Changed from 0.5 to 1.0 so explicit relation edges properly dominate tag co-occurrence in wander. Previously deliberate associations were weaker than coincidental tag matches.
+
+### Tests
+
+- Added CLI `--json` smoke tests across all commands.
+
+---
+
 ## [1.6.0] — 2026-04-04
 
 ### Added

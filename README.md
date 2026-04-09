@@ -149,13 +149,14 @@ my-memory/
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
+| `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational closure metrics (self-referential density, entanglement, phase detection) |
 
 ---
 
 ## SDK
 
 ```typescript
-import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander, indexCitations } from 'memory-kernel';
+import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander, indexCitations, closure } from 'memory-kernel';
 
 // Initialize
 initMemoryDir('./memory');
@@ -220,6 +221,30 @@ mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 | `decay` | 0.5 | Spread decay factor |
 | `maxCollisions` | 5 | Max collision candidates |
 | `relationWeight` | 2.0 | Activation weight for explicit relation edges (deliberate associations dominate tag co-occurrence) |
+
+---
+
+## Closure — Operational Closure Metrics
+
+`mk closure` measures how self-referential a memory store is. Based on Luhmann's operational closure: a system that responds based on internal structure rather than external input.
+
+```bash
+mk closure -d ./memory --json
+mk closure -d ./memory --trajectory --trajectory-days 10
+```
+
+**What it measures:**
+
+| Metric | Description |
+|--------|-------------|
+| `closure_index` | `belief_pct × (avg_relations + avg_body_refs) / 100` — single number combining type composition and entanglement |
+| `entanglement_pct` | Average body-text cross-references as % of theoretical maximum |
+| `phase` | `early` (<20 atoms), `type-composition` (<60% beliefs), or `entanglement` (≥60% beliefs, ≥20 atoms) |
+| `predictions` | Tooling degradation predictions — how closure level affects LLM classification accuracy and cross-agent transplantability |
+
+**Why it matters:** High closure stores resist automated processing (LLM classifiers confounded by self-describing body text) and cross-agent transplantation (beliefs depend on other beliefs the receiving agent doesn't have). The closure index predicts both from a single variable.
+
+**Trajectory mode** (`--trajectory`) shows daily closure evolution — useful for detecting entanglement acceleration over time.
 
 ---
 
