@@ -206,6 +206,10 @@ export {
 } from './citations.js';
 export type { CitationEntry, CitationResult } from './citations.js';
 
+// Enrich relations (LLM-based relation reclassification)
+export { enrichRelations } from './enrich-relations.js';
+export type { EnrichmentProposal, EnrichResult } from './enrich-relations.js';
+
 // Closure (operational closure metrics)
 export { closure } from './closure.js';
 export type { ClosureResult, TrajectoryPoint, ToolPrediction } from './closure.js';
