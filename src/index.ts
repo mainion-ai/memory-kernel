@@ -205,3 +205,7 @@ export {
   deriveConceptNames,
 } from './citations.js';
 export type { CitationEntry, CitationResult } from './citations.js';
+
+// Closure (operational closure metrics)
+export { closure } from './closure.js';
+export type { ClosureResult, TrajectoryPoint, ToolPrediction } from './closure.js';
