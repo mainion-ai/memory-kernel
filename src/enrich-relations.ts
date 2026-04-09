@@ -12,6 +12,7 @@ import {
   writeAtom,
   indexAtom,
   indexExists,
+  assertWithinDir,
 } from './index.js';
 import type { Atom } from './types.js';
 import type { AtomRelation } from './index-db.js';
@@ -41,7 +42,7 @@ interface OllamaResponse {
   reasoning: string;
 }
 
-const DEFAULT_OLLAMA_URL = 'http://192.168.1.213:11434';
+const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 const DEFAULT_MODEL = 'qwen2.5:14b-instruct-q4_K_M';
 const DEFAULT_MIN_CONFIDENCE = 0.7;
 const DEFAULT_BATCH_SIZE = 5;
@@ -83,6 +84,9 @@ function parseOllamaResponse(raw: string): OllamaResponse | null {
     if (!(RELATION_TYPES as readonly string[]).includes(parsed.type)) {
       return null;
     }
+    if (parsed.confidence < 0 || parsed.confidence > 1) {
+      return null;
+    }
     return parsed as OllamaResponse;
   } catch {
     return null;
@@ -98,12 +102,20 @@ async function classifyEdge(
   model: string,
 ): Promise<OllamaResponse | null> {
   const prompt = buildPrompt(sourceId, sourceBody, targetId, targetBody);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
-  const resp = await fetch(`${ollamaUrl}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt, stream: false }),
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`${ollamaUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, stream: false }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!resp.ok) {
     return null;
@@ -123,6 +135,7 @@ export async function enrichRelations(
     model?: string;
     minConfidence?: number;
     batchSize?: number;
+    onProgress?: (current: number, total: number) => void;
   },
 ): Promise<EnrichResult> {
   const ollamaUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
@@ -152,8 +165,9 @@ export async function enrichRelations(
   for (let i = 0; i < relatedEdges.length; i += batchSize) {
     const batch = relatedEdges.slice(i, i + batchSize);
 
-    // Progress on stderr so stdout stays clean for piping
-    process.stderr.write(`Processing ${i + 1}-${Math.min(i + batchSize, relatedEdges.length)}/${relatedEdges.length}...\n`);
+    if (options.onProgress) {
+      options.onProgress(i + 1, relatedEdges.length);
+    }
 
     const results = await Promise.allSettled(
       batch.map(async (edge: AtomRelation) => {
@@ -221,6 +235,7 @@ export async function enrichRelations(
         );
         if (rel) {
           rel.type = proposal.newType;
+          assertWithinDir(memoryDir, atom.filePath);
           writeAtom(atom, atom.filePath);
           if (indexExists(memoryDir)) {
             indexAtom(memoryDir, atom);

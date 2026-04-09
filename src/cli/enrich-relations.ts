@@ -32,7 +32,7 @@ export function registerEnrichRelationsCommand(program: Command): void {
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--dry-run', 'Preview proposed reclassifications without writing')
     .option('--apply', 'Write reclassifications to atom frontmatter and reindex')
-    .option('--ollama-url <url>', 'Ollama API base URL', 'http://192.168.1.213:11434')
+    .option('--ollama-url <url>', 'Ollama API base URL', 'http://localhost:11434')
     .option('--model <model>', 'Ollama model name', 'qwen2.5:14b-instruct-q4_K_M')
     .option('--min-confidence <n>', 'Minimum confidence threshold', '0.7')
     .option('--json', 'Output as JSON')
@@ -64,6 +64,9 @@ export function registerEnrichRelationsCommand(program: Command): void {
         ollamaUrl: opts.ollamaUrl,
         model: opts.model,
         minConfidence,
+        onProgress: opts.json ? undefined : (current, total) => {
+          process.stderr.write(`Processing ${current}/${total}...\n`);
+        },
       });
 
       if (opts.json) {
