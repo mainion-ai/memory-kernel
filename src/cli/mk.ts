@@ -557,16 +557,20 @@ program
   .command('compact')
   .description('Compact the event log — keep latest mutation per atom, remove intermediate events')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
-  .action((opts: { dir: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     try {
       const result = compactLog(memoryDir);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
 
       if (result.removed === 0) {
         console.log('✓ Event log is already compact. Nothing to do.');
@@ -579,8 +583,7 @@ program
         console.log(`  Backup: ${result.backup_path}`);
       }
     } catch (err) {
-      console.error(`✗ Compact failed: ${String(err)}`);
-      process.exit(1);
+      exitWithError(`Compact failed: ${String(err)}`, opts.json);
     }
   });
 
