@@ -51,6 +51,7 @@ import { registerRelateCommand, registerRelationsCommand } from './relate.js';
 import { registerMigrateRelationsCommand } from './migrate-relations.js';
 import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
+import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { closure } from '../closure.js';
 
 const program = new Command();
@@ -1023,5 +1024,6 @@ registerRelationsCommand(program);
 registerMigrateRelationsCommand(program);
 registerRelinkCommand(program);
 registerCitationsCommand(program);
+registerEnrichRelationsCommand(program);
 
 program.parse();
