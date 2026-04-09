@@ -992,9 +992,24 @@ program
 
     if (result.trajectory.length > 0) {
       console.log('\nTrajectory:');
-      console.log('  Date         Atoms  Beliefs  Belief%  AvgRel  AvgRef  Closure');
+      const cols = [
+        { label: 'Date', width: 10, get: (t: typeof result.trajectory[0]) => t.date },
+        { label: 'Atoms', width: 7, get: (t: typeof result.trajectory[0]) => String(t.atoms) },
+        { label: 'Beliefs', width: 7, get: (t: typeof result.trajectory[0]) => String(t.beliefs) },
+        { label: 'Belief%', width: 7, get: (t: typeof result.trajectory[0]) => `${t.belief_pct}%` },
+        { label: 'AvgRel', width: 7, get: (t: typeof result.trajectory[0]) => String(t.avg_relations) },
+        { label: 'AvgRef', width: 7, get: (t: typeof result.trajectory[0]) => String(t.avg_body_refs) },
+        { label: 'Closure', width: 7, get: (t: typeof result.trajectory[0]) => String(t.closure_index) },
+      ];
+      // Widen columns if any value exceeds the default width
       for (const t of result.trajectory) {
-        console.log(`  ${t.date}  ${String(t.atoms).padStart(5)}  ${String(t.beliefs).padStart(7)}  ${String(t.belief_pct).padStart(6)}%  ${String(t.avg_relations).padStart(6)}  ${String(t.avg_body_refs).padStart(6)}  ${String(t.closure_index).padStart(7)}`);
+        for (const col of cols) {
+          col.width = Math.max(col.width, col.get(t).length);
+        }
+      }
+      console.log('  ' + cols.map(c => c.label.padStart(c.width)).join('  '));
+      for (const t of result.trajectory) {
+        console.log('  ' + cols.map(c => c.get(t).padStart(c.width)).join('  '));
       }
     }
   });

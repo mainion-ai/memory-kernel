@@ -120,6 +120,37 @@ describe('closure()', () => {
     expect(result.phase).toBe('entanglement');
   });
 
+  it('counts body-text cross-references in beliefs', () => {
+    const a1 = createAtom({ memoryDir: testDir, type: 'belief', slug: 'ref-source', body: 'Initial belief', agent_id: 'test', session_id: 'test' });
+    const a2 = createAtom({ memoryDir: testDir, type: 'belief', slug: 'ref-target', body: 'Another belief', agent_id: 'test', session_id: 'test' });
+    const a3 = createAtom({ memoryDir: testDir, type: 'fact', slug: 'ref-fact', body: 'A fact', agent_id: 'test', session_id: 'test' });
+
+    // Write body text with cross-references into a1's file
+    const a1Path = path.join(testDir, 'ENTITIES', `${a1.frontmatter.id}.md`);
+    const a1Content = fs.readFileSync(a1Path, 'utf8');
+    const updated = a1Content + `\n\nThis references ${a2.frontmatter.id} and ${a3.frontmatter.id} in the body.`;
+    fs.writeFileSync(a1Path, updated, 'utf8');
+
+    const result = closure(testDir);
+    // a1 is a belief with 2 cross-refs, a2 is a belief with 0 cross-refs
+    // avg_body_refs = (2 + 0) / 2 = 1.0
+    expect(result.avg_body_refs).toBe(1);
+    expect(result.entanglement_pct).toBeGreaterThan(0);
+    expect(result.closure_index).toBeGreaterThan(0);
+  });
+
+  it('excludes self-references from body ref count', () => {
+    const a1 = createAtom({ memoryDir: testDir, type: 'belief', slug: 'self-ref', body: 'A belief', agent_id: 'test', session_id: 'test' });
+
+    // Write body text that references itself
+    const a1Path = path.join(testDir, 'ENTITIES', `${a1.frontmatter.id}.md`);
+    const a1Content = fs.readFileSync(a1Path, 'utf8');
+    fs.writeFileSync(a1Path, a1Content + `\n\nSelf-ref: ${a1.frontmatter.id}`, 'utf8');
+
+    const result = closure(testDir);
+    expect(result.avg_body_refs).toBe(0);
+  });
+
   it('generates predictions at different closure levels', () => {
     // Low closure — all reliable
     const low = closure(testDir);

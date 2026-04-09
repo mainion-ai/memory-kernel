@@ -122,27 +122,12 @@ export function closure(
 
   // Body-text references (read atom files, count cross-references)
   const entitiesDir = path.join(memoryDir, 'ENTITIES');
+  const bodyRefCounts = computeBodyRefCounts(atoms, entitiesDir);
   let totalBodyRefs = 0;
   let beliefsWithBody = 0;
-
-  if (fs.existsSync(entitiesDir)) {
-    for (const atom of atoms) {
-      if (atom.frontmatter.type !== 'belief') continue;
-      const filePath = path.join(entitiesDir, `${atom.frontmatter.id}.md`);
-      if (!fs.existsSync(filePath)) continue;
-
-      const content = fs.readFileSync(filePath, 'utf8');
-      // Split off frontmatter
-      const parts = content.split('---');
-      const body = parts.length >= 3 ? parts.slice(2).join('---') : '';
-
-      // Count unique atom ID references in body
-      const refs = new Set(body.match(ATOM_REF_PATTERN) ?? []);
-      // Remove self-references
-      refs.delete(atom.frontmatter.id);
-      totalBodyRefs += refs.size;
-      beliefsWithBody++;
-    }
+  for (const [, count] of bodyRefCounts) {
+    totalBodyRefs += count;
+    beliefsWithBody++;
   }
   const avgBodyRefs = beliefsWithBody > 0 ? totalBodyRefs / beliefsWithBody : 0;
 
@@ -153,7 +138,7 @@ export function closure(
   const maxRefs = Math.max(atomCount - 1, 1);
   const entanglementPct = (avgBodyRefs / maxRefs) * 100;
 
-  // Phase detection: if belief% grew more than entanglement recently, we're in phase 1
+  // Phase detection: based on store size and belief density thresholds
   const phase: ClosureResult['phase'] =
     atomCount < 20 ? 'early' :
     beliefPct < 60 ? 'type-composition' :
@@ -163,7 +148,7 @@ export function closure(
   const trajectory: TrajectoryPoint[] = [];
   if (includeTrajectory) {
     const days = options?.trajectoryDays;
-    buildTrajectory(atoms, entitiesDir, relations, trajectory, days);
+    buildTrajectory(atoms, bodyRefCounts, relations, trajectory, days);
   }
 
   return {
@@ -182,10 +167,34 @@ export function closure(
   };
 }
 
+/** Compute per-belief body ref counts (reads each belief file once) */
+function computeBodyRefCounts(
+  atoms: ReturnType<typeof listAtoms>,
+  entitiesDir: string,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!fs.existsSync(entitiesDir)) return counts;
+
+  for (const atom of atoms) {
+    if (atom.frontmatter.type !== 'belief') continue;
+    const filePath = path.join(entitiesDir, `${atom.frontmatter.id}.md`);
+    if (!fs.existsSync(filePath)) continue;
+
+    const content = fs.readFileSync(filePath, 'utf8');
+    const parts = content.split('---');
+    const body = parts.length >= 3 ? parts.slice(2).join('---') : '';
+
+    const refs = new Set(body.match(ATOM_REF_PATTERN) ?? []);
+    refs.delete(atom.frontmatter.id);
+    counts.set(atom.frontmatter.id, refs.size);
+  }
+  return counts;
+}
+
 /** Build daily trajectory from atom creation dates */
 function buildTrajectory(
   atoms: ReturnType<typeof listAtoms>,
-  entitiesDir: string,
+  bodyRefCounts: Map<string, number>,
   relations: { source_id: string; target_id: string }[],
   trajectory: TrajectoryPoint[],
   limitDays?: number,
@@ -194,29 +203,6 @@ function buildTrajectory(
   const sorted = [...atoms].sort((a, b) =>
     a.frontmatter.created_at.localeCompare(b.frontmatter.created_at),
   );
-
-  // Build per-atom body ref counts
-  const bodyRefCounts = new Map<string, number>();
-  if (fs.existsSync(entitiesDir)) {
-    for (const atom of sorted) {
-      if (atom.frontmatter.type !== 'belief') continue;
-      const filePath = path.join(entitiesDir, `${atom.frontmatter.id}.md`);
-      if (!fs.existsSync(filePath)) continue;
-      const content = fs.readFileSync(filePath, 'utf8');
-      const parts = content.split('---');
-      const body = parts.length >= 3 ? parts.slice(2).join('---') : '';
-      const refs = new Set(body.match(ATOM_REF_PATTERN) ?? []);
-      refs.delete(atom.frontmatter.id);
-      bodyRefCounts.set(atom.frontmatter.id, refs.size);
-    }
-  }
-
-  // Build relation count per day (cumulative)
-  // Relations are tied to atoms — count relations for atoms created up to each day
-  const atomCreationDates = new Map<string, string>();
-  for (const a of sorted) {
-    atomCreationDates.set(a.frontmatter.id, a.frontmatter.created_at.split('T')[0]);
-  }
 
   // Group by day
   const dayMap = new Map<string, typeof sorted>();
@@ -229,10 +215,22 @@ function buildTrajectory(
   const days = [...dayMap.keys()].sort();
   const startIdx = limitDays ? Math.max(0, days.length - limitDays) : 0;
 
+  // Build a lookup from atom ID to the set of pending relations waiting for it.
+  // When both endpoints of a relation have been seen, increment cumRels.
+  const pendingRelations = new Map<string, { source_id: string; target_id: string }[]>();
+  for (const r of relations) {
+    for (const id of [r.source_id, r.target_id]) {
+      if (!pendingRelations.has(id)) pendingRelations.set(id, []);
+      pendingRelations.get(id)!.push(r);
+    }
+  }
+
   let cumAtoms = 0;
   let cumBeliefs = 0;
   let cumBodyRefs = 0;
+  let cumRels = 0;
   const atomsSoFar = new Set<string>();
+  const countedRelations = new Set<object>();
 
   for (let i = 0; i < days.length; i++) {
     const day = days[i];
@@ -243,14 +241,16 @@ function buildTrajectory(
         cumBeliefs++;
         cumBodyRefs += bodyRefCounts.get(a.frontmatter.id) ?? 0;
       }
+      // Check if adding this atom completes any pending relations
+      for (const r of pendingRelations.get(a.frontmatter.id) ?? []) {
+        if (!countedRelations.has(r) && atomsSoFar.has(r.source_id) && atomsSoFar.has(r.target_id)) {
+          cumRels++;
+          countedRelations.add(r);
+        }
+      }
     }
 
     if (i < startIdx) continue;
-
-    // Count relations between atoms that exist by this day
-    const cumRels = relations.filter(
-      r => atomsSoFar.has(r.source_id) && atomsSoFar.has(r.target_id),
-    ).length;
 
     const bp = cumAtoms > 0 ? (cumBeliefs / cumAtoms) * 100 : 0;
     const ar = cumAtoms > 0 ? cumRels / cumAtoms : 0;
