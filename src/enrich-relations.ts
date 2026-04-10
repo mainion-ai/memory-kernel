@@ -103,7 +103,7 @@ async function classifyEdge(
 ): Promise<OllamaResponse | null> {
   const prompt = buildPrompt(sourceId, sourceBody, targetId, targetBody);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), 60_000);
 
   let resp: Response;
   try {

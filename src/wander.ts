@@ -27,10 +27,37 @@ interface GraphNode {
   type: string;
   updated_at: string;
   base_activation: number;
-  neighbors: Set<string>;
+  /** Explicit relation neighbors: neighbor_id -> relation_type (strongest typed edge wins). */
+  neighbors: Map<string, string>;
   /** Number of times this atom is cited by other atoms (concept-name + ID refs). */
   citation_count: number;
 }
+
+/** Default weights per relation type for spreading activation. */
+export const DEFAULT_TYPE_WEIGHTS: Record<string, number> = {
+  extends: 1.5, // Developmental chains — backbone of belief arcs
+  supports: 0.7, // Evidential connections — real but secondary
+  caused_by: 0.8, // Narrative/temporal arcs
+  contradicts: 0.4, // Tensions — worth visiting but shouldn't dominate
+  supersedes: 0.3, // Historical — don't amplify superseded version
+  related: 0.3, // Residual/unclassified — keep visible at low priority
+};
+
+/** Weight presets for mode-specific walks. */
+export const WEIGHT_PRESETS: Record<string, Record<string, number>> = {
+  constitution: {
+    extends: 1.5, supports: 0.7, contradicts: 0.3,
+    caused_by: 0.5, supersedes: 0.2, related: 0.2,
+  },
+  tension: {
+    extends: 0.5, supports: 0.3, contradicts: 2.0,
+    caused_by: 0.3, supersedes: 0.5, related: 0.2,
+  },
+  narrative: {
+    extends: 0.8, supports: 0.3, contradicts: 0.3,
+    caused_by: 2.0, supersedes: 1.0, related: 0.2,
+  },
+};
 
 export interface WanderOptions {
   /** Memory directory */
@@ -52,6 +79,10 @@ export interface WanderOptions {
   maxCollisions?: number;
   /** Weight for activation flow through explicit relations (default: 2.0) */
   relationWeight?: number;
+  /** Per-relation-type weights for spreading activation.
+   *  Defaults to DEFAULT_TYPE_WEIGHTS. Set a preset name ('constitution',
+   *  'tension', 'narrative') or provide a custom record. */
+  typeWeights?: Record<string, number>;
 }
 
 export interface ActivatedAtom {
@@ -136,7 +167,7 @@ function baseLevelActivation(
  * snapshot (SQLite WAL mode can otherwise return different snapshots for
  * separate SELECTs).
  */
-function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
+function loadAtomGraph(memoryDir: string, now: number, options?: Pick<WanderOptions, 'typeWeights'>): Map<string, GraphNode> {
   const db = openIndex(memoryDir);
 
   const ATOM_FILTER = `
@@ -160,13 +191,13 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
     `).all() as { atom_id: string; tag: string }[];
 
     const relationRows = db.prepare(`
-      SELECT r.source_id, r.target_id
+      SELECT r.source_id, r.target_id, r.relation_type
       FROM atom_relations r
       INNER JOIN atoms s ON r.source_id = s.atom_id
       INNER JOIN atoms t ON r.target_id = t.atom_id
       WHERE ${ATOM_FILTER.replace(/\ba\./g, 's.')}
         AND ${ATOM_FILTER.replace(/\ba\./g, 't.')}
-    `).all() as { source_id: string; target_id: string }[];
+    `).all() as { source_id: string; target_id: string; relation_type: string }[];
 
     return { atoms, tagRows, relationRows };
   })();
@@ -206,18 +237,31 @@ function loadAtomGraph(memoryDir: string, now: number): Map<string, GraphNode> {
       type: atom.type,
       updated_at: atom.updated_at,
       base_activation: baseLevelActivation(atom.updated_at, now, citations),
-      neighbors: new Set(),
+      neighbors: new Map(),
       citation_count: citations,
     });
   }
 
-  // Populate relation neighbors (bidirectional)
+  // Populate relation neighbors (bidirectional).
+  // When multiple edges exist between the same pair, keep the one with the
+  // highest type weight so typed edges dominate over 'related' fallbacks.
+  const typeWeightLookup = options?.typeWeights ?? DEFAULT_TYPE_WEIGHTS;
   for (const rel of relationRows) {
     const sourceNode = graph.get(rel.source_id);
     const targetNode = graph.get(rel.target_id);
     if (sourceNode && targetNode) {
-      sourceNode.neighbors.add(rel.target_id);
-      targetNode.neighbors.add(rel.source_id);
+      const relType = rel.relation_type || 'related';
+      const newWeight = typeWeightLookup[relType] ?? 0.3;
+
+      const existingSourceType = sourceNode.neighbors.get(rel.target_id);
+      if (!existingSourceType || newWeight > (typeWeightLookup[existingSourceType] ?? 0.3)) {
+        sourceNode.neighbors.set(rel.target_id, relType);
+      }
+
+      const existingTargetType = targetNode.neighbors.get(rel.source_id);
+      if (!existingTargetType || newWeight > (typeWeightLookup[existingTargetType] ?? 0.3)) {
+        targetNode.neighbors.set(rel.source_id, relType);
+      }
     }
   }
 
@@ -447,17 +491,21 @@ function wanderWithGraph(
     // Empirically validated: at 2.0, hub beliefs activate full extends chains;
     // at 1.0, tag noise drowns out relation signal for sparse graphs.
     const relationWeight = options.relationWeight ?? 2.0;
+    const typeWeights = options.typeWeights ?? DEFAULT_TYPE_WEIGHTS;
     if (relationWeight > 0) {
       for (const [atomId, act] of activation) {
         const atomData = graph.get(atomId);
         if (!atomData || atomData.neighbors.size === 0) continue;
 
-        const spreadPerNeighbor = (act * decay * relationWeight) / atomData.neighbors.size;
-
-        for (const neighborId of atomData.neighbors) {
+        for (const [neighborId, relType] of atomData.neighbors) {
           if (neighborId === atomId) continue;
           const neighborData = graph.get(neighborId);
           if (!neighborData) continue;
+
+          // Type-specific weight modulates within the global relationWeight.
+          // extends (1.5) = strong developmental chains; related (0.3) = residual.
+          const typeWeight = typeWeights[relType] ?? 0.3;
+          const spreadPerNeighbor = (act * decay * relationWeight * typeWeight) / atomData.neighbors.size;
 
           // sqrt-sigmoid baseBoost — same as tag spreading above.
           const baseBoost = 1 / Math.sqrt(1 + Math.exp(-neighborData.base_activation));
@@ -610,7 +658,7 @@ export function wander(options: WanderOptions): WanderResult {
   }
 
   const now = Date.now();
-  const graph = loadAtomGraph(memoryDir, now);
+  const graph = loadAtomGraph(memoryDir, now, options);
 
   return wanderWithGraph(graph, options, start);
 }
@@ -657,12 +705,14 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
       type: fm.type,
       updated_at: fm.updated_at,
       base_activation: baseLevelActivation(fm.updated_at, now, 0),
-      neighbors: new Set(),
+      neighbors: new Map(),
       citation_count: 0,
     });
   }
 
-  // Populate relation neighbors from frontmatter (bidirectional)
+  // Populate relation neighbors from frontmatter (bidirectional).
+  // Keep strongest typed edge when multiple edges exist for same pair.
+  const twLookup = options.typeWeights ?? DEFAULT_TYPE_WEIGHTS;
   for (const atom of atoms) {
     const fm = atom.frontmatter;
     if (!fm.id || !fm.relations) continue;
@@ -671,8 +721,17 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     for (const rel of fm.relations) {
       const targetNode = graph.get(rel.target);
       if (!targetNode) continue;
-      sourceNode.neighbors.add(rel.target);
-      targetNode.neighbors.add(fm.id);
+      const relType = rel.type || 'related';
+      const newWeight = twLookup[relType] ?? 0.3;
+
+      const existingSrc = sourceNode.neighbors.get(rel.target);
+      if (!existingSrc || newWeight > (twLookup[existingSrc] ?? 0.3)) {
+        sourceNode.neighbors.set(rel.target, relType);
+      }
+      const existingTgt = targetNode.neighbors.get(fm.id);
+      if (!existingTgt || newWeight > (twLookup[existingTgt] ?? 0.3)) {
+        targetNode.neighbors.set(fm.id, relType);
+      }
     }
   }
 
