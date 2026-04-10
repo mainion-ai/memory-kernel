@@ -65,6 +65,7 @@ The current relationship type is "related" (generic). Classify it as one of:
 - contradicts: source disagrees with, opposes, or conflicts with the target
 - caused_by: source was caused by or triggered by the target
 - supersedes: source replaces or obsoletes the target
+- applied_to: source applies the target's idea to a new domain or context
 - related: keep as generic if none of the above clearly applies
 
 Respond with ONLY a JSON object (no markdown, no explanation):

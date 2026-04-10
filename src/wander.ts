@@ -40,6 +40,7 @@ export const DEFAULT_TYPE_WEIGHTS: Record<string, number> = {
   caused_by: 0.8, // Narrative/temporal arcs
   contradicts: 0.4, // Tensions — worth visiting but shouldn't dominate
   supersedes: 0.3, // Historical — don't amplify superseded version
+  applied_to: 0.6, // Cross-domain application — moderate, valuable connections
   related: 0.3, // Residual/unclassified — keep visible at low priority
 };
 
@@ -47,15 +48,15 @@ export const DEFAULT_TYPE_WEIGHTS: Record<string, number> = {
 export const WEIGHT_PRESETS: Record<string, Record<string, number>> = {
   constitution: {
     extends: 1.5, supports: 0.7, contradicts: 0.3,
-    caused_by: 0.5, supersedes: 0.2, related: 0.2,
+    caused_by: 0.5, supersedes: 0.2, applied_to: 0.6, related: 0.2,
   },
   tension: {
     extends: 0.5, supports: 0.3, contradicts: 2.0,
-    caused_by: 0.3, supersedes: 0.5, related: 0.2,
+    caused_by: 0.3, supersedes: 0.5, applied_to: 0.3, related: 0.2,
   },
   narrative: {
     extends: 0.8, supports: 0.3, contradicts: 0.3,
-    caused_by: 2.0, supersedes: 1.0, related: 0.2,
+    caused_by: 2.0, supersedes: 1.0, applied_to: 0.5, related: 0.2,
   },
 };
 
