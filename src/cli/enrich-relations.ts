@@ -1,112 +1,142 @@
 /**
  * CLI command: mk enrich-relations
  *
- * Uses an LLM to reclassify 'related' edges into more specific types.
- * Supports Claude (Anthropic API) and Ollama (local) backends.
+ * Reclassifies "related" edges using LLM inference via Ollama.
  *
  * Usage:
- *   mk enrich-relations -d <memory-dir> --dry-run              # Preview with Claude
- *   mk enrich-relations -d <memory-dir> --apply --backend ollama  # Apply with Ollama
- *   mk enrich-relations -d <memory-dir> --apply --recheck      # Re-check all edges
+ *   mk enrich-relations -d <memory-dir> --dry-run    # Preview reclassifications
+ *   mk enrich-relations -d <memory-dir> --apply       # Write reclassifications
  */
 
 import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
-import { enrichRelations, type EnrichBackend } from '../enrich-relations.js';
+import { enrichRelations } from '../enrich-relations.js';
+
+function exitWithError(message: string, json?: boolean): never {
+  if (json) {
+    console.log(JSON.stringify({ error: message }, null, 2));
+  } else {
+    console.error(`✗ ${message}`);
+  }
+  process.exit(1);
+}
 
 export function registerEnrichRelationsCommand(program: Command): void {
   program
     .command('enrich-relations')
     .description(
-      'Use an LLM to reclassify relation edges into specific types.\n' +
-      'By default, only reclassifies \'related\' edges. Use --recheck for all.',
+      'Reclassify "related" edges using LLM inference.\n' +
+      'Use --dry-run to preview, --apply to write changes.',
     )
     .option('-d, --dir <dir>', 'Memory directory', './memory')
-    .option('--dry-run', 'Preview proposed changes without writing')
-    .option('--apply', 'Write reclassified relations to atom frontmatter')
-    .option(
-      '--backend <backend>',
-      'LLM backend: claude or ollama',
-      'claude',
-    )
-    .option('--model <model>', 'Model name (default: claude-haiku-4-20250414 or llama3.2)')
-    .option('--ollama-url <url>', 'Ollama server URL', 'http://localhost:11434')
-    .option('--recheck', 'Re-check all edges, not just \'related\' ones')
-    .action(
-      async (opts: {
-        dir: string;
-        dryRun?: boolean;
-        apply?: boolean;
-        backend?: string;
-        model?: string;
-        ollamaUrl?: string;
-        recheck?: boolean;
-      }) => {
-        if (!opts.dryRun && !opts.apply) {
-          console.error(
-            '✗ Specify --dry-run to preview or --apply to write changes.',
-          );
-          process.exit(1);
+    .option('--dry-run', 'Preview proposed reclassifications without writing')
+    .option('--apply', 'Write reclassifications to atom frontmatter and reindex')
+    .option('--ollama-url <url>', 'Ollama API base URL', 'http://localhost:11434')
+    .option('--model <model>', 'Model name (Ollama or Anthropic)', 'qwen2.5:14b-instruct-q4_K_M')
+    .option('--min-confidence <n>', 'Minimum confidence threshold', '0.7')
+    .option('--provider <provider>', 'LLM provider: ollama or anthropic', 'ollama')
+    .option('--api-key <key>', 'API key (required for anthropic provider)')
+    .option('--base-url <url>', 'API base URL override (for anthropic provider)')
+    .option('--json', 'Output as JSON')
+    .action(async (opts: {
+      dir: string;
+      dryRun?: boolean;
+      apply?: boolean;
+      ollamaUrl: string;
+      model: string;
+      minConfidence: string;
+      provider: string;
+      apiKey?: string;
+      baseUrl?: string;
+      json?: boolean;
+    }) => {
+      if (!opts.dryRun && !opts.apply) {
+        exitWithError('Specify --dry-run to preview or --apply to write changes.', opts.json);
+      }
+
+      const memoryDir = path.resolve(opts.dir);
+      if (!fs.existsSync(memoryDir)) {
+        exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
+      }
+
+      const minConfidence = parseFloat(opts.minConfidence);
+      if (isNaN(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+        exitWithError('--min-confidence must be a number between 0 and 1.', opts.json);
+      }
+
+      if (opts.provider !== 'ollama' && opts.provider !== 'anthropic') {
+        exitWithError('--provider must be "ollama" or "anthropic".', opts.json);
+      }
+
+      if (opts.provider === 'anthropic' && !opts.apiKey) {
+        // Try environment variable as fallback
+        const envKey = process.env.ANTHROPIC_API_KEY;
+        if (!envKey) {
+          exitWithError('--api-key is required for anthropic provider (or set ANTHROPIC_API_KEY).', opts.json);
+        }
+        opts.apiKey = envKey;
+      }
+
+      const result = await enrichRelations(memoryDir, {
+        dryRun: !!opts.dryRun,
+        ollamaUrl: opts.ollamaUrl,
+        model: opts.model,
+        minConfidence,
+        provider: opts.provider as 'ollama' | 'anthropic',
+        apiKey: opts.apiKey,
+        baseUrl: opts.baseUrl,
+        onProgress: opts.json ? undefined : (current, total) => {
+          process.stderr.write(`Processing ${current}/${total}...\n`);
+        },
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      if (result.total_related === 0) {
+        console.log('✓ No "related" edges found to enrich.');
+        return;
+      }
+
+      if (result.proposals.length === 0) {
+        console.log(`Scanned ${result.total_related} "related" edges — no reclassifications proposed.`);
+        if (result.errors > 0) {
+          console.log(`  (${result.errors} LLM errors encountered)`);
+        }
+        return;
+      }
+
+      if (opts.dryRun) {
+        console.log(`\nProposed reclassifications (${result.proposals.length} of ${result.total_related} "related" edges):\n`);
+
+        for (const p of result.proposals) {
+          console.log(`  ${p.sourceId}`);
+          console.log(`    related → ${p.newType} (confidence: ${p.confidence.toFixed(2)})`);
+          console.log(`    → ${p.targetId}`);
+          console.log(`    reason: ${p.reasoning}`);
+          console.log();
         }
 
-        const memoryDir = path.resolve(opts.dir);
-        if (!fs.existsSync(memoryDir)) {
-          console.error(`✗ Memory directory not found: ${memoryDir}`);
-          process.exit(1);
+        console.log(`Kept as "related": ${result.kept_related}`);
+        if (result.errors > 0) {
+          console.log(`LLM errors: ${result.errors}`);
         }
+        console.log(`\nRun with --apply to write these changes.`);
+        return;
+      }
 
-        const backend = (opts.backend ?? 'claude') as EnrichBackend;
-        if (backend !== 'claude' && backend !== 'ollama') {
-          console.error(`✗ Unknown backend: ${backend}. Use 'claude' or 'ollama'.`);
-          process.exit(1);
-        }
-
-        console.log(
-          `\nEnriching relations (${opts.dryRun ? 'dry run' : 'apply'}) ` +
-          `with ${backend}${opts.model ? ` (${opts.model})` : ''}...\n`,
-        );
-
-        const result = await enrichRelations({
-          memoryDir,
-          backend,
-          model: opts.model,
-          ollamaUrl: opts.ollamaUrl,
-          dryRun: !!opts.dryRun,
-          recheck: opts.recheck,
-          onProgress: (done, total) => {
-            process.stdout.write(`\r  Progress: ${done}/${total}`);
-          },
-        });
-
-        // Clear progress line
-        if (result.total > 0) process.stdout.write('\n\n');
-
-        if (result.total === 0) {
-          console.log('✓ No edges to enrich.');
-          return;
-        }
-
-        if (result.changes.length > 0) {
-          console.log(`Changes (${result.changed}):\n`);
-          for (const c of result.changes) {
-            console.log(`  ${c.sourceId}`);
-            console.log(`    ${c.oldType} → ${c.newType}`);
-            console.log(`    ${c.reasoning}`);
-            console.log();
-          }
-        }
-
-        console.log(
-          `Summary: ${result.total} edges, ` +
-          `${result.changed} changed, ` +
-          `${result.kept} kept, ` +
-          `${result.errors} errors`,
-        );
-
-        if (opts.dryRun && result.changed > 0) {
-          console.log('\nRun with --apply to write these changes.');
-        }
-      },
-    );
+      // --apply
+      console.log(
+        `✓ Applied ${result.applied} reclassifications out of ${result.proposals.length} proposals.`,
+      );
+      if (result.kept_related > 0) {
+        console.log(`  Kept as "related": ${result.kept_related}`);
+      }
+      if (result.errors > 0) {
+        console.log(`  LLM errors: ${result.errors}`);
+      }
+    });
 }

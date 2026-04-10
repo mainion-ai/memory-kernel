@@ -44,7 +44,7 @@ import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
 import { renderClaudeMd } from '../render.js';
-import { wander, wanderFromFiles } from '../wander.js';
+import { wander, wanderFromFiles, WEIGHT_PRESETS } from '../wander.js';
 import { embedAtom, embedAllAtoms } from '../embed-sync.js';
 import type { Classification } from '../types.js';
 import { registerRelateCommand, registerRelationsCommand } from './relate.js';
@@ -558,16 +558,20 @@ program
   .command('compact')
   .description('Compact the event log — keep latest mutation per atom, remove intermediate events')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
-  .action((opts: { dir: string }) => {
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; json?: boolean }) => {
     const memoryDir = path.resolve(opts.dir);
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     try {
       const result = compactLog(memoryDir);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
 
       if (result.removed === 0) {
         console.log('✓ Event log is already compact. Nothing to do.');
@@ -580,8 +584,7 @@ program
         console.log(`  Backup: ${result.backup_path}`);
       }
     } catch (err) {
-      console.error(`✗ Compact failed: ${String(err)}`);
-      process.exit(1);
+      exitWithError(`Compact failed: ${String(err)}`, opts.json);
     }
   });
 
@@ -861,6 +864,8 @@ program
   .option('--decay <n>', 'Spread decay factor (0-1)', parseFloat)
   .option('--max-collisions <n>', 'Max collision candidates to return', parseInt)
   .option('--relation-weight <n>', 'Activation weight for explicit relation edges (default: 2.0)', parseFloat)
+  .option('--type-weights <json>', 'Per-relation-type weights as JSON, e.g. \'{"extends":1.5,"related":0.3}\'')
+  .option('--weight-preset <name>', 'Use a named weight preset: constitution, tension, narrative')
   .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
@@ -872,6 +877,8 @@ program
     decay?: number;
     maxCollisions?: number;
     relationWeight?: number;
+    typeWeights?: string;
+    weightPreset?: string;
     json?: boolean;
   }) => {
     const memoryDir = path.resolve(opts.dir);
@@ -882,6 +889,21 @@ program
     const useFiles = !indexExists(memoryDir);
     if (useFiles && !opts.json) {
       console.error('⚠ No index found — falling back to file scan (slower). Run "mk reindex" for faster results.');
+    }
+
+    // Resolve type weights: preset > explicit JSON > defaults
+    let typeWeights: Record<string, number> | undefined;
+    if (opts.weightPreset) {
+      typeWeights = WEIGHT_PRESETS[opts.weightPreset];
+      if (!typeWeights) {
+        exitWithError(`Unknown weight preset: ${opts.weightPreset}. Available: constitution, tension, narrative`, opts.json);
+      }
+    } else if (opts.typeWeights) {
+      try {
+        typeWeights = JSON.parse(opts.typeWeights);
+      } catch {
+        exitWithError(`Invalid --type-weights JSON: ${opts.typeWeights}`, opts.json);
+      }
     }
 
     const wanderFn = useFiles ? wanderFromFiles : wander;
@@ -895,6 +917,7 @@ program
       decay: opts.decay,
       maxCollisions: opts.maxCollisions,
       relationWeight: opts.relationWeight,
+      typeWeights,
     });
 
     if (opts.json) {
