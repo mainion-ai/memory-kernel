@@ -80,6 +80,7 @@ export const RELATION_TYPES = [
   'supports',
   'caused_by',
   'supersedes',
+  'applied_to',
   'related',
 ] as const;
 
