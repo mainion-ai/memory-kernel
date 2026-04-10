@@ -73,7 +73,13 @@ Respond with ONLY a JSON object (no markdown, no explanation):
 
 function parseOllamaResponse(raw: string): OllamaResponse | null {
   try {
-    const parsed = JSON.parse(raw.trim());
+    // Strip markdown code fences (```json ... ```) that some models wrap around JSON
+    let cleaned = raw.trim();
+    const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
+    if (fenceMatch) {
+      cleaned = fenceMatch[1].trim();
+    }
+    const parsed = JSON.parse(cleaned);
     if (
       typeof parsed.type !== 'string' ||
       typeof parsed.confidence !== 'number' ||
@@ -93,7 +99,7 @@ function parseOllamaResponse(raw: string): OllamaResponse | null {
   }
 }
 
-async function classifyEdge(
+async function classifyEdgeOllama(
   sourceId: string,
   sourceBody: string,
   targetId: string,
@@ -127,6 +133,74 @@ async function classifyEdge(
   return parseOllamaResponse(data.response);
 }
 
+async function classifyEdgeAnthropic(
+  sourceId: string,
+  sourceBody: string,
+  targetId: string,
+  targetBody: string,
+  model: string,
+  apiKey: string,
+  baseUrl?: string,
+): Promise<OllamaResponse | null> {
+  const prompt = buildPrompt(sourceId, sourceBody, targetId, targetBody);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  const url = `${baseUrl || 'https://api.anthropic.com'}/v1/messages`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 256,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!resp.ok) {
+    return null;
+  }
+
+  const data = (await resp.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+  };
+  const text = data.content?.find((b) => b.type === 'text')?.text;
+  if (!text) return null;
+
+  return parseOllamaResponse(text);
+}
+
+type Provider = 'ollama' | 'anthropic';
+
+async function classifyEdge(
+  sourceId: string,
+  sourceBody: string,
+  targetId: string,
+  targetBody: string,
+  ollamaUrl: string,
+  model: string,
+  provider: Provider = 'ollama',
+  apiKey?: string,
+  baseUrl?: string,
+): Promise<OllamaResponse | null> {
+  if (provider === 'anthropic') {
+    if (!apiKey) return null;
+    return classifyEdgeAnthropic(sourceId, sourceBody, targetId, targetBody, model, apiKey, baseUrl);
+  }
+  return classifyEdgeOllama(sourceId, sourceBody, targetId, targetBody, ollamaUrl, model);
+}
+
 export async function enrichRelations(
   memoryDir: string,
   options: {
@@ -136,6 +210,9 @@ export async function enrichRelations(
     minConfidence?: number;
     batchSize?: number;
     onProgress?: (current: number, total: number) => void;
+    provider?: Provider;
+    apiKey?: string;
+    baseUrl?: string;
   },
 ): Promise<EnrichResult> {
   const ollamaUrl = options.ollamaUrl ?? DEFAULT_OLLAMA_URL;
@@ -180,6 +257,9 @@ export async function enrichRelations(
           edge.source_id, sourceAtom.body,
           edge.target_id, targetAtom.body,
           ollamaUrl, model,
+          options.provider ?? 'ollama',
+          options.apiKey,
+          options.baseUrl,
         );
 
         if (!classification) {

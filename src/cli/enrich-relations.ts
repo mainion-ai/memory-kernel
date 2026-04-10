@@ -33,8 +33,11 @@ export function registerEnrichRelationsCommand(program: Command): void {
     .option('--dry-run', 'Preview proposed reclassifications without writing')
     .option('--apply', 'Write reclassifications to atom frontmatter and reindex')
     .option('--ollama-url <url>', 'Ollama API base URL', 'http://localhost:11434')
-    .option('--model <model>', 'Ollama model name', 'qwen2.5:14b-instruct-q4_K_M')
+    .option('--model <model>', 'Model name (Ollama or Anthropic)', 'qwen2.5:14b-instruct-q4_K_M')
     .option('--min-confidence <n>', 'Minimum confidence threshold', '0.7')
+    .option('--provider <provider>', 'LLM provider: ollama or anthropic', 'ollama')
+    .option('--api-key <key>', 'API key (required for anthropic provider)')
+    .option('--base-url <url>', 'API base URL override (for anthropic provider)')
     .option('--json', 'Output as JSON')
     .action(async (opts: {
       dir: string;
@@ -43,6 +46,9 @@ export function registerEnrichRelationsCommand(program: Command): void {
       ollamaUrl: string;
       model: string;
       minConfidence: string;
+      provider: string;
+      apiKey?: string;
+      baseUrl?: string;
       json?: boolean;
     }) => {
       if (!opts.dryRun && !opts.apply) {
@@ -59,11 +65,27 @@ export function registerEnrichRelationsCommand(program: Command): void {
         exitWithError('--min-confidence must be a number between 0 and 1.', opts.json);
       }
 
+      if (opts.provider !== 'ollama' && opts.provider !== 'anthropic') {
+        exitWithError('--provider must be "ollama" or "anthropic".', opts.json);
+      }
+
+      if (opts.provider === 'anthropic' && !opts.apiKey) {
+        // Try environment variable as fallback
+        const envKey = process.env.ANTHROPIC_API_KEY;
+        if (!envKey) {
+          exitWithError('--api-key is required for anthropic provider (or set ANTHROPIC_API_KEY).', opts.json);
+        }
+        opts.apiKey = envKey;
+      }
+
       const result = await enrichRelations(memoryDir, {
         dryRun: !!opts.dryRun,
         ollamaUrl: opts.ollamaUrl,
         model: opts.model,
         minConfidence,
+        provider: opts.provider as 'ollama' | 'anthropic',
+        apiKey: opts.apiKey,
+        baseUrl: opts.baseUrl,
         onProgress: opts.json ? undefined : (current, total) => {
           process.stderr.write(`Processing ${current}/${total}...\n`);
         },
