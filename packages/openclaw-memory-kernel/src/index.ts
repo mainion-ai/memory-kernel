@@ -196,6 +196,14 @@ const memoryKernelPlugin = {
     const { memoryDir } = cfg
     const agentId = cfg.agentId ?? 'openclaw'
 
+    // Track the current session id for audit-trail propagation into tool calls.
+    // Updated by lifecycle hooks (agent:bootstrap, command:*, session:compact:before).
+    // Tools read this instead of hardcoding 'unknown', restoring a meaningful audit trail.
+    let currentSessionId = 'unknown'
+    const setSession = (s: unknown) => {
+      if (typeof s === 'string' && s.length > 0) currentSessionId = s
+    }
+
     // memory-kernel reads MEMORY_ENCRYPTION_KEY from process.env at call time.
     // Setting it here at plugin registration is intentional; a per-call override API
     // is not yet exposed. Note: this makes the key visible to all code in this process.
@@ -234,10 +242,11 @@ const memoryKernelPlugin = {
         name: 'mk_remember',
         label: 'Remember (structured)',
         description:
-          'Store a typed memory atom. Use instead of free-form notes when information has a ' +
-          'clear type: fact (observed info), decision (choice + rationale), constraint ' +
-          '(rule that must not be violated), belief (uncertain — confidence < 1), ' +
-          'open_question (unresolved). Always pick the most specific type.',
+          'PRIMARY store for durable structured memory. Use for: facts, decisions, ' +
+          'constraints, beliefs, open_questions, procedures, preferences, entity_summary. ' +
+          'DO NOT use for: daily logs, raw pasted material, imported docs, ad-hoc transcript ' +
+          'dumps — those go to memory/*.md files. Always pick the most specific type. ' +
+          'Decisions must include rationale; beliefs should carry a confidence below 1.',
         parameters: RememberParams,
         async execute(_id: any, params: any) {
           try {
@@ -245,7 +254,7 @@ const memoryKernelPlugin = {
             const atom = createAtom({
               memoryDir,
               agent_id: agentId,
-              session_id: 'unknown',
+              session_id: currentSessionId,
               type: p.type as AtomType,
               slug: p.slug,
               body: p.body,
@@ -273,10 +282,12 @@ const memoryKernelPlugin = {
         name: 'mk_recall',
         label: 'Recall (structured)',
         description:
-          'Retrieve structured memory atoms. Prefer over memory_search when you need typed ' +
-          'filtering (e.g. active constraints and decisions), FTS5 keyword precision, or ' +
-          'confidence-ranked results for a specific task. Use memory_search for fuzzy ' +
-          'semantic recall over unstructured notes.',
+          'PRIMARY recall during work. Targeted retrieval of structured memory atoms — pass ' +
+          'a task string for FTS5/semantic re-ranking, or filter by type/tag. Use this before ' +
+          'memory_search when looking up prior decisions, facts, constraints, or procedures. ' +
+          'Use memory_search only for: exact prior-conversation wording, raw transcript ' +
+          'lookups, or unstructured legacy notes. For session start / handoff prefer ' +
+          'mk_context_bundle (one call = reflect + recall + assembled markdown).',
         parameters: RecallParams,
         async execute(_id: any, params: any) {
           try {
@@ -322,13 +333,14 @@ const memoryKernelPlugin = {
         name: 'mk_reflect',
         label: 'Reflect (memory maintenance)',
         description:
-          "Run memory maintenance: expire TTL'd atoms, deduplicate, auto-promote " +
-          'high-confidence beliefs to facts, surface conflicts, regenerate all views. ' +
-          'Call at end of session or after a merge.',
+          "Memory maintenance: expire TTL'd atoms, deduplicate, auto-promote high-confidence " +
+          'beliefs to facts, surface conflicts, regenerate INDEX/HANDOFF/CONSTRAINTS/' +
+          'DECISIONS/OPEN_QUESTIONS views. Typically runs automatically at session end — ' +
+          'call manually after a large import or merge.',
         parameters: ReflectParams,
         async execute(_id: any, _params: any) {
           try {
-            const result = reflect({ memoryDir, agent_id: agentId, session_id: 'unknown' })
+            const result = reflect({ memoryDir, agent_id: agentId, session_id: currentSessionId })
             return ok(
               `reflect complete — expired: ${result.expired}, archived: ${result.archived}, ` +
                 `deduped: ${result.deduped}, promoted: ${result.promoted}, conflicts: ${result.conflicts_found}`,
@@ -349,8 +361,10 @@ const memoryKernelPlugin = {
         name: 'mk_context_bundle',
         label: 'Context Bundle',
         description:
-          'Pre-assembled Markdown context (reflect + recall in one call). ' +
-          'Best for session start or handoff — one call instead of separate reflect + recall.',
+          'PRIMARY startup / handoff call. Single-shot recall: reflect + recall + assembled ' +
+          'markdown (INDEX + active CONSTRAINTS + HANDOFF + ranked atoms) in one call. Prefer ' +
+          'this over mk_recall at session start, and over reading memory/*.md directly for ' +
+          'durable context. Pass `task` to scope the recall.',
         parameters: ContextBundleParams,
         async execute(_id: any, params: any) {
           try {
@@ -358,7 +372,7 @@ const memoryKernelPlugin = {
             const result = checkpoint({
               memoryDir,
               agent_id: agentId,
-              session_id: 'unknown',
+              session_id: currentSessionId,
               task: p.task,
               max_tokens: p.max_tokens,
               skipReflect: p.skipReflect,
@@ -382,7 +396,9 @@ const memoryKernelPlugin = {
         name: 'mk_status',
         label: 'Memory Status',
         description:
-          'Show memory-kernel status: atom counts by type, index health, and embedding count.',
+          'Memory-kernel health check: atom counts by type, index health, embedding count. ' +
+          'Use to decide whether the kernel is trustworthy as the primary recall layer for ' +
+          'the current session.',
         parameters: Type.Object({}),
         async execute(_id: any, _params: any) {
           try {
@@ -414,14 +430,22 @@ const memoryKernelPlugin = {
     api.registerHook(
       ['agent:bootstrap'],
       async (event: any) => {
-        if (!fs.existsSync(memoryDir)) return
+        setSession(event.sessionKey)
+        if (!fs.existsSync(memoryDir)) {
+          event.messages?.push('mk: no memory dir — file-first fallback')
+          return
+        }
         try {
           const bundle = await smartRecall(memoryDir, {
             agent_id: agentId,
-            session_id: 'bootstrap',
+            session_id: event.sessionKey || 'bootstrap',
             max_tokens: 4000,
           })
-          if (!bundle.atoms?.length) return
+          const count = bundle.atoms?.length ?? 0
+          if (!count) {
+            event.messages?.push('mk: bootstrap — no atoms yet')
+            return
+          }
           const context = formatBundle(bundle)
           if (event.context?.bootstrapFiles) {
             event.context.bootstrapFiles.push({
@@ -429,8 +453,13 @@ const memoryKernelPlugin = {
               content: context,
             })
           }
-        } catch {
-          // fail silent — don't block bootstrap
+          event.messages?.push(`mk: bootstrap injected ${count} atoms`)
+        } catch (err) {
+          // Don't block bootstrap on failure, but surface a signal so the host
+          // doctrine can fall back to memory_search / file layer instead of
+          // silently believing the kernel had no content.
+          const msg = err instanceof Error ? err.message : String(err)
+          event.messages?.push(`mk: bootstrap failed — ${msg}`)
         }
       },
       {
@@ -443,15 +472,25 @@ const memoryKernelPlugin = {
     api.registerHook(
       ['session:compact:before'],
       async (event: any) => {
+        setSession(event.sessionKey)
         try {
-          checkpoint({
+          const result = checkpoint({
             memoryDir,
             agent_id: agentId,
             session_id: event.sessionKey || 'unknown',
             task: 'pre-compaction save',
           })
-        } catch {
-          // fail silent
+          const atoms = result.bundle?.atoms?.length ?? 0
+          const tokens = result.bundle?.token_estimate ?? 0
+          // Signals the host compaction prompt that durable structured content
+          // is already captured — it can route scratch/transient content to
+          // memory/*.md without re-dumping things the kernel already holds.
+          event.messages?.push(
+            `mk: pre-compact checkpoint saved (${atoms} atoms, ~${tokens} tokens)`,
+          )
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          event.messages?.push(`mk: pre-compact checkpoint failed — ${msg}`)
         }
       },
       {
@@ -464,6 +503,7 @@ const memoryKernelPlugin = {
     api.registerHook(
       ['command:new', 'command:reset'],
       async (event: any) => {
+        setSession(event.sessionKey)
         try {
           reflect({
             memoryDir,
