@@ -11,7 +11,10 @@
     "properties": {
       "memoryDir": { "type": "string", "description": "Absolute path to the memory-kernel directory" },
       "encryptionKey": { "type": "string", "description": "AES-256-GCM key for SECRET atom encryption" },
-      "agentId": { "type": "string", "description": "Agent label written to the audit trail" }
+      "agentId": { "type": "string", "description": "Agent label written to the audit trail" },
+      "embeddingProvider": { "type": "string", "description": "Embedding provider (e.g. 'openai'). Enables semantic recall." },
+      "embeddingApiKey": { "type": "string", "description": "API key for embedding provider. Falls back to OPENAI_API_KEY when provider is openai." },
+      "embeddingModel": { "type": "string", "description": "Embedding model ID (e.g. 'text-embedding-3-small')." }
     },
     "required": []
   },

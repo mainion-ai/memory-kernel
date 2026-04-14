@@ -2,17 +2,21 @@ import fs from 'fs'
 import path from 'path'
 import { Type, type Static } from '@sinclair/typebox'
 import {
-  createAtom, recall, reflect, checkpoint,
+  createAtom, recall, recallWithEmbeddings, reflect, checkpoint,
   writeEpisode, listAtoms, indexStats, reindex,
   ATOM_TYPES,
 } from 'memory-kernel'
-import type { AtomType, Classification, ContextBundle } from 'memory-kernel'
+import type { AtomType, Classification, ContextBundle, RecallQuery } from 'memory-kernel'
 // OpenClaw SDK types — resolved at runtime via peer dependency
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface OpenClawPluginApi {
   pluginConfig: unknown
   registerTool(def: any, opts: { name: string }): void
-  registerHook(events: string[], handler: (event: any) => Promise<void>): void
+  registerHook(
+    events: string | string[],
+    handler: (event: any) => Promise<void>,
+    opts?: { name?: string; description?: string },
+  ): void
 }
 
 // ── Config schema ─────────────────────────────────────────────────────────────
@@ -21,6 +25,9 @@ type PluginConfig = {
   memoryDir: string
   encryptionKey?: string
   agentId?: string
+  embeddingProvider?: string
+  embeddingApiKey?: string
+  embeddingModel?: string
 }
 
 const pluginConfigSchema = {
@@ -39,6 +46,12 @@ const pluginConfigSchema = {
       memoryDir: path.resolve(memoryDir ?? process.env.MEMORY_DIR!),
       encryptionKey: typeof cfg['encryptionKey'] === 'string' ? cfg['encryptionKey'] : undefined,
       agentId: typeof cfg['agentId'] === 'string' ? cfg['agentId'] : undefined,
+      embeddingProvider:
+        typeof cfg['embeddingProvider'] === 'string' ? cfg['embeddingProvider'] : undefined,
+      embeddingApiKey:
+        typeof cfg['embeddingApiKey'] === 'string' ? cfg['embeddingApiKey'] : undefined,
+      embeddingModel:
+        typeof cfg['embeddingModel'] === 'string' ? cfg['embeddingModel'] : undefined,
     }
   },
   jsonSchema: {
@@ -48,6 +61,19 @@ const pluginConfigSchema = {
       memoryDir: { type: 'string', description: 'Absolute path to the memory-kernel directory' },
       encryptionKey: { type: 'string', description: 'AES-256-GCM key for SECRET atom encryption' },
       agentId: { type: 'string', description: 'Agent label written to the audit trail' },
+      embeddingProvider: {
+        type: 'string',
+        description: 'Embedding provider (e.g. "openai"). Enables semantic recall.',
+      },
+      embeddingApiKey: {
+        type: 'string',
+        description:
+          'API key for embedding provider. Falls back to OPENAI_API_KEY env when provider is openai.',
+      },
+      embeddingModel: {
+        type: 'string',
+        description: 'Embedding model ID (e.g. "text-embedding-3-small"). Provider default if omitted.',
+      },
     },
     required: [],
   },
@@ -68,11 +94,36 @@ const pluginConfigSchema = {
       placeholder: 'openclaw',
       help: 'Label recorded in the audit event log. Defaults to "openclaw".',
     },
+    embeddingProvider: {
+      label: 'Embedding provider',
+      placeholder: 'openai',
+      help: 'Enables semantic recall. Set to "openai" (or another supported provider).',
+    },
+    embeddingApiKey: {
+      label: 'Embedding API key',
+      sensitive: true,
+      placeholder: '${OPENAI_API_KEY}',
+      help: 'API key for embeddings. Falls back to OPENAI_API_KEY env if provider is openai.',
+    },
+    embeddingModel: {
+      label: 'Embedding model',
+      placeholder: 'text-embedding-3-small',
+      help: 'Optional. Provider-specific default if omitted.',
+    },
   },
 }
 
 function ok(text: string, details?: Record<string, unknown>) {
   return { content: [{ type: 'text' as const, text }], ...(details ? { details } : {}) }
+}
+
+// Use embedding-backed recall when both provider and key are available,
+// otherwise fall back to structured FTS5 recall.
+async function smartRecall(memoryDir: string, query: RecallQuery): Promise<ContextBundle> {
+  if (process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_API_KEY) {
+    return await recallWithEmbeddings(memoryDir, query)
+  }
+  return recall(memoryDir, query)
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -150,6 +201,18 @@ const memoryKernelPlugin = {
     // is not yet exposed. Note: this makes the key visible to all code in this process.
     if (cfg.encryptionKey) process.env.MEMORY_ENCRYPTION_KEY = cfg.encryptionKey
 
+    // Embedding config: propagate to env for memory-kernel SDK calls.
+    // If embeddingProvider is "openai" and no explicit embeddingApiKey is given,
+    // fall back to OPENAI_API_KEY so users can reuse their existing OpenAI key
+    // without duplicating it.
+    if (cfg.embeddingProvider) process.env.EMBEDDING_PROVIDER = cfg.embeddingProvider
+    if (cfg.embeddingApiKey) {
+      process.env.EMBEDDING_API_KEY = cfg.embeddingApiKey
+    } else if (cfg.embeddingProvider === 'openai' && process.env.OPENAI_API_KEY) {
+      process.env.EMBEDDING_API_KEY = process.env.OPENAI_API_KEY
+    }
+    if (cfg.embeddingModel) process.env.EMBEDDING_MODEL = cfg.embeddingModel
+
     // Ensure index is fresh on plugin load — prevents silent recall failures
     if (fs.existsSync(memoryDir)) {
       const stats = indexStats(memoryDir)
@@ -215,7 +278,7 @@ const memoryKernelPlugin = {
         async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof RecallParams>
-            const result = recall(memoryDir, {
+            const result = await smartRecall(memoryDir, {
               task: p.task,
               types: p.types as AtomType[] | undefined,
               tags: p.tags,
@@ -345,58 +408,79 @@ const memoryKernelPlugin = {
     // ── Lifecycle hooks ─────────────────────────────────────────────────────
 
     // Bootstrap: inject recall context into agent startup
-    api.registerHook(['agent:bootstrap'], async (event: any) => {
-      if (!fs.existsSync(memoryDir)) return
-      try {
-        const bundle = recall(memoryDir, { max_tokens: 4000 })
-        if (!bundle.atoms?.length) return
-        const context = formatBundle(bundle)
-        if (event.context?.bootstrapFiles) {
-          event.context.bootstrapFiles.push({
-            path: 'memory-kernel-context.md',
-            content: context,
-          })
+    api.registerHook(
+      ['agent:bootstrap'],
+      async (event: any) => {
+        if (!fs.existsSync(memoryDir)) return
+        try {
+          const bundle = await smartRecall(memoryDir, { max_tokens: 4000 })
+          if (!bundle.atoms?.length) return
+          const context = formatBundle(bundle)
+          if (event.context?.bootstrapFiles) {
+            event.context.bootstrapFiles.push({
+              path: 'memory-kernel-context.md',
+              content: context,
+            })
+          }
+        } catch {
+          // fail silent — don't block bootstrap
         }
-      } catch {
-        // fail silent — don't block bootstrap
-      }
-    })
+      },
+      {
+        name: 'mk_bootstrap_recall',
+        description: 'Inject recalled memory atoms into agent bootstrap context',
+      },
+    )
 
     // Pre-compaction: checkpoint before context loss
-    api.registerHook(['session:compact:before'], async (event: any) => {
-      try {
-        checkpoint({
-          memoryDir,
-          agent_id: agentId,
-          session_id: event.sessionKey || 'unknown',
-          task: 'pre-compaction save',
-        })
-      } catch {
-        // fail silent
-      }
-    })
+    api.registerHook(
+      ['session:compact:before'],
+      async (event: any) => {
+        try {
+          checkpoint({
+            memoryDir,
+            agent_id: agentId,
+            session_id: event.sessionKey || 'unknown',
+            task: 'pre-compaction save',
+          })
+        } catch {
+          // fail silent
+        }
+      },
+      {
+        name: 'mk_precompact_checkpoint',
+        description: 'Save a memory checkpoint before session compaction',
+      },
+    )
 
     // Session end: reflect + write episode
-    api.registerHook(['command:new', 'command:reset'], async (event: any) => {
-      try {
-        reflect({
-          memoryDir,
-          agent_id: agentId,
-          session_id: event.sessionKey || 'unknown',
-        })
-
-        const sessionId = event.context?.sessionEntry?.id
-        if (sessionId) {
-          writeEpisode(memoryDir, sessionId, `Session ended via /${event.action} command`, {
+    api.registerHook(
+      ['command:new', 'command:reset'],
+      async (event: any) => {
+        try {
+          reflect({
+            memoryDir,
             agent_id: agentId,
+            session_id: event.sessionKey || 'unknown',
           })
-        }
 
-        event.messages?.push('mk: reflect complete')
-      } catch {
-        // fail silent
-      }
-    })
+          const sessionId = event.context?.sessionEntry?.id
+          if (sessionId) {
+            writeEpisode(memoryDir, sessionId, `Session ended via /${event.action} command`, {
+              agent_id: agentId,
+            })
+          }
+
+          event.messages?.push('mk: reflect complete')
+        } catch {
+          // fail silent
+        }
+      },
+      {
+        name: 'mk_session_end',
+        description: 'Run reflect and write session episode on /new or /reset',
+      },
+    )
   },
 }
 
