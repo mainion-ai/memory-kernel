@@ -219,8 +219,11 @@ const memoryKernelPlugin = {
       if (!stats) {
         try {
           reindex(memoryDir)
-        } catch {
-          // first run with no atoms — fine
+        } catch (err) {
+          console.warn(
+            'memory-kernel: reindex on init failed:',
+            err instanceof Error ? err.message : String(err),
+          )
         }
       }
     }
@@ -413,7 +416,11 @@ const memoryKernelPlugin = {
       async (event: any) => {
         if (!fs.existsSync(memoryDir)) return
         try {
-          const bundle = await smartRecall(memoryDir, { max_tokens: 4000 })
+          const bundle = await smartRecall(memoryDir, {
+            agent_id: agentId,
+            session_id: 'bootstrap',
+            max_tokens: 4000,
+          })
           if (!bundle.atoms?.length) return
           const context = formatBundle(bundle)
           if (event.context?.bootstrapFiles) {
