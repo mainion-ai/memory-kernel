@@ -137,7 +137,7 @@ const memoryKernelPlugin = {
   description:
     'Structured typed memory with event-log replay, confidence scoring, and conflict detection. ' +
     'Use for facts, decisions, constraints, beliefs, and open questions.',
-  kind: 'memory',
+  kind: 'tool',
   configSchema: pluginConfigSchema,
 
   register(api: OpenClawPluginApi) {
