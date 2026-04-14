@@ -64,7 +64,7 @@ Optional env vars:
 | `mk_resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved |
 | `mk_get_context_bundle` | `checkpoint()` | Pre-assembled Markdown context (reflect + recall in one call) |
 
-> **MCP vs. plugin tool coverage:** The MCP server exposes all 8 tools above. The native OpenClaw plugin (`packages/openclaw-memory-kernel`) exposes only the 4 core tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`) — the 4 maintenance tools (`mk_merge`, `mk_gc`, `mk_list_conflicts`, `mk_resolve_conflict`) are available via the MCP server path if you need them.
+> **MCP vs. plugin tool coverage:** The MCP server exposes all 8 tools above. The native OpenClaw plugin (`packages/openclaw-memory-kernel`) exposes 5 tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`) plus 3 named lifecycle hooks that run `recall` on agent bootstrap, `checkpoint` before session compaction, and `reflect` + `writeEpisode` on `/new` or `/reset`. The 4 maintenance tools (`mk_merge`, `mk_gc`, `mk_list_conflicts`, `mk_resolve_conflict`) are only available via the MCP server path — use it if you need those.
 
 ## Resources exposed
 
