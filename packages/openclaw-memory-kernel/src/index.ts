@@ -1,8 +1,19 @@
+import fs from 'fs'
 import path from 'path'
 import { Type, type Static } from '@sinclair/typebox'
-import { createAtom, recall, reflect, checkpoint, ATOM_TYPES } from 'memory-kernel'
-import type { AtomType, Classification } from 'memory-kernel'
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core'
+import {
+  createAtom, recall, reflect, checkpoint,
+  writeEpisode, listAtoms, indexStats, reindex,
+  ATOM_TYPES,
+} from 'memory-kernel'
+import type { AtomType, Classification, ContextBundle } from 'memory-kernel'
+// OpenClaw SDK types — resolved at runtime via peer dependency
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+interface OpenClawPluginApi {
+  pluginConfig: unknown
+  registerTool(def: any, opts: { name: string }): void
+  registerHook(events: string[], handler: (event: any) => Promise<void>): void
+}
 
 // ── Config schema ─────────────────────────────────────────────────────────────
 
@@ -126,17 +137,30 @@ const memoryKernelPlugin = {
   description:
     'Structured typed memory with event-log replay, confidence scoring, and conflict detection. ' +
     'Use for facts, decisions, constraints, beliefs, and open questions.',
-  kind: 'memory',
+  kind: 'tool',
   configSchema: pluginConfigSchema,
 
   register(api: OpenClawPluginApi) {
     const cfg = pluginConfigSchema.parse(api.pluginConfig)
     const { memoryDir } = cfg
+    const agentId = cfg.agentId ?? 'openclaw'
 
     // memory-kernel reads MEMORY_ENCRYPTION_KEY from process.env at call time.
     // Setting it here at plugin registration is intentional; a per-call override API
     // is not yet exposed. Note: this makes the key visible to all code in this process.
     if (cfg.encryptionKey) process.env.MEMORY_ENCRYPTION_KEY = cfg.encryptionKey
+
+    // Ensure index is fresh on plugin load — prevents silent recall failures
+    if (fs.existsSync(memoryDir)) {
+      const stats = indexStats(memoryDir)
+      if (!stats) {
+        try {
+          reindex(memoryDir)
+        } catch {
+          // first run with no atoms — fine
+        }
+      }
+    }
 
     // ── mk_remember ──────────────────────────────────────────────────────────
     api.registerTool(
@@ -149,20 +173,25 @@ const memoryKernelPlugin = {
           '(rule that must not be violated), belief (uncertain — confidence < 1), ' +
           'open_question (unresolved). Always pick the most specific type.',
         parameters: RememberParams,
-        async execute(_id, params) {
+        async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof RememberParams>
-            const atom = await createAtom({
+            const atom = createAtom({
               memoryDir,
+              agent_id: agentId,
+              session_id: 'unknown',
               type: p.type as AtomType,
               slug: p.slug,
               body: p.body,
               confidence: p.confidence,
               classification: p.classification as Classification | undefined,
               ttl_days: p.ttl_days,
-              scope_tags: p.scope_tags,
+              scope: p.scope_tags ? { tags: p.scope_tags } : undefined,
             })
-            return ok(`Stored ${atom.type} atom: ${atom.id}`, { atomId: atom.id, type: atom.type })
+            return ok(`Stored ${atom.frontmatter.type} atom: ${atom.frontmatter.id}`, {
+              atomId: atom.frontmatter.id,
+              type: atom.frontmatter.type,
+            })
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             return ok(`Error: ${msg}`)
@@ -183,10 +212,10 @@ const memoryKernelPlugin = {
           'confidence-ranked results for a specific task. Use memory_search for fuzzy ' +
           'semantic recall over unstructured notes.',
         parameters: RecallParams,
-        async execute(_id, params) {
+        async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof RecallParams>
-            const result = await recall(memoryDir, {
+            const result = recall(memoryDir, {
               task: p.task,
               types: p.types as AtomType[] | undefined,
               tags: p.tags,
@@ -200,12 +229,15 @@ const memoryKernelPlugin = {
               sections.push(
                 `## Atoms (${result.atoms.length})\n` +
                   result.atoms
-                    .map((a) => `- [${a.type}] **${a.id}** (conf: ${a.confidence})\n  ${a.body}`)
+                    .map(
+                      (a) =>
+                        `- [${a.frontmatter.type}] **${a.frontmatter.id}** (conf: ${a.frontmatter.confidence})\n  ${a.body}`,
+                    )
                     .join('\n'),
               )
             }
             if (result.episodes?.length) {
-              sections.push(`## Episodes\n` + result.episodes.map((e) => e.body ?? e.id).join('\n---\n'))
+              sections.push(`## Episodes\n` + result.episodes.join('\n---\n'))
             }
             const text = sections.join('\n\n---\n\n') || '(no atoms found)'
             return ok(text, { atomCount: result.atoms?.length ?? 0, tokenEstimate: result.token_estimate })
@@ -228,9 +260,9 @@ const memoryKernelPlugin = {
           'high-confidence beliefs to facts, surface conflicts, regenerate all views. ' +
           'Call at end of session or after a merge.',
         parameters: ReflectParams,
-        async execute(_id, _params) {
+        async execute(_id: any, _params: any) {
           try {
-            const result = await reflect({ memoryDir })
+            const result = reflect({ memoryDir, agent_id: agentId, session_id: 'unknown' })
             return ok(
               `reflect complete — expired: ${result.expired}, archived: ${result.archived}, ` +
                 `deduped: ${result.deduped}, promoted: ${result.promoted}, conflicts: ${result.conflicts_found}`,
@@ -254,18 +286,20 @@ const memoryKernelPlugin = {
           'Pre-assembled Markdown context (reflect + recall in one call). ' +
           'Best for session start or handoff — one call instead of separate reflect + recall.',
         parameters: ContextBundleParams,
-        async execute(_id, params) {
+        async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof ContextBundleParams>
-            const result = await checkpoint({
+            const result = checkpoint({
               memoryDir,
+              agent_id: agentId,
+              session_id: 'unknown',
               task: p.task,
               max_tokens: p.max_tokens,
               skipReflect: p.skipReflect,
             })
             return ok(result.markdown, {
-              atomCount: result.atom_count,
-              tokenEstimate: result.token_estimate,
+              atomCount: result.bundle.atoms?.length ?? 0,
+              tokenEstimate: result.bundle.token_estimate,
             })
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
@@ -275,7 +309,110 @@ const memoryKernelPlugin = {
       },
       { name: 'mk_context_bundle' },
     )
+
+    // ── mk_status ──────────────────────────────────────────────────────────
+    api.registerTool(
+      {
+        name: 'mk_status',
+        label: 'Memory Status',
+        description:
+          'Show memory-kernel status: atom counts by type, index health, and embedding count.',
+        parameters: Type.Object({}),
+        async execute(_id: any, _params: any) {
+          try {
+            const atoms = listAtoms(memoryDir)
+            const stats = indexStats(memoryDir)
+            const typeCounts: Record<string, number> = {}
+            for (const a of atoms) {
+              const t = a.frontmatter?.type ?? 'unknown'
+              typeCounts[t] = (typeCounts[t] || 0) + 1
+            }
+            return ok(
+              `**Memory Kernel** (${memoryDir})\n` +
+                `Atoms: ${atoms.length}\n` +
+                `Types: ${JSON.stringify(typeCounts)}\n` +
+                `Index: ${stats ? `${stats.atoms} indexed, ${stats.embeddings} embeddings` : 'no index (run mk_reflect to rebuild)'}`,
+            )
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return ok(`Error: ${msg}`)
+          }
+        },
+      },
+      { name: 'mk_status' },
+    )
+
+    // ── Lifecycle hooks ─────────────────────────────────────────────────────
+
+    // Bootstrap: inject recall context into agent startup
+    api.registerHook(['agent:bootstrap'], async (event: any) => {
+      if (!fs.existsSync(memoryDir)) return
+      try {
+        const bundle = recall(memoryDir, { max_tokens: 4000 })
+        if (!bundle.atoms?.length) return
+        const context = formatBundle(bundle)
+        if (event.context?.bootstrapFiles) {
+          event.context.bootstrapFiles.push({
+            path: 'memory-kernel-context.md',
+            content: context,
+          })
+        }
+      } catch {
+        // fail silent — don't block bootstrap
+      }
+    })
+
+    // Pre-compaction: checkpoint before context loss
+    api.registerHook(['session:compact:before'], async (event: any) => {
+      try {
+        checkpoint({
+          memoryDir,
+          agent_id: agentId,
+          session_id: event.sessionKey || 'unknown',
+          task: 'pre-compaction save',
+        })
+      } catch {
+        // fail silent
+      }
+    })
+
+    // Session end: reflect + write episode
+    api.registerHook(['command:new', 'command:reset'], async (event: any) => {
+      try {
+        reflect({
+          memoryDir,
+          agent_id: agentId,
+          session_id: event.sessionKey || 'unknown',
+        })
+
+        const sessionId = event.context?.sessionEntry?.id
+        if (sessionId) {
+          writeEpisode(memoryDir, sessionId, `Session ended via /${event.action} command`, {
+            agent_id: agentId,
+          })
+        }
+
+        event.messages?.push('mk: reflect complete')
+      } catch {
+        // fail silent
+      }
+    })
   },
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatBundle(bundle: ContextBundle): string {
+  const parts: string[] = ['# Memory Kernel Context']
+  if (bundle.constraints) parts.push(`## Active Constraints\n${bundle.constraints}`)
+  if (bundle.handoff) parts.push(`## Recent Context\n${bundle.handoff}`)
+  if (bundle.atoms?.length) {
+    parts.push(`## Relevant Memories (${bundle.atoms.length})`)
+    for (const a of bundle.atoms) {
+      parts.push(`### ${a.frontmatter.id} (${a.frontmatter.type}, confidence: ${a.frontmatter.confidence})\n${a.body}`)
+    }
+  }
+  return parts.join('\n\n')
 }
 
 export default memoryKernelPlugin

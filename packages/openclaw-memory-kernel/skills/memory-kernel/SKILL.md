@@ -41,3 +41,14 @@ Call at end of session. Expires TTL'd atoms, deduplicates redundant atoms, auto-
 
 **`mk_context_bundle`**
 Call when you want a single pre-assembled Markdown document with current context. Runs reflect + recall in one call. Best for session start when you need a full picture before beginning work.
+
+**`mk_status`**
+Call to check memory health: atom counts by type, index status, embedding count. Use when diagnosing recall issues or verifying memory state.
+
+## Automatic lifecycle behavior
+
+The plugin handles these automatically — you don't need to call them:
+
+- **Bootstrap**: On agent startup, relevant memories are recalled and injected into context.
+- **Pre-compaction**: Before context compaction, a checkpoint is saved so nothing is lost.
+- **Session end**: When `/new` or `/reset` is used, reflect runs automatically and an episode is written.

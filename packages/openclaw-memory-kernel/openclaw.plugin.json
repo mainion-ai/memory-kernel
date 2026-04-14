@@ -1,0 +1,21 @@
+{
+  "id": "memory-kernel",
+  "name": "Memory Kernel",
+  "description": "Structured memory with typed atoms, relations, spreading activation, and event sourcing.",
+  "version": "0.1.0",
+  "kind": "tool",
+  "enabled-by-default": false,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "memoryDir": { "type": "string", "description": "Absolute path to the memory-kernel directory" },
+      "encryptionKey": { "type": "string", "description": "AES-256-GCM key for SECRET atom encryption" },
+      "agentId": { "type": "string", "description": "Agent label written to the audit trail" }
+    },
+    "required": []
+  },
+  "contracts": {
+    "tools": ["mk_remember", "mk_recall", "mk_reflect", "mk_context_bundle", "mk_status"]
+  }
+}
