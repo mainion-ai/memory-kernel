@@ -7,6 +7,28 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [Unreleased]
+
+### Added — OpenClaw plugin
+
+- **`packages/openclaw-memory-kernel`** — native OpenClaw plugin surfacing memory-kernel through structured tools and lifecycle hooks (runs in-process, no MCP subprocess).
+  - Tools: `mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`.
+  - Named lifecycle hooks registered via `api.registerHook(..., { name, description })`:
+    - `mk_bootstrap_recall` (`agent:bootstrap`) — injects recalled atoms into agent bootstrap context.
+    - `mk_precompact_checkpoint` (`session:compact:before`) — writes checkpoint before compaction.
+    - `mk_session_end` (`command:new`, `command:reset`) — runs `reflect()` and writes an episode.
+  - Config fields: `memoryDir`, `encryptionKey`, `agentId`, `embeddingProvider`, `embeddingApiKey`, `embeddingModel`.
+  - Auto-reindex on plugin init when no index exists; failures now logged via `console.warn` instead of silently swallowed.
+  - Embedding integration: when `embeddingProvider` is set, `mk_recall` and the bootstrap hook use `recallWithEmbeddings` (hybrid FTS5 + vector). If `embeddingApiKey` is not provided and provider is `openai`, the plugin falls back to `OPENAI_API_KEY` from the environment.
+  - Bootstrap recall now attributes startup events with `agent_id` and `session_id: "bootstrap"` for audit traceability.
+- Plugin manifest at `packages/openclaw-memory-kernel/openclaw.plugin.json` with `configSchema` covering all six config fields.
+
+### Tests
+
+- 16 integration tests in `test/openclaw-plugin.test.ts` exercising every tool + lifecycle hook against a real temp memory directory, covering: atom creation with frontmatter, scope_tags → scope.tags mapping, recall with results and on empty memory, sync reflect, context bundle, status with atoms and with null index, bootstrap injection and skip-on-empty, checkpoint event creation, session-end reflect + episode write, and init reindex.
+
+---
+
 ## [1.9.0] — 2026-04-09
 
 ### Added

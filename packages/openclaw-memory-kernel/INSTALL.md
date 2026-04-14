@@ -114,7 +114,15 @@ In any OpenClaw session:
 /context detail
 ```
 
-You should see `mk_remember`, `mk_recall`, `mk_reflect`, and `mk_context_bundle` listed under active tools.
+You should see `mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, and `mk_status` listed under active tools.
+
+You can also verify the plugin from the CLI:
+
+```bash
+openclaw plugins inspect memory-kernel
+```
+
+Look for `Status: loaded`, five entries under **Tools**, and three named entries under **Custom hooks** (`mk_bootstrap_recall`, `mk_precompact_checkpoint`, `mk_session_end`).
 
 Run a quick round-trip:
 
@@ -133,6 +141,60 @@ Use mk_recall with task "package manager" — what comes back?
 | `memoryDir` | `$MEMORY_DIR` env | Path to memory directory. Required if env var not set. |
 | `encryptionKey` | — | Key for SECRET atom encryption. Omit to skip encryption. |
 | `agentId` | `"openclaw"` | Label recorded in the audit event log. |
+| `embeddingProvider` | — | Enables semantic recall. Set to `"openai"`. |
+| `embeddingApiKey` | `$OPENAI_API_KEY` fallback | API key for embeddings. Falls back to `OPENAI_API_KEY` when provider is `openai`. |
+| `embeddingModel` | provider default | e.g. `"text-embedding-3-small"`. |
+
+## Enabling semantic recall (optional)
+
+Without embeddings, `mk_recall` uses FTS5 keyword search + type-weighted ranking — good for typed queries, but not fuzzy semantic matches. To enable hybrid FTS5 + vector recall:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memory-kernel": {
+        "enabled": true,
+        "config": {
+          "memoryDir": "/Users/YOU/.openclaw/mk-memory",
+          "embeddingProvider": "openai"
+        }
+      }
+    }
+  }
+}
+```
+
+If `OPENAI_API_KEY` is already available to the gateway process (e.g. exposed via the OpenAI plugin), the memory-kernel plugin reuses it automatically — no need to duplicate the key.
+
+Then backfill embeddings for any existing atoms (one-time):
+
+```bash
+MEMORY_DIR=/Users/YOU/.openclaw/mk-memory \
+EMBEDDING_PROVIDER=openai \
+EMBEDDING_API_KEY="$OPENAI_API_KEY" \
+mk reindex --embed
+```
+
+New atoms created via `mk_remember` after this are embedded automatically.
+
+Verify:
+
+```bash
+mk status -d /Users/YOU/.openclaw/mk-memory
+```
+
+Look for `Embeddings: ✓ (N vectors, model: text-embedding-3-small)`.
+
+## Lifecycle hooks
+
+The plugin registers three named lifecycle hooks automatically — no agent action required:
+
+| Hook | Event | What it does |
+|---|---|---|
+| `mk_bootstrap_recall` | `agent:bootstrap` | Recalls relevant memories and injects them into the agent's bootstrap context |
+| `mk_precompact_checkpoint` | `session:compact:before` | Writes a checkpoint to memory before context compaction |
+| `mk_session_end` | `command:new`, `command:reset` | Runs `reflect()` and writes a session episode when the user starts a new session |
 
 ## Troubleshooting
 
@@ -148,5 +210,11 @@ Use mk_recall with task "package manager" — what comes back?
 - The encryption key is not available. Verify `MEMORY_ENCRYPTION_KEY` is exported in the shell that starts OpenClaw (not just your terminal session)
 
 **`mk_recall` returns nothing**
-- Run `mk_reflect` once to build the SQLite FTS5 index after the first `mk_remember` calls
-- Or run `mk reindex <memoryDir>` from the CLI
+- The plugin auto-reindexes on load if no index is present — check the gateway logs for `memory-kernel: reindex on init failed:` (it will log the underlying error if it couldn't rebuild).
+- Run `mk_reflect` once to rebuild the SQLite FTS5 index, or from the CLI: `mk reindex -d <memoryDir>`.
+- If you expect semantic matches and `mk_status` shows `0 embeddings`, see *Enabling semantic recall* above.
+
+**Semantic recall not working / `0 embeddings`**
+- Verify `embeddingProvider` is set in `openclaw.json` plugin config.
+- Verify the gateway process has either `embeddingApiKey` in config or `OPENAI_API_KEY` in its environment (check `~/Library/LaunchAgents/ai.openclaw.gateway.plist` on macOS).
+- Run `mk reindex --embed -d <memoryDir>` once to backfill embeddings for existing atoms.
