@@ -94,9 +94,9 @@ export function resolveAgentDir(baseDir: string, agentId?: string, config?: Isol
   const cfg = config ?? loadConfig(baseDir);
   if (cfg.isolation === 'shared') return baseDir;
 
-  // Reject agent IDs with path separators to maintain flat agents/ layout
-  if (agentId.includes('/') || agentId.includes('\\')) {
-    throw new Error(`Invalid agent ID (contains path separators): ${agentId}`);
+  // Reject agent IDs with path separators or traversal sequences
+  if (agentId.includes('/') || agentId.includes('\\') || agentId.includes('..') || agentId === '.') {
+    throw new Error(`Invalid agent ID (contains path traversal sequence): ${agentId}`);
   }
 
   const agentDir = path.join(baseDir, 'agents', agentId);

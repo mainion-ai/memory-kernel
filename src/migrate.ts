@@ -94,6 +94,10 @@ function migrateFresh(opts: MigrateOptions): MigrateResult {
 function migratePartition(opts: MigrateOptions): MigrateResult {
   const { baseDir, assignUntagged = 'main' } = opts;
 
+  if (!isValidAgentId(assignUntagged)) {
+    throw new Error(`Invalid assignUntagged agent ID: ${assignUntagged}`);
+  }
+
   // 1. Scan events for distinct agent_ids
   const events = readEvents(baseDir);
   const atomAgentMap = new Map<string, string>();
@@ -136,7 +140,11 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
       const destPath = path.join(agentDir, subDir, path.basename(atom.filePath!));
       writeAtom(atom, destPath);
       // Remove original to prevent stale atoms if isolation config is later removed
-      fs.unlinkSync(atom.filePath!);
+      try {
+        fs.unlinkSync(atom.filePath!);
+      } catch {
+        // Source already removed or inaccessible — destination was written atomically, so proceed
+      }
       atomsMoved++;
     }
 

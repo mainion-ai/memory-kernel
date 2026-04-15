@@ -13,7 +13,7 @@ import path from 'path';
 import { readAtom, writeAtom, listAtomFiles, assertWithinDir } from './store.js';
 import { indexAtom, removeFromIndex, indexExists } from './index-db.js';
 import { appendEvent } from './event-log.js';
-import { getSharedDir, resolveAgentDir, initSharedStore } from './isolation.js';
+import { getSharedDir, resolveAgentDir, initSharedStore, isIsolated } from './isolation.js';
 import type { Atom } from './types.js';
 
 export interface ShareResult {
@@ -43,6 +43,10 @@ export function shareAtom(
   fromAgent: string,
   opts: ShareOptions,
 ): ShareResult {
+  // Share only makes sense in per-agent isolation mode
+  if (!isIsolated(baseDir)) {
+    throw new Error('shareAtom requires per-agent isolation mode');
+  }
   const agentDir = resolveAgentDir(baseDir, fromAgent);
   const sharedDir = getSharedDir(baseDir);
 
@@ -98,6 +102,9 @@ export function unshareAtom(
   atomId: string,
   opts: ShareOptions,
 ): void {
+  if (!isIsolated(baseDir)) {
+    throw new Error('unshareAtom requires per-agent isolation mode');
+  }
   const sharedDir = getSharedDir(baseDir);
 
   if (!fs.existsSync(sharedDir)) {

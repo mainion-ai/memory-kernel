@@ -157,12 +157,27 @@ describe('resolveAgentDir', () => {
 
   it('rejects agent IDs containing forward slash', () => {
     writeConfig(testDir, { isolation: 'per-agent' });
-    expect(() => resolveAgentDir(testDir, 'agent/subdir')).toThrow(/path separators/);
+    expect(() => resolveAgentDir(testDir, 'agent/subdir')).toThrow(/path traversal/);
   });
 
   it('rejects agent IDs containing backslash', () => {
     writeConfig(testDir, { isolation: 'per-agent' });
-    expect(() => resolveAgentDir(testDir, 'agent\\subdir')).toThrow(/path separators/);
+    expect(() => resolveAgentDir(testDir, 'agent\\subdir')).toThrow(/path traversal/);
+  });
+
+  it('rejects agent ID that is exactly ".."', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() => resolveAgentDir(testDir, '..')).toThrow(/path traversal/);
+  });
+
+  it('rejects agent ID containing ".." substring', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() => resolveAgentDir(testDir, 'a..b')).toThrow(/path traversal/);
+  });
+
+  it('rejects agent ID that is "."', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() => resolveAgentDir(testDir, '.')).toThrow(/path traversal/);
   });
 });
 

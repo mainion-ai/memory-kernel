@@ -79,6 +79,9 @@ function err(message: string): ToolResult {
   return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
 }
 
+/** Reusable Zod schema for agent IDs — alphanumeric, dash, underscore only. */
+const agentIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/, 'agent_id must be alphanumeric, dash, or underscore');
+
 // ---------------------------------------------------------------------------
 // Tool handlers (exported for contract tests — no transport needed)
 // ---------------------------------------------------------------------------
@@ -93,7 +96,7 @@ const rememberSchema = {
   classification: z.enum(CLASSIFICATIONS).optional().describe('Visibility classification, default TEAM'),
   scope_paths: z.array(z.string()).optional().describe('Filesystem paths this atom is scoped to'),
   scope_tags: z.array(z.string()).optional().describe('Tags for filtering'),
-  agent_id: z.string().optional().describe('Override agent ID for this operation'),
+  agent_id: agentIdSchema.optional().describe('Override agent ID for this operation'),
   session_id: z.string().optional().describe('Override session ID for this operation'),
 };
 
@@ -166,7 +169,7 @@ const recallSchema = {
   type_weights: z.record(z.string(), z.number()).optional().describe('Per-type score multipliers, e.g. {"constraint": 2.0}'),
   type_reservations: z.record(z.string(), z.number()).optional().describe('Minimum token slots reserved per type, e.g. {"decision": 800}'),
   graph_boost: z.boolean().optional().describe('Enable graph-walk neighbour boost (default: true)'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -233,7 +236,7 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
 // --- reflect ---
 
 const reflectSchema = {
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -260,7 +263,7 @@ export async function handleReflect(ctx: McpContext, input: ReflectInput): Promi
 const mergeSchema = {
   remote_dir: z.string().min(1).describe('Absolute path to remote memory directory'),
   dry_run: z.boolean().optional().describe('Preview without writing, default false'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -295,7 +298,7 @@ export async function handleMerge(ctx: McpContext, input: MergeInput): Promise<T
 // --- gc ---
 
 const gcSchema = {
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -324,7 +327,7 @@ export async function handleGc(ctx: McpContext, input: GcInput): Promise<ToolRes
 // --- list_conflicts ---
 
 const listConflictsSchema = {
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -382,7 +385,7 @@ export async function handleListConflicts(
 const resolveConflictSchema = {
   conflict_atom_id: z.string().min(1).describe('ID of the conflict atom to resolve'),
   resolution_note: z.string().optional().describe('Optional note about how the conflict was resolved'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -430,7 +433,7 @@ const getContextBundleSchema = {
   task: z.string().optional().describe('Task description for scoping and FTS re-ranking'),
   max_tokens: z.number().int().min(0).optional().describe('Token budget, default 4000'),
   skip_reflect: z.boolean().optional().describe('Skip reflect step, default false'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -487,8 +490,8 @@ export async function handleGetContextBundle(
 
 const shareAtomSchema = {
   atom_id: z.string().min(1).describe('ID of the atom to share'),
-  from_agent: z.string().min(1).describe('Agent ID that owns the atom'),
-  agent_id: z.string().optional(),
+  from_agent: agentIdSchema.describe('Agent ID that owns the atom'),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -529,7 +532,7 @@ export async function handleShareAtom(
 
 const unshareAtomSchema = {
   atom_id: z.string().min(1).describe('ID of the atom to remove from shared namespace'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 

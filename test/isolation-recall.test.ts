@@ -13,6 +13,8 @@ import {
   closeAllIndexes,
   openIndex,
   listAtoms,
+  readAtom,
+  writeAtom,
 } from '../src/index.js';
 import { recallIsolated } from '../src/isolation-recall.js';
 import { recall } from '../src/recall.js';
@@ -77,13 +79,16 @@ describe('recallIsolated', () => {
     // Create atom in agent store
     const agentAtom = createAtom({ ...base(hustonDir), type: 'fact', slug: 'overlapping', body: 'Agent version of fact.' });
 
-    // Manually copy to shared with same ID (simulating a share + local update)
-    const sharedAtom = createAtom({ ...base(shared), type: 'fact', slug: 'overlapping', body: 'Shared version of fact.' });
+    // Copy the same atom to shared (same ID) but with different body — simulates share + local update
+    const originalAtom = readAtom(agentAtom.filePath);
+    const sharedCopy = { ...originalAtom, body: 'Shared version of fact.' };
+    const sharedPath = path.join(shared, 'ENTITIES', path.basename(agentAtom.filePath));
+    writeAtom(sharedCopy, sharedPath);
 
-    // Even though both exist, agent's atoms come first in the merged result
+    // Agent version wins on ID collision — only 1 atom returned
     const bundle = recallIsolated(hustonDir, testDir);
-    // Both have different IDs (generated IDs include random suffix), so both should appear
-    expect(bundle.atoms.length).toBe(2);
+    expect(bundle.atoms.length).toBe(1);
+    expect(bundle.atoms[0].body).toContain('Agent version');
   });
 
   it('other agents atoms are invisible', () => {
