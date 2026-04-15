@@ -667,10 +667,17 @@ const memoryKernelPlugin = {
           }
           const context = formatBundle(bundle)
           if (event.context?.bootstrapFiles) {
-            event.context.bootstrapFiles.push({
-              path: 'memory-kernel-context.md',
-              content: context,
-            })
+            // Idempotent replace-or-append: OpenClaw core caches the
+            // bootstrap files array by sessionKey and hands the same
+            // reference to every invocation, so an unconditional push
+            // would accumulate duplicates across runs.
+            const files = event.context.bootstrapFiles
+            const next = { path: 'memory-kernel-context.md', content: context }
+            const idx = files.findIndex(
+              (f: { path?: string }) => f?.path === next.path,
+            )
+            if (idx >= 0) files[idx] = next
+            else files.push(next)
           }
           event.messages?.push(`mk: bootstrap injected ${count} atoms`)
         } catch (err) {

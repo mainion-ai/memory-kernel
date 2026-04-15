@@ -270,6 +270,36 @@ describe('bootstrap hook', () => {
 
     expect(event.context.bootstrapFiles).toHaveLength(0);
   });
+
+  it('is idempotent when the bootstrapFiles array is reused across runs', async () => {
+    // Regression: OpenClaw core caches the bootstrapFiles array by sessionKey
+    // and passes the same reference to every bootstrap hook invocation. The
+    // hook must not accumulate duplicate memory-kernel-context.md entries.
+    const { api, hooks } = createMockApi(testDir);
+    plugin.register(api);
+
+    createAtom({ memoryDir: testDir, ...BASE_OPTS, type: 'constraint', slug: 'no-eval', body: 'Never use eval()' });
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    const sharedFiles: any[] = [{ path: 'CLAUDE.md', content: 'untouched' }];
+    const event = { context: { bootstrapFiles: sharedFiles } };
+
+    await bootstrapHook!.handler(event);
+    await bootstrapHook!.handler(event);
+    await bootstrapHook!.handler(event);
+
+    const mkEntries = sharedFiles.filter(f => f.path === 'memory-kernel-context.md');
+    expect(mkEntries).toHaveLength(1);
+    expect(mkEntries[0].content).toContain('Memory Kernel Context');
+    expect(mkEntries[0].content).toContain('NO-EVAL');
+
+    // Pre-existing unrelated entry is preserved.
+    const claude = sharedFiles.find(f => f.path === 'CLAUDE.md');
+    expect(claude).toBeDefined();
+    expect(claude!.content).toBe('untouched');
+
+    expect(sharedFiles).toHaveLength(2);
+  });
 });
 
 // ── Lifecycle: pre-compaction hook ───────────────────────────────────────────
