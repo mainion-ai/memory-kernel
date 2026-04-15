@@ -1,4 +1,5 @@
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { Type, type Static } from '@sinclair/typebox'
 import {
@@ -21,6 +22,29 @@ interface OpenClawPluginApi {
 
 // ── Config schema ─────────────────────────────────────────────────────────────
 
+// SecretRef input shape. Only `file` source is supported — `env` is redundant
+// (use a plain string), `exec` would add process-spawn surface we don't need.
+//
+// The `id` field is a slash-delimited path through nested plain-object JSON keys.
+// Supported: `/key`, `/a/b/c`. Not supported: array indices, RFC 6901 escape
+// sequences (`~0`, `~1`), or the whole-document pointer (`""`). This is a
+// deliberate subset of RFC 6901 chosen for simplicity.
+//
+// This plugin-local SecretRef mechanism is a short-term workaround: OpenClaw's
+// central `secrets configure` flow does not cover third-party plugin config
+// fields (see https://docs.openclaw.ai/reference/secretref-credential-surface).
+// The long-term fix is an OpenClaw upstream change that adds memory-kernel
+// fields to that hardcoded list; at that point this resolver can be removed.
+type FileSecretRef = {
+  source: 'file'
+  provider: string
+  id: string
+}
+type SecretValue = string | FileSecretRef
+type SecretProviderEntry = { source: 'file'; path: string }
+
+// Resolved config — what register() consumes. `secretProviders` is input-only
+// and is never exposed here; all refs are materialized into strings.
 type PluginConfig = {
   memoryDir: string
   encryptionKey?: string
@@ -30,9 +54,140 @@ type PluginConfig = {
   embeddingModel?: string
 }
 
+function isFileSecretRef(value: unknown): value is FileSecretRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as any).source === 'file' &&
+    typeof (value as any).provider === 'string' &&
+    typeof (value as any).id === 'string'
+  )
+}
+
+function expandHome(p: string): string {
+  return p.startsWith('~') ? path.join(os.homedir(), p.slice(1)) : path.resolve(p)
+}
+
+function resolveFileRef(
+  fieldName: string,
+  ref: FileSecretRef,
+  providers: Record<string, SecretProviderEntry>,
+): string {
+  const provider = providers[ref.provider]
+  if (!provider || provider.source !== 'file' || typeof provider.path !== 'string') {
+    throw new Error(
+      `memory-kernel: ${fieldName} references provider "${ref.provider}" but ` +
+        `secretProviders has no matching { source: "file", path: "..." } entry`,
+    )
+  }
+
+  const absPath = expandHome(provider.path)
+
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(absPath)
+  } catch {
+    throw new Error(`memory-kernel: ${fieldName} — secrets file not found at ${absPath}`)
+  }
+
+  // Warn (not fail) on group/world-readable mode. Fine for containerized or
+  // automation setups that manage perms differently; alert interactive users.
+  const mode = stat.mode & 0o777
+  if ((mode & 0o077) !== 0) {
+    console.warn(
+      `memory-kernel: ${absPath} has mode ${mode.toString(8)} (group/world readable). ` +
+        `Consider 'chmod 600' for secrets files.`,
+    )
+  }
+
+  if (!ref.id.startsWith('/') || ref.id.length < 2) {
+    throw new Error(
+      `memory-kernel: ${fieldName} pointer "${ref.id}" must be a non-empty path starting with "/"`,
+    )
+  }
+  if (ref.id.includes('~')) {
+    throw new Error(
+      `memory-kernel: ${fieldName} pointer "${ref.id}" uses RFC 6901 escapes — ` +
+        `not supported by this plugin; use plain object keys`,
+    )
+  }
+
+  let raw: string
+  try {
+    raw = fs.readFileSync(absPath, 'utf8')
+  } catch (err) {
+    throw new Error(
+      `memory-kernel: ${fieldName} — failed to read ${absPath}: ${(err as Error).message}`,
+    )
+  }
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    throw new Error(`memory-kernel: ${fieldName} — ${absPath} is not valid JSON`)
+  }
+
+  const segments = ref.id.slice(1).split('/')
+  let cursor: unknown = json
+  for (const seg of segments) {
+    if (cursor === null || typeof cursor !== 'object' || Array.isArray(cursor)) {
+      throw new Error(
+        `memory-kernel: ${fieldName} pointer "${ref.id}" — cannot navigate into ` +
+          `non-object at segment "${seg}" (arrays not supported)`,
+      )
+    }
+    const obj = cursor as Record<string, unknown>
+    if (!(seg in obj)) {
+      throw new Error(
+        `memory-kernel: ${fieldName} pointer "${ref.id}" — segment "${seg}" not found`,
+      )
+    }
+    cursor = obj[seg]
+  }
+  if (typeof cursor !== 'string') {
+    throw new Error(
+      `memory-kernel: ${fieldName} pointer "${ref.id}" — resolved value is not a string`,
+    )
+  }
+  return cursor
+}
+
+function parseSecretProviders(raw: unknown): Record<string, SecretProviderEntry> {
+  if (raw == null) return {}
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('memory-kernel: secretProviders must be an object')
+  }
+  const out: Record<string, SecretProviderEntry> = {}
+  for (const [alias, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (
+      typeof entry !== 'object' ||
+      entry === null ||
+      (entry as any).source !== 'file' ||
+      typeof (entry as any).path !== 'string'
+    ) {
+      throw new Error(
+        `memory-kernel: secretProviders["${alias}"] must be { source: "file", path: string }`,
+      )
+    }
+    out[alias] = { source: 'file', path: (entry as any).path }
+  }
+  return out
+}
+
 const pluginConfigSchema = {
   parse(value: unknown): PluginConfig {
     const cfg = (value ?? {}) as Record<string, unknown>
+    const providers = parseSecretProviders(cfg['secretProviders'])
+
+    const resolveIfRef = (fieldName: string, input: unknown): string | undefined => {
+      if (input == null) return undefined
+      if (typeof input === 'string') return input
+      if (isFileSecretRef(input)) return resolveFileRef(fieldName, input, providers)
+      throw new Error(
+        `memory-kernel: ${fieldName} must be a string or a { source, provider, id } SecretRef`,
+      )
+    }
 
     const memoryDir = typeof cfg['memoryDir'] === 'string' ? cfg['memoryDir'] : undefined
     if (!memoryDir && !process.env.MEMORY_DIR) {
@@ -44,12 +199,11 @@ const pluginConfigSchema = {
 
     return {
       memoryDir: path.resolve(memoryDir ?? process.env.MEMORY_DIR!),
-      encryptionKey: typeof cfg['encryptionKey'] === 'string' ? cfg['encryptionKey'] : undefined,
+      encryptionKey: resolveIfRef('encryptionKey', cfg['encryptionKey']),
       agentId: typeof cfg['agentId'] === 'string' ? cfg['agentId'] : undefined,
       embeddingProvider:
         typeof cfg['embeddingProvider'] === 'string' ? cfg['embeddingProvider'] : undefined,
-      embeddingApiKey:
-        typeof cfg['embeddingApiKey'] === 'string' ? cfg['embeddingApiKey'] : undefined,
+      embeddingApiKey: resolveIfRef('embeddingApiKey', cfg['embeddingApiKey']),
       embeddingModel:
         typeof cfg['embeddingModel'] === 'string' ? cfg['embeddingModel'] : undefined,
     }
@@ -59,20 +213,72 @@ const pluginConfigSchema = {
     additionalProperties: false,
     properties: {
       memoryDir: { type: 'string', description: 'Absolute path to the memory-kernel directory' },
-      encryptionKey: { type: 'string', description: 'AES-256-GCM key for SECRET atom encryption' },
+      encryptionKey: {
+        oneOf: [
+          { type: 'string', description: 'AES-256-GCM key for SECRET atom encryption (literal)' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              source: { type: 'string', enum: ['file'] },
+              provider: { type: 'string', minLength: 1 },
+              id: {
+                type: 'string',
+                pattern: '^/.+',
+                description:
+                  'JSON pointer (slash-delimited object keys; arrays and RFC 6901 escapes not supported)',
+              },
+            },
+            required: ['source', 'provider', 'id'],
+          },
+        ],
+        description:
+          'AES-256-GCM key for SECRET atom encryption. Accepts a string or a file SecretRef.',
+      },
       agentId: { type: 'string', description: 'Agent label written to the audit trail' },
       embeddingProvider: {
         type: 'string',
         description: 'Embedding provider (e.g. "openai"). Enables semantic recall.',
       },
       embeddingApiKey: {
-        type: 'string',
+        oneOf: [
+          { type: 'string', description: 'API key for embedding provider (literal)' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              source: { type: 'string', enum: ['file'] },
+              provider: { type: 'string', minLength: 1 },
+              id: {
+                type: 'string',
+                pattern: '^/.+',
+                description:
+                  'JSON pointer (slash-delimited object keys; arrays and RFC 6901 escapes not supported)',
+              },
+            },
+            required: ['source', 'provider', 'id'],
+          },
+        ],
         description:
-          'API key for embedding provider. Falls back to OPENAI_API_KEY env when provider is openai.',
+          'API key for embedding provider. Accepts a string or a file SecretRef. Falls back to OPENAI_API_KEY env when provider is openai and this is unset.',
       },
       embeddingModel: {
         type: 'string',
         description: 'Embedding model ID (e.g. "text-embedding-3-small"). Provider default if omitted.',
+      },
+      secretProviders: {
+        type: 'object',
+        description:
+          'Map of alias → file provider used to resolve SecretRefs for encryptionKey/embeddingApiKey. Plugin-local; does not interact with OpenClaw core SecretRef resolution.',
+        additionalProperties: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            source: { type: 'string', enum: ['file'] },
+            path: { type: 'string', minLength: 1, description: 'Absolute path (or ~-prefixed) to a JSON file' },
+          },
+          required: ['source', 'path'],
+        },
       },
     },
     required: [],
@@ -87,7 +293,9 @@ const pluginConfigSchema = {
       label: 'Encryption key',
       sensitive: true,
       placeholder: '${MEMORY_ENCRYPTION_KEY}',
-      help: '64-char hex key or passphrase for encrypting SECRET atoms. Optional.',
+      help:
+        '64-char hex key or passphrase for encrypting SECRET atoms. Optional. ' +
+        'May also be a file SecretRef like { source: "file", provider: "vault", id: "/memory-kernel-encryption-key" } — see INSTALL.md.',
     },
     agentId: {
       label: 'Agent ID',
@@ -103,7 +311,9 @@ const pluginConfigSchema = {
       label: 'Embedding API key',
       sensitive: true,
       placeholder: '${OPENAI_API_KEY}',
-      help: 'API key for embeddings. Falls back to OPENAI_API_KEY env if provider is openai.',
+      help:
+        'API key for embeddings. Falls back to OPENAI_API_KEY env if provider is openai. ' +
+        'May also be a file SecretRef like { source: "file", provider: "vault", id: "/openai-api-key" } — see INSTALL.md.',
     },
     embeddingModel: {
       label: 'Embedding model',

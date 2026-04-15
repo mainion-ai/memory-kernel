@@ -383,3 +383,124 @@ describe('plugin init', () => {
     expect(stats!.atoms).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ── Plugin-local SecretRef resolution ───────────────────────────────────────
+//
+// The plugin accepts a file-sourced SecretRef for sensitive config fields
+// (encryptionKey, embeddingApiKey). Resolution happens in configSchema.parse()
+// at plugin registration time. See packages/openclaw-memory-kernel/src/index.ts.
+
+describe('plugin configSchema — SecretRef resolution', () => {
+  let vaultFile: string;
+
+  beforeEach(() => {
+    vaultFile = path.join(testDir, 'vault.json');
+  });
+
+  it('accepts string values unchanged (regression guard)', () => {
+    const cfg = plugin.configSchema.parse({
+      memoryDir: testDir,
+      embeddingApiKey: 'sk-literal-value',
+      encryptionKey: 'hex-literal',
+    });
+    expect(cfg.embeddingApiKey).toBe('sk-literal-value');
+    expect(cfg.encryptionKey).toBe('hex-literal');
+  });
+
+  it('resolves a flat-key file SecretRef', () => {
+    fs.writeFileSync(vaultFile, JSON.stringify({ 'openai-key': 'sk-test-val' }), { mode: 0o600 });
+    const cfg = plugin.configSchema.parse({
+      memoryDir: testDir,
+      secretProviders: { vault: { source: 'file', path: vaultFile } },
+      embeddingApiKey: { source: 'file', provider: 'vault', id: '/openai-key' },
+    });
+    expect(cfg.embeddingApiKey).toBe('sk-test-val');
+  });
+
+  it('resolves a nested-object-key file SecretRef', () => {
+    fs.writeFileSync(
+      vaultFile,
+      JSON.stringify({ openai: { 'api-key': 'sk-nested' } }),
+      { mode: 0o600 },
+    );
+    const cfg = plugin.configSchema.parse({
+      memoryDir: testDir,
+      secretProviders: { vault: { source: 'file', path: vaultFile } },
+      embeddingApiKey: { source: 'file', provider: 'vault', id: '/openai/api-key' },
+    });
+    expect(cfg.embeddingApiKey).toBe('sk-nested');
+  });
+
+  it('throws when SecretRef points to an unknown provider alias', () => {
+    fs.writeFileSync(vaultFile, JSON.stringify({ 'k': 'v' }), { mode: 0o600 });
+    expect(() =>
+      plugin.configSchema.parse({
+        memoryDir: testDir,
+        secretProviders: { vault: { source: 'file', path: vaultFile } },
+        embeddingApiKey: { source: 'file', provider: 'other-vault', id: '/k' },
+      }),
+    ).toThrow(/embeddingApiKey.*other-vault.*no matching/);
+  });
+
+  it('throws when SecretRef points to a missing file', () => {
+    const missing = path.join(testDir, 'does-not-exist.json');
+    expect(() =>
+      plugin.configSchema.parse({
+        memoryDir: testDir,
+        secretProviders: { vault: { source: 'file', path: missing } },
+        embeddingApiKey: { source: 'file', provider: 'vault', id: '/k' },
+      }),
+    ).toThrow(/secrets file not found/);
+  });
+
+  it('throws when the JSON pointer does not resolve', () => {
+    fs.writeFileSync(vaultFile, JSON.stringify({ 'k': 'v' }), { mode: 0o600 });
+    expect(() =>
+      plugin.configSchema.parse({
+        memoryDir: testDir,
+        secretProviders: { vault: { source: 'file', path: vaultFile } },
+        embeddingApiKey: { source: 'file', provider: 'vault', id: '/missing' },
+      }),
+    ).toThrow(/segment "missing" not found/);
+  });
+
+  it('rejects pointers that traverse arrays', () => {
+    fs.writeFileSync(vaultFile, JSON.stringify({ items: ['first', 'second'] }), { mode: 0o600 });
+    expect(() =>
+      plugin.configSchema.parse({
+        memoryDir: testDir,
+        secretProviders: { vault: { source: 'file', path: vaultFile } },
+        embeddingApiKey: { source: 'file', provider: 'vault', id: '/items/0' },
+      }),
+    ).toThrow(/arrays not supported/);
+  });
+
+  it('rejects RFC 6901 escape sequences in pointer', () => {
+    fs.writeFileSync(vaultFile, JSON.stringify({ 'k': 'v' }), { mode: 0o600 });
+    expect(() =>
+      plugin.configSchema.parse({
+        memoryDir: testDir,
+        secretProviders: { vault: { source: 'file', path: vaultFile } },
+        embeddingApiKey: { source: 'file', provider: 'vault', id: '/k~0' },
+      }),
+    ).toThrow(/RFC 6901 escapes/);
+  });
+
+  it('warns (not fails) when vault file mode is group/world readable', () => {
+    fs.writeFileSync(vaultFile, JSON.stringify({ 'openai-key': 'sk-loose' }), { mode: 0o644 });
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+    try {
+      const cfg = plugin.configSchema.parse({
+        memoryDir: testDir,
+        secretProviders: { vault: { source: 'file', path: vaultFile } },
+        embeddingApiKey: { source: 'file', provider: 'vault', id: '/openai-key' },
+      });
+      expect(cfg.embeddingApiKey).toBe('sk-loose');
+    } finally {
+      console.warn = originalWarn;
+    }
+    expect(warnings.some((w) => /group\/world readable/.test(w))).toBe(true);
+  });
+});

@@ -9,6 +9,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — OpenClaw plugin (SecretRef support for sensitive config)
+
+- **`embeddingApiKey` and `encryptionKey` now accept file SecretRefs** in addition to plain strings. Users can write `{ "source": "file", "provider": "vault", "id": "/openai-api-key" }` and the plugin resolves it locally at init via a `secretProviders` map. Lets users keep sensitive values out of both `openclaw.json` and `~/.openclaw/.env` (which `openclaw gateway install` otherwise inlines into the launchd/systemd service file).
+- Resolution is plugin-local because OpenClaw's central SecretRef surface (`openclaw secrets configure` / `secrets apply`) is a hardcoded list that doesn't include third-party plugin config fields. Framed as a short-term workaround in `INSTALL.md`; when upstream adds memory-kernel fields to the central surface, the shadow resolver can be removed and users can rewrite refs in OpenClaw's native form.
+- Pointer format is a deliberate subset of RFC 6901: slash-delimited navigation through nested plain-object keys. Array indices and escape sequences (`~0`, `~1`) are explicitly rejected at parse time with clear error messages.
+- File-permission hygiene: the plugin `fs.stat`s the vault file and emits `console.warn` if the mode is group/world readable (non-fatal — documented as hygiene advisory, not blocker).
+- Schema (both `src/index.ts` `jsonSchema` and `openclaw.plugin.json` `configSchema`) updated to use `oneOf: [string, SecretRef]` for the two fields, plus a new top-level `secretProviders` map.
+- 9 new tests in `test/openclaw-plugin.test.ts` covering: string pass-through (regression), flat-key resolution, nested-key resolution, unknown-provider error, missing-file error, pointer-miss error, array-rejection, RFC 6901 escape rejection, loose-mode warning.
+
 ### Added — Docs
 
 - **`docs/host-integration-doctrine.md`** — host-agnostic doctrine guide distilled from the OpenClaw memory-kernel-first transition. Covers the three-layer model (kernel primary / transcript search secondary / files support), `AGENTS.md` + `MEMORY.md` templates, a working compaction-prompt template, retrieval order, what belongs (and what doesn't) in memory-kernel, promotion workflow from files → atoms, and health-check criteria.

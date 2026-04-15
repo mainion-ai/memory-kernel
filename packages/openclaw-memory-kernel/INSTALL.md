@@ -216,6 +216,71 @@ The bootstrap and pre-compaction hooks push one-line status messages to `event.m
 
 The plugin captures the current `sessionKey` from lifecycle events (`agent:bootstrap`, `command:new`, `command:reset`, `session:compact:before`) and threads it into every `mk_remember` / `mk_recall` / `mk_reflect` / `mk_context_bundle` call. Events in `events.ndjson` are attributed to the real session — grep-able for post-mortems instead of showing `session_id: "unknown"`.
 
+## Using SecretRefs for sensitive config (`embeddingApiKey`, `encryptionKey`)
+
+> **Short-term workaround.** OpenClaw's central `secrets configure` / `secrets apply` flow does not cover third-party plugin config fields (see the hardcoded list at [docs.openclaw.ai/reference/secretref-credential-surface](https://docs.openclaw.ai/reference/secretref-credential-surface)). Until upstream adds `plugins.entries.memory-kernel.config.*` to that surface, this plugin resolves SecretRefs locally. When upstream catches up, remove the `secretProviders` block and rewrite the refs in OpenClaw's native form — the plaintext string form will still work.
+
+Use when you want to keep API keys out of `openclaw.json` **and** out of `~/.openclaw/.env` (which `openclaw gateway install` otherwise inlines into the launchd/systemd service file).
+
+### Config shape
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memory-kernel": {
+        "enabled": true,
+        "config": {
+          "memoryDir": "/Users/you/.openclaw/mk-memory",
+          "embeddingProvider": "openai",
+
+          "secretProviders": {
+            "vault": { "source": "file", "path": "~/.openclaw/secrets.json" }
+          },
+
+          "embeddingApiKey": { "source": "file", "provider": "vault", "id": "/openai-api-key" },
+          "encryptionKey":   { "source": "file", "provider": "vault", "id": "/memory-kernel-encryption-key" }
+        }
+      }
+    }
+  }
+}
+```
+
+Example `~/.openclaw/secrets.json`:
+
+```json
+{
+  "openai-api-key": "sk-…",
+  "memory-kernel-encryption-key": "deadbeef…"
+}
+```
+
+Recommended: `chmod 600 ~/.openclaw/secrets.json`. The plugin warns (not fails) if the file is group/world readable.
+
+### Pointer format
+
+The `id` field is a **slash-delimited path through nested plain-object keys**. Examples:
+- `/openai-api-key` — top-level key
+- `/providers/openai/api-key` — nested object keys
+
+Not supported (explicitly rejected at parse time):
+- Array indices: `/items/0`
+- RFC 6901 escape sequences: `~0`, `~1`
+- Whole-document pointer `""`
+
+This is a deliberate subset chosen for simplicity. If your secrets file needs anything beyond nested object keys, flatten to top-level keys with descriptive names (e.g. `openai-api-key` instead of `/providers/openai/key`).
+
+### String values still work
+
+You can always pass a literal string for either field — the SecretRef shape is strictly opt-in:
+
+```json
+"embeddingApiKey": "sk-literal-if-you-prefer"
+```
+
+Plugin-local resolution runs only when the value is an object with `source: "file"`. No behavioral change for existing string configs.
+
 ## Troubleshooting
 
 **Tools don't appear after restart**
