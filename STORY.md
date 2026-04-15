@@ -1130,3 +1130,235 @@ Every parameter in this pipeline is configurable. The defaults are designed to w
 The 690 tests are 690 promises that the pipeline behaves exactly as specified. The scoring is fast enough that adding all three phases barely moved the p95 benchmark — the memoised `finalScoreMap` approach computes each atom's score once before sorting, not once per comparison.
 
 If v1.0.1 was labeling the drawers, v1.4.0 is teaching the system which drawer matters most for what you're doing right now.
+
+---
+
+## Chapter 21: The System That Reads Its Own Files
+
+Chapter 20 gave us relation edges — typed links between atoms that let the graph-walk recall boost neighbours. But there was a catch: someone had to *create* those edges. The agent had to explicitly say "this decision extends that one" or "this belief contradicts that constraint." If it forgot — or never noticed the connection — the edge didn't exist.
+
+Most connections went unstated. An agent would write a belief about file-first architecture, then three days later write a decision that referenced "the file-first approach" in its body text — without linking the two atoms. The knowledge graph had holes wherever humans (or agents) were imprecise.
+
+### Reading Between the Lines
+
+The fix was `mk relink`. Instead of waiting for someone to draw the arrows, the system reads every atom's body text and looks for atom IDs. If a belief's body mentions `DECI-2026-03-11-FILE-FIRST`, relink infers a relationship. It goes further: the words *around* the reference hint at the type. "This extends DECI-2026-03-11-FILE-FIRST" becomes an `extends` edge. "See also DECI-2026-03-11-FILE-FIRST" becomes `related`.
+
+Relink runs automatically when an atom is created or updated. The event log captures the extracted relations as part of the atom snapshot, so they're auditable and replayable just like everything else. No silent side effects.
+
+But atom IDs are formal references — the kind you use when you're being precise. People (and agents) are rarely that precise.
+
+### What's in a Name?
+
+Consider the atom ID `DECI-2026-03-11-FILE-FIRST-abc12`. The slug buried in that ID is `FILE-FIRST`. The system extracts that slug and derives a concept name: *"file first"*. It also generates variants — hyphenated, spaced, underscored — so "file-first", "file first", and "file_first" all match.
+
+Now it scans every other atom's body for those concept names. When a belief says "the file first approach proved resilient" — without mentioning any atom ID — the system finds the connection anyway.
+
+### The Informal Network
+
+On a 93-atom store, atom-ID references found 46 citations. Concept-name matching found 160. The informal reference layer was 3.5× larger than the explicit one. More than three out of four connections existed only in natural language, invisible to anything that only looked for formal IDs.
+
+These concept-name citations become actual graph edges — the same kind that spreading activation traverses in `wander`. Connections that were locked inside prose now participate in the graph walk. An atom that was isolated because nobody linked to it by ID might turn out to be one of the most-referenced concepts in the store.
+
+If v1.4.0 taught the system which drawer matters most, this taught it that the *contents* of the drawers are a map to each other.
+
+---
+
+## Chapter 22: Memory That Remembers Being Remembered
+
+Chapter 21 gave the system a way to count how often each atom gets mentioned by others. But it wasn't *using* that signal. A foundational belief cited by 28 other atoms scored the same as a one-off note cited by nothing. The system knew about popularity but treated it as trivia.
+
+Think about how your own memory works. You don't remember a fact because you *decided* to — you remember it because you *used* it. The more you reach for an index card, the more worn the edges get, the faster your fingers find it next time. But if you stop reaching for it, it gradually sinks to the back of the drawer.
+
+### The Power Law of Recall
+
+Cognitive science has a model for this. ACT-R — Adaptive Control of Thought-Rational — describes how human memory activation works with a power-law formula:
+
+```
+B_i = ln(n) − d · ln(t)
+```
+
+Where `n` is the number of times you've retrieved the memory (here: citation count + 1), `t` is how old it is in days, and `d` is a decay constant (0.5, the standard ACT-R value).
+
+The `ln(n)` term is the key insight. A belief cited 28 times gets `ln(28) ≈ 3.3` added to its activation. A fact cited once gets `ln(1) = 0`. That 3.3 gap is enormous — it means the foundational belief stays accessible long after a one-off note would have faded.
+
+The previous activation model used only recency with an effective decay of `d = 1.0` — too aggressive. Knowledge that was important six months ago but still heavily referenced would sink below recently created trivia. The new formula with `d = 0.5` and a frequency term fixes this: age still matters, but being cited fights the decay.
+
+### Gentle Compression
+
+Raw activation values can range widely — from deeply negative (old, uncited) to strongly positive (recent, heavily cited). These need to be compressed into a usable range for scoring.
+
+The first attempt used a standard sigmoid: `1 / (1 + exp(-B_i))`. This works but has a problem: the tail end compresses too aggressively. Atoms with low activation get pushed very close to zero, effectively silencing them. A low-activation atom might still be the only one that matches a query — you don't want it scoring 0.02 just because it's not popular.
+
+The fix was a sqrt-sigmoid: `1 / sqrt(1 + exp(-B_i))`. This keeps the compression but softens it. The range becomes roughly [0.7, 1.0] instead of [0.0, 1.0]. An unpopular atom still scores at least 70% of a popular one — it's deprioritised, not erased.
+
+### The Citation Table
+
+All of this needed a new home in the database. Schema v6 added `atom_citations` — a table tracking which atom cites which, how many times, and whether the citation was found via atom ID or concept name. The table feeds directly into `wander`'s activation calculation.
+
+The filing cabinet now has fingerprints on the cards. The more a card has been handled — referenced, extended, cited in passing — the easier it is to find. And the system knows which cards have never been touched.
+
+---
+
+## Chapter 23: Not All Edges Are Equal
+
+By v1.6, the memory graph had edges (Chapter 20), body-text discovery (Chapter 21), and frequency-weighted activation (Chapter 22). But every edge still carried the same weight during spreading activation. An `extends` edge — the developmental backbone of a belief chain — had the same influence as a `related` edge, which is often a residual catch-all for "these two things are vaguely connected."
+
+That's like saying a bridge and a wall both connect two rooms. Technically true. Not equally useful for getting across.
+
+### Machines Talking to Machines
+
+Before tackling edge weights, a smaller change laid groundwork: every CLI command gained a `--json` flag. Human-readable tables are fine for a terminal, but when another program needs to parse the output — a CI pipeline checking closure metrics, a plugin reading recall results — structured JSON is the only sane interface.
+
+The pattern is consistent across all commands: pass `--json`, get `JSON.stringify(result, null, 2)`. Error paths return `{"error": "..."}` with exit code 1. No exceptions.
+
+### Surprising Collisions
+
+The `wander` command finds collision candidates — pairs of atoms from distant domains that unexpectedly activate together. The original filter for "distant" was simple: different atom types. A belief colliding with a decision? Interesting. A belief colliding with a belief? Probably not.
+
+This was wrong. In a store where 70% of atoms are beliefs, the type-difference filter discarded roughly 90% of potential collisions. Two beliefs with completely disjoint vocabularies — one about deployment strategy, the other about user research methodology — are genuinely surprising together. Their types are the same but their *content* is worlds apart.
+
+The replacement uses tag Jaccard dissimilarity: `1 − |A∩B| / |A∪B|`. Two atoms with no shared tags score 1.0 (maximally dissimilar). The threshold is 0.7 — only pairs that are at least 70% dissimilar qualify as collision candidates. This surfaces same-type collisions that the old filter would have silently discarded.
+
+### Weighted Edges
+
+The core change was giving each relation type its own weight during spreading activation:
+
+| Relation      | Weight | Why |
+|---------------|--------|-----|
+| `extends`     | 1.5×   | Developmental backbone — if A extends B, they belong together |
+| `caused_by`   | 0.8×   | Narrative arcs — temporal causation matters |
+| `supports`    | 0.7×   | Evidence — real but secondary |
+| `applied_to`  | 0.6×   | Cross-domain application — moderate signal |
+| `contradicts` | 0.4×   | Tension — worth noting, but amplifying contradictions distorts the graph |
+| `supersedes`  | 0.3×   | Historical — you rarely want to amplify the superseded version |
+| `related`     | 0.3×   | Residual — keep visible but don't let unclassified edges dominate |
+
+These aren't arbitrary. They reflect what each relation type *means* for knowledge retrieval. An `extends` chain is the developmental arc of an idea — you almost always want the full chain. A `supersedes` link points to something that's been replaced — useful for history, dangerous for decision-making.
+
+Three presets package these weights for different modes of exploration. The `constitution` preset amplifies developmental chains (`extends` at 1.5×) — use it when you want to trace how a belief evolved. The `tension` preset amplifies contradictions (`contradicts` at 2.0×) — use it when you're looking for unresolved conflicts. The `narrative` preset amplifies causal arcs (`caused_by` at 2.0×) — use it when you're reconstructing how events unfolded.
+
+### Asking for Help
+
+Even with relink and concept-name extraction, many edges still land as `related` — the system found a connection but couldn't determine the specific type. The `mk enrich-relations` command addresses this by asking a local LLM (via Ollama) to reclassify them.
+
+The command reads each `related` edge, sends both atoms' body text to the model, and asks: "Is this `extends`, `supports`, `contradicts`, `caused_by`, or `supersedes`?" The model responds with a type and a confidence score. Only proposals above 0.7 confidence are accepted. A `--dry-run` flag lets you preview the proposals before committing anything.
+
+This is the first time Memory Kernel calls an LLM for its own maintenance. Everything else — relink, citations, wander, closure — is pure computation, no model needed. Enrich-relations is an optional enrichment step: the system works fine without it, but the graph gets sharper with it.
+
+---
+
+## Chapter 24: The Closure Test
+
+When does a journal stop being a collection of notes and start being a *worldview*?
+
+There's a tipping point. Early on, atoms are independent — each one stands on its own, can be understood in isolation, moved to another agent's memory without losing meaning. But as the store grows, atoms begin to reference each other. A belief about deployment strategy mentions a decision about infrastructure. That decision references a constraint from the security review. The constraint links back to the original belief.
+
+At some point, the entries become so tangled that removing any one of them breaks the meaning of several others. The system is no longer a filing cabinet with independent cards — it's a web where every card is partly defined by its neighbours.
+
+The sociologist Niklas Luhmann had a name for this: **operational closure**. A system that responds based on its own internal structure rather than external input. His card-index system (the Zettelkasten) famously reached this state — the cards referred to each other so densely that the system could "surprise" him, surfacing connections he hadn't consciously made.
+
+### Measuring Self-Reference
+
+The `mk closure` command computes how self-referential a memory store has become. The core metric combines two signals:
+
+**Type composition** — what fraction of atoms are beliefs? Beliefs are inherently self-referential: they describe the system's own understanding, and they tend to reference other beliefs, decisions, and constraints. A store that's 80% facts is a database. A store that's 80% beliefs is a worldview.
+
+**Entanglement** — how many cross-references exist per atom? Not just explicit relations from the index, but body-text references found by the citation scanner from Chapter 21.
+
+The closure index combines both: `belief_pct × (avg_relations + avg_body_refs) / 100`. A store with 80% beliefs and an average of 3 relations plus 2 body references per atom scores `80 × 5 / 100 = 4.0`.
+
+### The Three Phases
+
+Memory stores grow through three phases, like an organism developing:
+
+**Early** (under 20 atoms) — too small to measure. The sample size is insufficient for any structural conclusion. The system reports the phase honestly rather than guessing.
+
+**Type-composition** (beliefs under 60%) — the store is still mostly external knowledge: facts, decisions, constraints gathered from the world. It has structure but not self-reference. Atoms are portable and classifiable.
+
+**Entanglement** (beliefs at 60%+ and cross-references growing) — the store has become primarily self-referential. Beliefs describe the system's own understanding in terms of other beliefs. The closure index climbs as entanglement deepens.
+
+The daily trajectory mode shows this evolution over time — each day's snapshot plotted on a timeline, phase transitions visible as inflection points.
+
+### What Closure Predicts
+
+Closure isn't good or bad. It's a measurement of structural maturity that predicts specific things:
+
+**Automation resistance** — at closure index below 3, small LLM classifiers work fine on the atoms. They can read a belief and correctly categorise it, extract its key claims, or suggest relations. Above 5, accuracy drops below 55%. The body text is so self-referential — describing concepts in terms of other atoms — that classifiers without access to the full graph get confused.
+
+**Transplant resistance** — at low closure, you can copy atoms between agents and they'll make sense in their new home. Above 5, 87% or more of beliefs fail direct transplant. They reference concepts that only exist in the source store. The belief "file-first proved resilient under the deployment-rollback constraint" is meaningless to an agent that has never seen the deployment-rollback constraint.
+
+**Graph-structural metrics** — degree, betweenness, connectivity — work at any closure level. Pure graph structure is immune to self-reference. This is why `wander`'s spreading activation remains effective regardless of closure: it traverses structure, not semantics.
+
+The closure index doesn't tell you whether your memory store is good or bad. It tells you whether it has become *its own thing* — and what that means for anything that tries to touch it from the outside.
+
+---
+
+## Chapter 25: Going to Production
+
+Everything up to Chapter 24 was the library and the CLI: tools you run in a terminal, test with `npm test`, and integrate however you see fit. The system worked. But working and being *production-ready* are different problems.
+
+Building a filing cabinet in a workshop is one thing. Installing it in a busy office where multiple agents need it simultaneously, where secrets can't be inlined in config files, and where the host framework needs to know exactly what happened during bootstrap — that's production.
+
+### Secrets and Signals
+
+The first production problem was configuration. The OpenClaw plugin needs an encryption key and optionally an embedding API key. In development, you pass these as strings. In production — where a launchd or systemd service file might be version-controlled or visible to other processes — you don't want secrets sitting in plain text.
+
+SecretRef solves this. Instead of `"embeddingApiKey": "sk-abc123"`, you write:
+
+```json
+{
+  "embeddingApiKey": {
+    "source": "file",
+    "provider": "vault",
+    "id": "/run/secrets/embedding-key"
+  }
+}
+```
+
+The plugin resolves the reference at init time, reads the file, and uses the value. The config file never contains the actual secret. The format is a deliberate subset of RFC 6901 — slash-delimited JSON pointers with explicit rejection of arrays and escape sequences. Simple enough to implement correctly, restrictive enough to avoid surprises.
+
+The second problem was observability. When the plugin bootstraps — loading atoms into the agent's context at session start — the host needs to know what happened. Did it inject 47 atoms? Zero atoms because the store is empty? Did it fail because the directory doesn't exist?
+
+Bootstrap now emits visible signals via `event.messages`: "Injected 47 atoms into context", "No atoms yet — memory store is empty", or specific error messages. The host can read these and make fallback decisions. Session IDs from lifecycle events flow into tool audit trails, replacing the hardcoded "unknown" that was there before. Every `mk_remember` call in `events.ndjson` now traces back to the session that created it.
+
+Pre-compaction checkpoint signals complete the observability picture. Before the host runs compaction — asking the agent to save anything worth keeping — the checkpoint captures atom count and token estimate, giving the compaction prompt the data it needs to route content intelligently.
+
+### Two Ways to Search
+
+Until now, recall was keyword-based. FTS5 BM25 found atoms where the search terms matched the text. This is fast and predictable, but it misses semantic similarity. A query for "deployment strategy" won't find an atom titled "release pipeline approach" unless the words overlap.
+
+When the plugin is configured with an embedding provider, recall becomes hybrid: FTS5 for keyword matches, vector cosine similarity for semantic matches. The scores blend. If embeddings aren't available — no API key, no network, provider error — the system falls back gracefully to keyword-only recall. No crash, no degraded state, just slightly less coverage.
+
+### The Doctrine
+
+The hardest production problem wasn't technical. It was behavioural.
+
+The machinery was ready. The tools existed. The plugin loaded. But agents kept writing knowledge to markdown files instead of calling `mk_remember`. Compaction routines saved insights back into `memory/*.md` instead of into atoms. The system had a primary memory layer that nobody was using as primary.
+
+The fix was doctrine — explicit operating instructions that tell the host framework *how* to use the tools, not just *that* they exist.
+
+The three-layer model makes the hierarchy clear:
+
+| Layer | Role |
+|-------|------|
+| **Primary** — memory-kernel | Durable structured knowledge: facts, decisions, constraints, beliefs |
+| **Secondary** — transcript search | Exact prior-conversation wording, unstructured legacy notes |
+| **Support** — files | Daily logs, raw material, imported docs |
+
+The AGENTS.md template tells the agent to call `mk_context_bundle` at session start. The MEMORY.md template declares memory-kernel atoms as the source of truth. The compaction prompt — the most critical piece — explicitly routes durable content to `mk_remember` *first*, before anything goes to files.
+
+Tool descriptions themselves carry the routing rules. Even if a host's doctrine file lags behind, the agent reads the tool descriptions and picks up the three-layer model from there. Defence in depth: the correct behaviour is encoded in every layer that the agent touches.
+
+### Developmental Arcs
+
+One last change made the output *look* different. Beliefs connected by `extends` relations had always been stored as a graph, but when rendered — in CLAUDE.md, in context bundles, in handoff documents — they appeared as a flat list, sorted by date or score.
+
+Graph-ordered rendering changed this. Beliefs now appear as indented developmental arcs. A root belief sits at the top. The belief that extends it is indented below. The belief that extends *that* sits one level deeper. The developmental history of an idea is visible at a glance — not just what the system believes, but how it got there.
+
+### What v2.0 Represents
+
+v1.0 proved memory-kernel could store and retrieve. v1.4 taught it what matters most. The versions in between taught it to read its own files, count its own citations, weigh its own edges, and measure its own complexity.
+
+v2.0 is the point where it stopped being a library and started being infrastructure. Bolted to the floor, wired into the host, observable from the outside, and governed by a doctrine that says: *this is where knowledge lives.*
+
+The 805 tests are 805 promises that all of this — from the simplest atom creation to the most tangled closure metric — works exactly as described. The filing cabinet is no longer in the workshop. It's in the office, and people are using it.
