@@ -5,10 +5,11 @@
  * The OpenClaw API object is mocked since we can't run the gateway in tests.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 import {
   initMemoryDir,
   createAtom,
@@ -488,9 +489,7 @@ describe('plugin configSchema — SecretRef resolution', () => {
 
   it('warns (not fails) when vault file mode is group/world readable', () => {
     fs.writeFileSync(vaultFile, JSON.stringify({ 'openai-key': 'sk-loose' }), { mode: 0o644 });
-    const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const cfg = plugin.configSchema.parse({
         memoryDir: testDir,
@@ -498,9 +497,16 @@ describe('plugin configSchema — SecretRef resolution', () => {
         embeddingApiKey: { source: 'file', provider: 'vault', id: '/openai-key' },
       });
       expect(cfg.embeddingApiKey).toBe('sk-loose');
+      expect(spy).toHaveBeenCalledWith(expect.stringMatching(/group\/world readable/));
     } finally {
-      console.warn = originalWarn;
+      spy.mockRestore();
     }
-    expect(warnings.some((w) => /group\/world readable/.test(w))).toBe(true);
+  });
+
+  it('jsonSchema matches openclaw.plugin.json configSchema', () => {
+    const thisDir = path.dirname(fileURLToPath(import.meta.url));
+    const manifestPath = path.join(thisDir, '..', 'packages', 'openclaw-memory-kernel', 'openclaw.plugin.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    expect(plugin.configSchema.jsonSchema).toEqual(manifest.configSchema);
   });
 });

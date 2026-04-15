@@ -82,8 +82,14 @@ function resolveFileRef(
     )
   }
 
+  // assertWithinDir() is intentionally NOT applied here: secrets files
+  // legitimately live anywhere on the filesystem (e.g. ~/.openclaw/secrets.json),
+  // not just inside memoryDir. The path comes from the local openclaw.json config
+  // file which already has the same trust level as filesystem access.
   const absPath = expandHome(provider.path)
 
+  // TOCTOU note: stat() and readFileSync() are not atomic. The permission
+  // check is advisory (warn-not-fail) — do not treat it as a security gate.
   let stat: fs.Stats
   try {
     stat = fs.statSync(absPath)
@@ -153,6 +159,9 @@ function resolveFileRef(
   return cursor
 }
 
+// Validates all provider entries eagerly at init, even if no SecretRef field
+// references them. This is intentional: catch config typos at plugin registration
+// time rather than silently ignoring malformed entries until first use.
 function parseSecretProviders(raw: unknown): Record<string, SecretProviderEntry> {
   if (raw == null) return {}
   if (typeof raw !== 'object' || Array.isArray(raw)) {
