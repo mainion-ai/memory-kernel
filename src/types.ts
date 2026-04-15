@@ -274,11 +274,3 @@ export interface RenderConfig {
   type_weights: Partial<Record<AtomType, number>>;
 }
 
-export interface AgentStatus {
-  agent_id: string;
-  atom_count: number;
-  shared_visible: number;
-  index_healthy: boolean;
-  render_config: RenderConfig;
-  last_event_at?: string;
-}

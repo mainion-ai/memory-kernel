@@ -26,8 +26,9 @@ export function resolveSessionId(ctx: McpContext, override?: string): string {
 /**
  * Resolve the effective memory directory for a tool call.
  * In shared mode, returns ctx.memoryDir. In isolated mode, routes to agent subdir.
+ * Passes a pre-built config to avoid redundant disk reads on the MCP hot path.
  */
 export function resolveMemoryDir(ctx: McpContext, agentId: string): string {
   if (!ctx.isolated) return ctx.memoryDir;
-  return resolveAgentDir(ctx.memoryDir, agentId);
+  return resolveAgentDir(ctx.memoryDir, agentId, { isolation: 'per-agent' });
 }

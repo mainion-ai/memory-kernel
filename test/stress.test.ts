@@ -35,7 +35,12 @@ import {
   readEpisode,
   listEpisodes,
   linkEpisodeToAtom,
+  writeConfig,
+  resolveAgentDir,
+  initAgentStore,
+  initSharedStore,
 } from '../src/index.js';
+import { shareAtom } from '../src/share.js';
 import type { MemoryEvent } from '../src/index.js';
 
 const AGENT = 'stress-agent';
@@ -127,6 +132,34 @@ describe('path traversal', () => {
     } finally {
       fs.rmSync(outDir, { recursive: true, force: true });
     }
+  });
+
+  it('resolveAgentDir with traversal agentId throws', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() =>
+      resolveAgentDir(testDir, '../../etc'),
+    ).toThrow(/traversal|outside/i);
+  });
+
+  it('resolveAgentDir with nested traversal agentId throws', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() =>
+      resolveAgentDir(testDir, '../../etc/passwd'),
+    ).toThrow(/traversal|outside/i);
+  });
+
+  it('initAgentStore with traversal agentId throws', () => {
+    expect(() =>
+      initAgentStore(testDir, '../../etc'),
+    ).toThrow(/traversal|outside/i);
+  });
+
+  it('shareAtom with traversal fromAgent throws', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    initSharedStore(testDir);
+    expect(() =>
+      shareAtom(testDir, 'FACT-some-id', '../../etc', { agent_id: 'a', session_id: 's' }),
+    ).toThrow(/traversal|outside/i);
   });
 });
 

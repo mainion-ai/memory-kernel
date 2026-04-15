@@ -241,7 +241,6 @@ export type {
   IsolationConfig,
   RenderConfig,
   RenderMode,
-  AgentStatus,
 } from './types.js';
 
 // Migration (shared → isolated)

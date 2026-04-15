@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-import { initMemoryDir } from './store.js';
+import { initMemoryDir, assertWithinDir } from './store.js';
 import type { IsolationConfig, RenderConfig } from './types.js';
 
 /** Default isolation config (shared mode, backward compatible). */
@@ -85,14 +85,18 @@ export function isIsolated(baseDir: string): boolean {
  *
  * - Shared mode (or no agentId): returns baseDir unchanged.
  * - Isolated mode: returns `baseDir/agents/{agentId}/`.
+ *
+ * @param config - Optional pre-loaded config to avoid redundant disk reads on hot paths.
  */
-export function resolveAgentDir(baseDir: string, agentId?: string): string {
+export function resolveAgentDir(baseDir: string, agentId?: string, config?: IsolationConfig): string {
   if (!agentId) return baseDir;
 
-  const config = loadConfig(baseDir);
-  if (config.isolation === 'shared') return baseDir;
+  const cfg = config ?? loadConfig(baseDir);
+  if (cfg.isolation === 'shared') return baseDir;
 
-  return path.join(baseDir, 'agents', agentId);
+  const agentDir = path.join(baseDir, 'agents', agentId);
+  assertWithinDir(baseDir, agentDir);
+  return agentDir;
 }
 
 /**
@@ -127,6 +131,7 @@ export function listAgents(baseDir: string): string[] {
  */
 export function initAgentStore(baseDir: string, agentId: string): string {
   const agentDir = path.join(baseDir, 'agents', agentId);
+  assertWithinDir(baseDir, agentDir);
   initMemoryDir(agentDir);
   // Write default render.yaml if it doesn't exist
   const renderPath = path.join(agentDir, 'render.yaml');
