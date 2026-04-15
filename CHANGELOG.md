@@ -9,6 +9,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — OpenClaw plugin (Tier-1 memory-kernel-first polish)
+
+- **Tool descriptions now encode the routing doctrine.** `mk_remember`, `mk_recall`, and `mk_context_bundle` describe themselves as the primary durable-memory surface, with `memory_search` positioned as secondary (transcript / legacy recall) and `memory/*.md` as the support layer (daily logs, raw notes, imports). Agents pick up the routing rule through the tool list even if the host doctrine lags.
+- **Bootstrap hook now emits observable signals.** The `agent:bootstrap` handler pushes one of `mk: bootstrap injected N atoms` / `mk: bootstrap — no atoms yet` / `mk: bootstrap failed — <err>` / `mk: no memory dir — file-first fallback` via `event.messages` instead of silently no-opping. Lets host doctrine fall back reliably when recall is unavailable.
+- **Pre-compaction hook reports checkpoint summary.** The `session:compact:before` handler now captures `checkpoint()` output and pushes `mk: pre-compact checkpoint saved (N atoms, ~T tokens)` via `event.messages` — gives host compaction prompts a signal to route scratch-vs-durable content instead of re-dumping.
+- **Session id now flows from lifecycle events into tool audit trail.** An internal `currentSessionId` tracker is updated by `agent:bootstrap`, `command:new`, `command:reset`, and `session:compact:before` hooks. `mk_remember`, `mk_recall`, `mk_reflect`, and `mk_context_bundle` use it instead of the previous hardcoded `'unknown'`, restoring meaningful audit trails in `events.ndjson`.
+
 ### Added — OpenClaw plugin
 
 - **`packages/openclaw-memory-kernel`** — native OpenClaw plugin surfacing memory-kernel through structured tools and lifecycle hooks (runs in-process, no MCP subprocess).

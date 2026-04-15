@@ -192,9 +192,27 @@ The plugin registers three named lifecycle hooks automatically — no agent acti
 
 | Hook | Event | What it does |
 |---|---|---|
-| `mk_bootstrap_recall` | `agent:bootstrap` | Recalls relevant memories and injects them into the agent's bootstrap context |
-| `mk_precompact_checkpoint` | `session:compact:before` | Writes a checkpoint to memory before context compaction |
+| `mk_bootstrap_recall` | `agent:bootstrap` | Recalls relevant memories and injects them into the agent's bootstrap context; pushes a status signal via `event.messages` (see below) |
+| `mk_precompact_checkpoint` | `session:compact:before` | Writes a checkpoint to memory before context compaction; pushes a summary via `event.messages` |
 | `mk_session_end` | `command:new`, `command:reset` | Runs `reflect()` and writes a session episode when the user starts a new session |
+
+## Observability signals
+
+The bootstrap and pre-compaction hooks push one-line status messages to `event.messages` so host doctrine (your `AGENTS.md`, compaction prompt, etc.) can key off them instead of guessing:
+
+| Signal | Emitted by | Meaning |
+|---|---|---|
+| `mk: bootstrap injected N atoms` | `agent:bootstrap` | Kernel recall succeeded and N atoms were added to the agent's bootstrap context |
+| `mk: bootstrap — no atoms yet` | `agent:bootstrap` | Kernel is empty; agent should proceed without the kernel layer this session |
+| `mk: bootstrap failed — <err>` | `agent:bootstrap` | Recall threw; host should fall back to `memory_search` / file layer |
+| `mk: no memory dir — file-first fallback` | `agent:bootstrap` | Configured `memoryDir` doesn't exist; kernel unavailable |
+| `mk: pre-compact checkpoint saved (N atoms, ~T tokens)` | `session:compact:before` | Durable content already captured; compaction prompt can route scratch-only content to files |
+| `mk: pre-compact checkpoint failed — <err>` | `session:compact:before` | Checkpoint threw; compaction should treat the kernel layer as stale |
+| `mk: reflect complete` | `command:new`, `command:reset` | Session-end reflect finished (pre-existing) |
+
+## Audit-trail `session_id`
+
+The plugin captures the current `sessionKey` from lifecycle events (`agent:bootstrap`, `command:new`, `command:reset`, `session:compact:before`) and threads it into every `mk_remember` / `mk_recall` / `mk_reflect` / `mk_context_bundle` call. Events in `events.ndjson` are attributed to the real session — grep-able for post-mortems instead of showing `session_id: "unknown"`.
 
 ## Troubleshooting
 
