@@ -127,6 +127,35 @@ describe('recallIsolated', () => {
     expect(bundle.token_estimate).toBeLessThanOrEqual(2000 + 200); // some tolerance
   });
 
+  it('shared atoms are not truncated by sub-recall budget', () => {
+    const hustonDir = agentDir('huston');
+    const shared = sharedDir();
+    openIndex(hustonDir);
+    openIndex(shared);
+
+    // Create agent atoms that would fill a moderate budget
+    for (let i = 0; i < 5; i++) {
+      createAtom({ ...base(hustonDir), type: 'fact', slug: `agent-fact-${i}`, body: `Agent fact ${i}: ${'x'.repeat(200)}` });
+    }
+    // Create shared atoms
+    for (let i = 0; i < 5; i++) {
+      createAtom({ ...base(shared), type: 'fact', slug: `shared-fact-${i}`, body: `Shared fact ${i}: ${'x'.repeat(200)}` });
+    }
+
+    // Use a budget large enough for all 10 atoms — before the fix, the inner
+    // recall() would apply max_tokens and potentially truncate shared atoms
+    // before merging. Now both sub-calls return unbounded results and the
+    // budget is applied once on the merged set.
+    const bundle = recallIsolated(hustonDir, testDir, { max_tokens: 8000 });
+
+    const agentCount = bundle.atoms.filter((a) => a.body.includes('Agent fact')).length;
+    const sharedCount = bundle.atoms.filter((a) => a.body.includes('Shared fact')).length;
+
+    // All atoms from both stores should be present within the generous budget
+    expect(agentCount).toBe(5);
+    expect(sharedCount).toBe(5);
+  });
+
   it('handles missing shared directory gracefully', () => {
     const hustonDir = agentDir('huston');
     openIndex(hustonDir);

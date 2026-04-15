@@ -34,8 +34,13 @@ export function recallIsolated(
   baseDir: string,
   query: RecallQuery = {},
 ): ContextBundle {
+  // Strip max_tokens from sub-queries so each recall() returns all matching atoms.
+  // The token budget is applied once at the merge step below to ensure shared atoms
+  // aren't starved when agent atoms alone would fill the budget.
+  const unboundedQuery = { ...query, max_tokens: undefined };
+
   // Primary: agent's own store
-  const agentBundle = recall(agentDir, query);
+  const agentBundle = recall(agentDir, unboundedQuery);
 
   // Secondary: shared namespace (if it exists and has atoms)
   const sharedDir = getSharedDir(baseDir);
@@ -45,28 +50,26 @@ export function recallIsolated(
     try {
       const sharedAtomFiles = listAtomFiles(sharedDir);
       if (sharedAtomFiles.length > 0) {
-        sharedBundle = recall(sharedDir, query);
+        sharedBundle = recall(sharedDir, unboundedQuery);
       }
     } catch {
       // Shared store not initialized or corrupted — skip silently
     }
   }
 
-  if (!sharedBundle || sharedBundle.atoms.length === 0) {
-    return agentBundle;
-  }
-
   // Merge: agent atoms win on ID collision
-  const agentIds = new Set(agentBundle.atoms.map((a) => a.frontmatter.id));
   const mergedAtoms: Atom[] = [...agentBundle.atoms];
 
-  for (const atom of sharedBundle.atoms) {
-    if (!agentIds.has(atom.frontmatter.id)) {
-      mergedAtoms.push(atom);
+  if (sharedBundle && sharedBundle.atoms.length > 0) {
+    const agentIds = new Set(agentBundle.atoms.map((a) => a.frontmatter.id));
+    for (const atom of sharedBundle.atoms) {
+      if (!agentIds.has(atom.frontmatter.id)) {
+        mergedAtoms.push(atom);
+      }
     }
   }
 
-  // Re-apply token budget on merged set
+  // Apply token budget on merged set (single budget application point)
   const maxTokens = query.max_tokens ?? 8000;
   let tokenCount = 0;
   const budgetedAtoms: Atom[] = [];
@@ -81,7 +84,7 @@ export function recallIsolated(
   // Merge episodes
   const episodes = [
     ...(agentBundle.episodes ?? []),
-    ...(sharedBundle.episodes ?? []),
+    ...((sharedBundle?.episodes) ?? []),
   ];
 
   // Use agent's views (primary), not shared's

@@ -1106,6 +1106,9 @@ program
     if (!fs.existsSync(baseDir)) {
       exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
     }
+    if (!isIsolated(baseDir)) {
+      exitWithError('share requires per-agent isolation mode (set isolation: per-agent in config.yaml)', opts.json);
+    }
 
     try {
       const result = shareAtom(baseDir, atomId, opts.from, {
@@ -1139,6 +1142,9 @@ program
     const baseDir = path.resolve(opts.dir);
     if (!fs.existsSync(baseDir)) {
       exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
+    }
+    if (!isIsolated(baseDir)) {
+      exitWithError('unshare requires per-agent isolation mode (set isolation: per-agent in config.yaml)', opts.json);
     }
 
     try {

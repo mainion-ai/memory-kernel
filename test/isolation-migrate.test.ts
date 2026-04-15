@@ -189,6 +189,112 @@ describe('migrate — clone-to-shared strategy', () => {
   });
 });
 
+describe('migrate — partition removes originals', () => {
+  it('deletes original atom files from baseDir after copying to agent dirs', () => {
+    createAtom({
+      memoryDir: testDir,
+      agent_id: 'alice',
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'alice-fact',
+      body: 'Alice fact for cleanup test.',
+    });
+
+    // Verify atom exists in baseDir before migration
+    const before = listAtoms(testDir);
+    expect(before.length).toBe(1);
+
+    closeAllIndexes();
+    migrate({
+      baseDir: testDir,
+      strategy: 'partition',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    // Original atom file should be gone from baseDir/ENTITIES/
+    const remaining = fs.readdirSync(path.join(testDir, 'ENTITIES'));
+    expect(remaining.length).toBe(0);
+
+    // But the atom should exist in the agent dir
+    closeAllIndexes();
+    const aliceDir = path.join(testDir, 'agents', 'alice');
+    openIndex(aliceDir);
+    const aliceAtoms = listAtoms(aliceDir);
+    expect(aliceAtoms.length).toBe(1);
+    expect(aliceAtoms[0]!.body).toContain('Alice fact for cleanup');
+  });
+});
+
+describe('migrate — clone-to-shared removes originals', () => {
+  it('deletes original atom files from baseDir after copying to shared', () => {
+    createAtom({
+      memoryDir: testDir,
+      agent_id: AGENT,
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'cleanup-fact',
+      body: 'Fact for cleanup test.',
+    });
+
+    // Verify atom exists in baseDir before migration
+    const before = listAtoms(testDir);
+    expect(before.length).toBe(1);
+
+    closeAllIndexes();
+    migrate({
+      baseDir: testDir,
+      strategy: 'clone-to-shared',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    // Original atom file should be gone from baseDir/ENTITIES/
+    const remaining = fs.readdirSync(path.join(testDir, 'ENTITIES'));
+    expect(remaining.length).toBe(0);
+
+    // But the atom should exist in shared
+    closeAllIndexes();
+    const sharedDir = path.join(testDir, 'shared');
+    openIndex(sharedDir);
+    const sharedAtoms = listAtoms(sharedDir);
+    expect(sharedAtoms.length).toBe(1);
+    expect(sharedAtoms[0]!.body).toContain('Fact for cleanup');
+  });
+});
+
+describe('migrate — partition validates agent_id format', () => {
+  it('falls back to assignUntagged for agent_ids with path separators', () => {
+    // We need to create an atom and then manually write an event with a bad agent_id
+    // to simulate a corrupted event log
+    createAtom({
+      memoryDir: testDir,
+      agent_id: 'agent/subdir',
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'bad-agent-fact',
+      body: 'Fact from agent with bad ID.',
+    });
+
+    closeAllIndexes();
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'partition',
+      assignUntagged: 'fallback',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    // Should fall back to 'fallback' instead of creating nested dir
+    expect(result.agents_created).toContain('fallback');
+    expect(result.agents_created).not.toContain('agent/subdir');
+
+    // Verify no nested directory was created
+    expect(fs.existsSync(path.join(testDir, 'agents', 'agent', 'subdir'))).toBe(false);
+    expect(fs.existsSync(path.join(testDir, 'agents', 'fallback'))).toBe(true);
+  });
+});
+
 describe('migrate — idempotency guard', () => {
   it('refuses to migrate an already-isolated store', () => {
     migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION });

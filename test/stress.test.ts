@@ -138,14 +138,14 @@ describe('path traversal', () => {
     writeConfig(testDir, { isolation: 'per-agent' });
     expect(() =>
       resolveAgentDir(testDir, '../../etc'),
-    ).toThrow(/traversal|outside/i);
+    ).toThrow(/traversal|outside|path separators/i);
   });
 
   it('resolveAgentDir with nested traversal agentId throws', () => {
     writeConfig(testDir, { isolation: 'per-agent' });
     expect(() =>
       resolveAgentDir(testDir, '../../etc/passwd'),
-    ).toThrow(/traversal|outside/i);
+    ).toThrow(/traversal|outside|path separators/i);
   });
 
   it('initAgentStore with traversal agentId throws', () => {
@@ -159,7 +159,7 @@ describe('path traversal', () => {
     initSharedStore(testDir);
     expect(() =>
       shareAtom(testDir, 'FACT-some-id', '../../etc', { agent_id: 'a', session_id: 's' }),
-    ).toThrow(/traversal|outside/i);
+    ).toThrow(/traversal|outside|path separators/i);
   });
 });
 

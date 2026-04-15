@@ -154,6 +154,16 @@ describe('resolveAgentDir', () => {
     expect(resolveAgentDir(testDir, 'main')).toBe(path.join(testDir, 'agents', 'main'));
     expect(resolveAgentDir(testDir, 'gridmaster')).toBe(path.join(testDir, 'agents', 'gridmaster'));
   });
+
+  it('rejects agent IDs containing forward slash', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() => resolveAgentDir(testDir, 'agent/subdir')).toThrow(/path separators/);
+  });
+
+  it('rejects agent IDs containing backslash', () => {
+    writeConfig(testDir, { isolation: 'per-agent' });
+    expect(() => resolveAgentDir(testDir, 'agent\\subdir')).toThrow(/path separators/);
+  });
 });
 
 // ---------------------------------------------------------------------------

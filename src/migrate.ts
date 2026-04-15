@@ -21,6 +21,11 @@ import { readEvents } from './event-log.js';
 import { reindex } from './index-db.js';
 import type { Atom } from './types.js';
 
+/** Reject agent IDs that would create nested directories or break the flat agents/ layout. */
+function isValidAgentId(id: string): boolean {
+  return !!id && !id.includes('/') && !id.includes('\\') && !id.includes('..');
+}
+
 export type MigrateStrategy = 'fresh' | 'partition' | 'clone-to-shared';
 
 export interface MigrateOptions {
@@ -97,7 +102,9 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
       for (const ref of event.atom_refs) {
         // First event wins — that's the creating agent
         if (!atomAgentMap.has(ref)) {
-          atomAgentMap.set(ref, event.agent_id);
+          const rawId = event.agent_id;
+          // Reject agent IDs that would create nested dirs under agents/
+          atomAgentMap.set(ref, isValidAgentId(rawId) ? rawId : assignUntagged);
         }
       }
     }
@@ -128,6 +135,8 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
       const subDir = atom.frontmatter.type === 'conflict' ? 'CONFLICTS' : 'ENTITIES';
       const destPath = path.join(agentDir, subDir, path.basename(atom.filePath!));
       writeAtom(atom, destPath);
+      // Remove original to prevent stale atoms if isolation config is later removed
+      fs.unlinkSync(atom.filePath!);
       atomsMoved++;
     }
 
@@ -135,10 +144,13 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
     reindex(agentDir);
   }
 
-  // 6. Create shared namespace
+  // 6. Rebuild base index (now empty of atoms)
+  reindex(baseDir);
+
+  // 7. Create shared namespace
   initSharedStore(baseDir);
 
-  // 7. Write config
+  // 8. Write config
   writeConfig(baseDir, { isolation: 'per-agent' });
 
   return {
@@ -168,13 +180,18 @@ function migrateCloneToShared(opts: MigrateOptions): MigrateResult {
     const subDir = atom.frontmatter.type === 'conflict' ? 'CONFLICTS' : 'ENTITIES';
     const destPath = path.join(sharedDir, subDir, path.basename(atom.filePath!));
     writeAtom(atom, destPath);
+    // Remove original to prevent stale atoms if isolation config is later removed
+    fs.unlinkSync(atom.filePath!);
     atomsShared++;
   }
 
   // 3. Rebuild shared index
   reindex(sharedDir);
 
-  // 4. Write config
+  // 4. Rebuild base index (now empty of atoms)
+  reindex(baseDir);
+
+  // 5. Write config
   writeConfig(baseDir, { isolation: 'per-agent' });
 
   return {
