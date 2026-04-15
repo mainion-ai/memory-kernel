@@ -1,5 +1,7 @@
 # Installing openclaw-memory-kernel
 
+> **Doctrine first.** Wiring the plugin is ~5 minutes. What makes the system actually behave kernel-first is the doctrine in your host's `AGENTS.md`, `MEMORY.md`, and compaction prompt. See [Host integration doctrine](../../docs/host-integration-doctrine.md) for the routing rules, prompt templates, and promotion workflow that held up in production.
+
 ## 1. Build the plugin
 
 ```bash

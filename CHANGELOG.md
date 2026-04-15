@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — Docs
+
+- **`docs/host-integration-doctrine.md`** — host-agnostic doctrine guide distilled from the OpenClaw memory-kernel-first transition. Covers the three-layer model (kernel primary / transcript search secondary / files support), `AGENTS.md` + `MEMORY.md` templates, a working compaction-prompt template, retrieval order, what belongs (and what doesn't) in memory-kernel, promotion workflow from files → atoms, and health-check criteria.
+- README and plugin INSTALL.md now link the doctrine guide so integrators find it before hitting the same "machinery ready, behavior still file-first" trap.
+
 ### Changed — OpenClaw plugin (Tier-1 memory-kernel-first polish)
 
 - **Tool descriptions now encode the routing doctrine.** `mk_remember`, `mk_recall`, and `mk_context_bundle` describe themselves as the primary durable-memory surface, with `memory_search` positioned as secondary (transcript / legacy recall) and `memory/*.md` as the support layer (daily logs, raw notes, imports). Agents pick up the routing rule through the tool list even if the host doctrine lags.
