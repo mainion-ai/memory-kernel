@@ -162,7 +162,7 @@ export { importFromFile, previewImport } from './import.js';
 export type { ImportFromFileOpts, ImportResult } from './import.js';
 
 // Render
-export { renderClaudeMd } from './render.js';
+export { renderClaudeMd, renderAgentClaudeMd } from './render.js';
 export type { RenderClaudeMdOptions } from './render.js';
 
 // Wander (spreading activation)
@@ -213,3 +213,37 @@ export type { ClosureResult, TrajectoryPoint, ToolPrediction } from './closure.j
 // Enrich relations (LLM-based relation reclassification)
 export { enrichRelations } from './enrich-relations.js';
 export type { EnrichmentProposal, EnrichResult } from './enrich-relations.js';
+
+// Isolated recall (agent + shared union)
+export { recallIsolated } from './isolation-recall.js';
+
+// Share/unshare (per-agent isolation)
+export { shareAtom, unshareAtom, listSharedAtoms } from './share.js';
+export type { ShareResult, ShareOptions } from './share.js';
+
+// Per-agent isolation
+export {
+  loadConfig,
+  writeConfig,
+  isIsolated,
+  resolveAgentDir,
+  getSharedDir,
+  listAgents,
+  initAgentStore,
+  initSharedStore,
+  initIsolatedBase,
+  loadRenderConfig,
+  writeRenderConfig,
+  DEFAULT_ISOLATION_CONFIG,
+  DEFAULT_RENDER_CONFIG,
+} from './isolation.js';
+export type {
+  IsolationConfig,
+  RenderConfig,
+  RenderMode,
+  AgentStatus,
+} from './types.js';
+
+// Migration (shared → isolated)
+export { migrate } from './migrate.js';
+export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.js';

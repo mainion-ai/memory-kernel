@@ -1,0 +1,200 @@
+/**
+ * Tests for migration from shared mode to per-agent isolation.
+ * Covers all three strategies: fresh, partition, clone-to-shared.
+ */
+
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import {
+  initMemoryDir,
+  createAtom,
+  closeAllIndexes,
+  openIndex,
+  listAtoms,
+  isIsolated,
+  loadConfig,
+  listAgents,
+  migrate,
+} from '../src/index.js';
+
+const AGENT = 'test-agent';
+const SESSION = 'test-session';
+let testDir: string;
+
+beforeEach(() => {
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-migrate-'));
+  initMemoryDir(testDir);
+  openIndex(testDir);
+});
+
+afterEach(() => {
+  closeAllIndexes();
+  fs.rmSync(testDir, { recursive: true, force: true });
+});
+
+describe('migrate — fresh strategy', () => {
+  it('writes config and creates shared dir, no data movement', () => {
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'fresh',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result.strategy).toBe('fresh');
+    expect(result.config_written).toBe(true);
+    expect(result.agents_created).toEqual([]);
+    expect(result.atoms_moved).toBe(0);
+    expect(result.atoms_shared).toBe(0);
+    expect(isIsolated(testDir)).toBe(true);
+    expect(fs.existsSync(path.join(testDir, 'shared', 'ENTITIES'))).toBe(true);
+  });
+
+  it('fails if already in isolated mode', () => {
+    migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION });
+    expect(() =>
+      migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION }),
+    ).toThrow(/already in isolated/);
+  });
+});
+
+describe('migrate — partition strategy', () => {
+  it('routes atoms by creating agent_id from event log', () => {
+    // Create atoms as different agents
+    createAtom({
+      memoryDir: testDir,
+      agent_id: 'alice',
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'alice-fact',
+      body: 'Alice knows things.',
+    });
+    createAtom({
+      memoryDir: testDir,
+      agent_id: 'bob',
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'bob-fact',
+      body: 'Bob knows things.',
+    });
+
+    closeAllIndexes();
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'partition',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result.strategy).toBe('partition');
+    expect(result.agents_created.sort()).toEqual(['alice', 'bob']);
+    expect(result.atoms_moved).toBe(2);
+    expect(result.config_written).toBe(true);
+    expect(isIsolated(testDir)).toBe(true);
+
+    // Verify atoms landed in correct agent dirs
+    closeAllIndexes();
+    const aliceDir = path.join(testDir, 'agents', 'alice');
+    const bobDir = path.join(testDir, 'agents', 'bob');
+    openIndex(aliceDir);
+    openIndex(bobDir);
+
+    const aliceAtoms = listAtoms(aliceDir);
+    const bobAtoms = listAtoms(bobDir);
+    expect(aliceAtoms.length).toBe(1);
+    expect(bobAtoms.length).toBe(1);
+    expect(aliceAtoms[0]!.body).toContain('Alice');
+    expect(bobAtoms[0]!.body).toContain('Bob');
+  });
+
+  it('assigns untagged atoms to specified agent', () => {
+    // Create an atom — its agent_id will be in events
+    createAtom({
+      memoryDir: testDir,
+      agent_id: 'worker',
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'worker-fact',
+      body: 'Worker fact.',
+    });
+
+    closeAllIndexes();
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'partition',
+      assignUntagged: 'default-agent',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result.agents_created).toContain('worker');
+    expect(result.atoms_moved).toBeGreaterThan(0);
+  });
+});
+
+describe('migrate — clone-to-shared strategy', () => {
+  it('copies all atoms to shared namespace', () => {
+    createAtom({
+      memoryDir: testDir,
+      agent_id: AGENT,
+      session_id: SESSION,
+      type: 'fact',
+      slug: 'shared-fact-1',
+      body: 'First shared fact.',
+    });
+    createAtom({
+      memoryDir: testDir,
+      agent_id: AGENT,
+      session_id: SESSION,
+      type: 'decision',
+      slug: 'shared-decision',
+      body: 'A decision.',
+    });
+
+    closeAllIndexes();
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'clone-to-shared',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result.strategy).toBe('clone-to-shared');
+    expect(result.atoms_shared).toBe(2);
+    expect(result.agents_created).toEqual([]);
+    expect(result.config_written).toBe(true);
+    expect(isIsolated(testDir)).toBe(true);
+
+    // Verify atoms exist in shared
+    closeAllIndexes();
+    const sharedDir = path.join(testDir, 'shared');
+    openIndex(sharedDir);
+    const sharedAtoms = listAtoms(sharedDir);
+    expect(sharedAtoms.length).toBe(2);
+  });
+
+  it('handles empty store gracefully', () => {
+    closeAllIndexes();
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'clone-to-shared',
+      agent_id: AGENT,
+      session_id: SESSION,
+    });
+
+    expect(result.atoms_shared).toBe(0);
+    expect(result.config_written).toBe(true);
+  });
+});
+
+describe('migrate — idempotency guard', () => {
+  it('refuses to migrate an already-isolated store', () => {
+    migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION });
+
+    expect(() =>
+      migrate({ baseDir: testDir, strategy: 'partition', agent_id: AGENT, session_id: SESSION }),
+    ).toThrow(/already in isolated/);
+  });
+});

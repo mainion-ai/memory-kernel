@@ -19,6 +19,7 @@ import path from 'path';
 import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import type { McpContext } from './context.js';
+import { isIsolated, initAgentStore } from '../isolation.js';
 
 const rawDir = process.env['MEMORY_DIR'];
 if (!rawDir) {
@@ -32,10 +33,19 @@ if (!fs.existsSync(memoryDir)) {
   process.exit(1);
 }
 
+const isolated = isIsolated(memoryDir);
+const defaultAgentId = process.env['MCP_AGENT_ID'] ?? 'mcp-server';
+
+// Auto-init agent store in isolated mode
+if (isolated) {
+  initAgentStore(memoryDir, defaultAgentId);
+}
+
 const ctx: McpContext = {
   memoryDir,
-  defaultAgentId: process.env['MCP_AGENT_ID'] ?? 'mcp-server',
+  defaultAgentId,
   defaultSessionId: process.env['MCP_SESSION_ID'] ?? `mcp-${randomUUID().slice(0, 8)}`,
+  isolated,
 };
 
 const server = new McpServer({

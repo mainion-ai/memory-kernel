@@ -53,6 +53,10 @@ import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
 import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { closure } from '../closure.js';
+import { isIsolated, initSharedStore, listAgents } from '../isolation.js';
+import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
+import { migrate } from '../migrate.js';
+import { resolveDir as resolveDirBase } from './resolve-dir.js';
 
 const program = new Command();
 
@@ -69,7 +73,18 @@ function exitWithError(message: string, json?: boolean): never {
 program
   .name('mk')
   .description('Memory Kernel CLI — manage AI agent memory')
-  .version(pkg.version);
+  .version(pkg.version)
+  .option('-a, --agent <id>', 'Agent ID for per-agent isolation');
+
+/** Resolve memoryDir with agent isolation applied. */
+function resolveDir(dir: string, agent?: string): string {
+  return resolveDirBase(dir, agent);
+}
+
+/** Get the --agent value from the root program options. */
+function getAgent(): string | undefined {
+  return program.opts().agent;
+}
 
 // --- mk init ---
 program
@@ -90,9 +105,47 @@ program
   .command('status')
   .description('Show memory statistics')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--all-agents', 'Show status for all agents (isolated mode)')
   .option('--json', 'Output as JSON')
-  .action((opts: { dir: string; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+  .action((opts: { dir: string; allAgents?: boolean; json?: boolean }) => {
+    const baseDir = path.resolve(opts.dir);
+
+    // --all-agents: show per-agent summary
+    if (opts.allAgents) {
+      if (!isIsolated(baseDir)) {
+        exitWithError('--all-agents requires per-agent isolation mode', opts.json);
+      }
+      const agents = listAgents(baseDir);
+      const sharedDir = path.join(baseDir, 'shared');
+      const agentSummaries = agents.map((agentId) => {
+        const agentDir = path.join(baseDir, 'agents', agentId);
+        const atoms = fs.existsSync(path.join(agentDir, 'ENTITIES')) ? listAtoms(agentDir) : [];
+        const events = countEvents(agentDir);
+        return { agent_id: agentId, atoms: atoms.length, events };
+      });
+      const sharedAtoms = fs.existsSync(path.join(sharedDir, 'ENTITIES')) ? listAtoms(sharedDir) : [];
+
+      if (opts.json) {
+        console.log(JSON.stringify({
+          mode: 'per-agent',
+          base_dir: baseDir,
+          agents: agentSummaries,
+          shared: { atoms: sharedAtoms.length },
+        }, null, 2));
+        return;
+      }
+
+      console.log(`Memory (isolated): ${baseDir}`);
+      console.log(`Agents: ${agents.length}`);
+      console.log(`Shared atoms: ${sharedAtoms.length}`);
+      console.log('');
+      for (const summary of agentSummaries) {
+        console.log(`  ${summary.agent_id}: ${summary.atoms} atoms, ${summary.events} events`);
+      }
+      return;
+    }
+
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -188,7 +241,7 @@ program
     graph: boolean; // Commander sets this to true/false via --graph/--no-graph
     json?: boolean;
   }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -247,7 +300,7 @@ program
     dir: string; task?: string; maxTokens?: number;
     agentId: string; sessionId: string; reflect: boolean; json?: boolean;
   }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
@@ -293,7 +346,7 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -326,7 +379,7 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -357,7 +410,7 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -423,7 +476,7 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--embed', 'Also (re)compute embeddings for all atoms')
   .action(async (opts: { dir: string; embed?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       console.error(`✗ Memory directory not found: ${memoryDir}`);
       process.exit(1);
@@ -469,7 +522,7 @@ program
     slug?: string; tags?: string[];
     agentId: string; sessionId: string; json?: boolean;
   }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
@@ -530,7 +583,7 @@ program
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-bootstrap')
   .action((opts: { dir: string; agentId: string; sessionId: string }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       console.error(`✗ Memory directory not found: ${memoryDir}`);
       process.exit(1);
@@ -560,7 +613,7 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -598,7 +651,7 @@ program
   .option('--session-id <id>', 'Session ID for the merge event', 'cli-merge')
   .option('--dry-run', 'Preview changes without writing anything')
   .action((opts: { from: string; dir: string; agentId: string; sessionId: string; dryRun?: boolean }) => {
-    const localDir = path.resolve(opts.dir);
+    const localDir = resolveDir(opts.dir, getAgent());
     const remoteDir = path.resolve(opts.from);
 
     if (!fs.existsSync(localDir)) {
@@ -686,7 +739,7 @@ program
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; sessionId: string; summary: string; tags?: string[]; agentId: string; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -716,7 +769,7 @@ program
   .option('--limit <n>', 'Max episodes to show', parseInt)
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; limit?: number; json?: boolean }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -764,7 +817,7 @@ program
     dryRun?: boolean;
   }) => {
     const filePath = path.resolve(opts.from);
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
 
     if (!fs.existsSync(filePath)) {
       console.error(`✗ Source file not found: ${filePath}`);
@@ -823,7 +876,7 @@ program
   .argument('<output-path>', 'Output file path')
   .option('--max-tokens <n>', 'Token budget for recall', '8000')
   .action((memoryDir: string, outputPath: string, opts: { maxTokens: string }) => {
-    const resolvedDir = path.resolve(memoryDir);
+    const resolvedDir = resolveDir(memoryDir, getAgent());
     const resolvedOutput = path.resolve(outputPath);
 
     if (!fs.existsSync(resolvedDir)) {
@@ -881,7 +934,7 @@ program
     weightPreset?: string;
     json?: boolean;
   }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -963,7 +1016,7 @@ program
   .option('--trajectory', 'Include daily closure trajectory')
   .option('--trajectory-days <n>', 'Limit trajectory to last N days', parseInt)
   .action((opts: { dir: string; json?: boolean; trajectory?: boolean; trajectoryDays?: number }) => {
-    const memoryDir = path.resolve(opts.dir);
+    const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
@@ -1035,6 +1088,124 @@ program
       for (const t of result.trajectory) {
         console.log('  ' + cols.map(c => c.get(t).padStart(c.width)).join('  '));
       }
+    }
+  });
+
+// --- mk share ---
+program
+  .command('share')
+  .description('Copy an atom from an agent store to the shared namespace (snapshot)')
+  .argument('<atom-id>', 'Atom ID to share')
+  .requiredOption('--from <agent>', 'Agent ID that owns the atom')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--agent-id <id>', 'Agent ID for event log', 'cli')
+  .option('--session-id <id>', 'Session ID for event log', 'cli-session')
+  .option('--json', 'Output as JSON')
+  .action((atomId: string, opts: { from: string; dir: string; agentId: string; sessionId: string; json?: boolean }) => {
+    const baseDir = path.resolve(opts.dir);
+    if (!fs.existsSync(baseDir)) {
+      exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
+    }
+
+    try {
+      const result = shareAtom(baseDir, atomId, opts.from, {
+        agent_id: opts.agentId,
+        session_id: opts.sessionId,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`✓ Shared: ${result.atom_id}`);
+      console.log(`  From: ${result.source_agent}`);
+      console.log(`  To: shared/${path.basename(result.shared_path)}`);
+    } catch (err) {
+      exitWithError(`Share failed: ${String(err)}`, opts.json);
+    }
+  });
+
+// --- mk unshare ---
+program
+  .command('unshare')
+  .description('Remove an atom from the shared namespace')
+  .argument('<atom-id>', 'Atom ID to unshare')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--agent-id <id>', 'Agent ID for event log', 'cli')
+  .option('--session-id <id>', 'Session ID for event log', 'cli-session')
+  .option('--json', 'Output as JSON')
+  .action((atomId: string, opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
+    const baseDir = path.resolve(opts.dir);
+    if (!fs.existsSync(baseDir)) {
+      exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
+    }
+
+    try {
+      unshareAtom(baseDir, atomId, {
+        agent_id: opts.agentId,
+        session_id: opts.sessionId,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify({ atom_id: atomId, unshared: true }, null, 2));
+        return;
+      }
+
+      console.log(`✓ Unshared: ${atomId}`);
+    } catch (err) {
+      exitWithError(`Unshare failed: ${String(err)}`, opts.json);
+    }
+  });
+
+// --- mk migrate ---
+program
+  .command('migrate')
+  .description('Migrate a shared-mode store to per-agent isolation')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--strategy <strategy>', 'Migration strategy: fresh, partition, clone-to-shared', 'fresh')
+  .option('--assign-untagged <agent>', 'Agent ID for untagged atoms (partition strategy)', 'main')
+  .option('--agent-id <id>', 'Agent ID for event log', 'cli')
+  .option('--session-id <id>', 'Session ID for event log', 'cli-session')
+  .option('--json', 'Output as JSON')
+  .action((opts: { dir: string; strategy: string; assignUntagged: string; agentId: string; sessionId: string; json?: boolean }) => {
+    const baseDir = path.resolve(opts.dir);
+    if (!fs.existsSync(baseDir)) {
+      exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
+    }
+
+    const strategy = opts.strategy as 'fresh' | 'partition' | 'clone-to-shared';
+    if (!['fresh', 'partition', 'clone-to-shared'].includes(strategy)) {
+      exitWithError(`Unknown strategy: ${opts.strategy}. Use: fresh, partition, clone-to-shared`, opts.json);
+    }
+
+    try {
+      const result = migrate({
+        baseDir,
+        strategy,
+        assignUntagged: opts.assignUntagged,
+        agent_id: opts.agentId,
+        session_id: opts.sessionId,
+      });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`✓ Migration complete (strategy: ${result.strategy})`);
+      if (result.agents_created.length > 0) {
+        console.log(`  Agents created: ${result.agents_created.join(', ')}`);
+      }
+      if (result.atoms_moved > 0) {
+        console.log(`  Atoms moved: ${result.atoms_moved}`);
+      }
+      if (result.atoms_shared > 0) {
+        console.log(`  Atoms shared: ${result.atoms_shared}`);
+      }
+      console.log(`  Config written: ${result.config_written}`);
+    } catch (err) {
+      exitWithError(`Migration failed: ${String(err)}`, opts.json);
     }
   });
 

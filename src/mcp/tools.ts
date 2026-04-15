@@ -1,6 +1,6 @@
 /**
  * MCP tool registrations for Memory Kernel.
- * 8 tools: remember, recall, reflect, merge, gc, list_conflicts, resolve_conflict, get_context_bundle.
+ * 10 tools: remember, recall, reflect, merge, gc, list_conflicts, resolve_conflict, get_context_bundle, share_atom, unshare_atom.
  * All tool outputs include a provenance block for traceability.
  */
 
@@ -21,10 +21,14 @@ import {
   getLastEventId,
   queryIndex,
   indexExists,
+  shareAtom,
+  unshareAtom,
+  listSharedAtoms,
 } from '../index.js';
+import { isIsolated } from '../isolation.js';
 import { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS } from '../types.js';
 import { embedAtom } from '../embed-sync.js';
-import { resolveAgentId, resolveSessionId, type McpContext } from './context.js';
+import { resolveAgentId, resolveSessionId, resolveMemoryDir, type McpContext } from './context.js';
 
 // ---------------------------------------------------------------------------
 // Provenance
@@ -109,8 +113,9 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
     const atom = createAtom({
-      memoryDir: ctx.memoryDir,
+      memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,
       type: input.type,
@@ -123,7 +128,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         : undefined,
     });
     // Auto-embed the new atom (no-op if embeddings not configured)
-    const embedded = await embedAtom(ctx.memoryDir, atom);
+    const embedded = await embedAtom(memDir, atom);
 
     const result = {
       atom: {
@@ -136,7 +141,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         embedded,
       },
       provenance: buildProvenance(ctx, agentId, sessionId, {
-        event_id: getLastEventId(ctx.memoryDir),
+        event_id: getLastEventId(memDir),
         atom_refs: [atom.frontmatter.id],
       }),
     };
@@ -186,7 +191,8 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const bundle = await recallWithEmbeddings(ctx.memoryDir, {
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const bundle = await recallWithEmbeddings(memDir, {
       task: input.task,
       paths: input.paths,
       types: input.types,
@@ -237,7 +243,8 @@ export async function handleReflect(ctx: McpContext, input: ReflectInput): Promi
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const reflectResult = reflect({ memoryDir: ctx.memoryDir, agent_id: agentId, session_id: sessionId });
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const reflectResult = reflect({ memoryDir: memDir, agent_id: agentId, session_id: sessionId });
     const result = {
       ...reflectResult,
       provenance: buildProvenance(ctx, agentId, sessionId),
@@ -266,8 +273,9 @@ export async function handleMerge(ctx: McpContext, input: MergeInput): Promise<T
     }
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
     const mergeResult = mergeEventLogs({
-      localDir: ctx.memoryDir,
+      localDir: memDir,
       remoteDir: input.remote_dir,
       agent_id: agentId,
       session_id: sessionId,
@@ -297,7 +305,8 @@ export async function handleGc(ctx: McpContext, input: GcInput): Promise<ToolRes
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const reflectResult = reflect({ memoryDir: ctx.memoryDir, agent_id: agentId, session_id: sessionId });
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const reflectResult = reflect({ memoryDir: memDir, agent_id: agentId, session_id: sessionId });
     const result = {
       expired: reflectResult.expired,
       archived: reflectResult.archived,
@@ -328,21 +337,22 @@ export async function handleListConflicts(
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
 
     let conflicts;
-    if (indexExists(ctx.memoryDir)) {
-      const rows = queryIndex(ctx.memoryDir, { types: ['conflict'], statuses: ['active'] });
+    if (indexExists(memDir)) {
+      const rows = queryIndex(memDir, { types: ['conflict'], statuses: ['active'] });
       if (rows !== null) {
-        const atoms = listAtoms(ctx.memoryDir);
+        const atoms = listAtoms(memDir);
         const conflictIds = new Set(rows.map((r) => r.atom_id));
         conflicts = atoms.filter((a) => conflictIds.has(a.frontmatter.id));
       } else {
-        conflicts = listAtoms(ctx.memoryDir).filter(
+        conflicts = listAtoms(memDir).filter(
           (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
         );
       }
     } else {
-      conflicts = listAtoms(ctx.memoryDir).filter(
+      conflicts = listAtoms(memDir).filter(
         (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
       );
     }
@@ -390,12 +400,13 @@ export async function handleResolveConflict(
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const filePath = atomFilePath(ctx.memoryDir, input.conflict_atom_id, 'conflict');
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const filePath = atomFilePath(memDir, input.conflict_atom_id, 'conflict');
     if (!fs.existsSync(filePath)) {
       return err(`Conflict atom not found: ${input.conflict_atom_id}`);
     }
     const { atom, event_id } = resolveConflict({
-      memoryDir: ctx.memoryDir,
+      memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,
       filePath,
@@ -438,15 +449,16 @@ export async function handleGetContextBundle(
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
     const checkpointResult = checkpoint({
-      memoryDir: ctx.memoryDir,
+      memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,
       task: input.task,
       max_tokens: input.max_tokens,
       skipReflect: input.skip_reflect,
     });
-    appendEvent(ctx.memoryDir, 'atom_read', {
+    appendEvent(memDir, 'atom_read', {
       agent_id: agentId,
       session_id: sessionId,
       atom_refs: checkpointResult.bundle.atoms.map((a) => a.frontmatter.id),
@@ -464,6 +476,87 @@ export async function handleGetContextBundle(
       event_id: checkpointResult.event_id,
       error: checkpointResult.error,
       provenance: buildProvenance(ctx, agentId, sessionId, { event_id: checkpointResult.event_id }),
+    };
+    return ok(result);
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// --- share_atom ---
+
+const shareAtomSchema = {
+  atom_id: z.string().min(1).describe('ID of the atom to share'),
+  from_agent: z.string().min(1).describe('Agent ID that owns the atom'),
+  agent_id: z.string().optional(),
+  session_id: z.string().optional(),
+};
+
+export type ShareAtomInput = {
+  atom_id: string;
+  from_agent: string;
+  agent_id?: string;
+  session_id?: string;
+};
+
+export async function handleShareAtom(
+  ctx: McpContext,
+  input: ShareAtomInput,
+): Promise<ToolResult> {
+  try {
+    if (!ctx.isolated) {
+      return err('share_atom is only available in isolated (per-agent) mode');
+    }
+    const agentId = resolveAgentId(ctx, input.agent_id);
+    const sessionId = resolveSessionId(ctx, input.session_id);
+    const shared = shareAtom(ctx.memoryDir, input.atom_id, input.from_agent, {
+      agent_id: agentId,
+      session_id: sessionId,
+    });
+    const result = {
+      atom_id: shared.atom_id,
+      shared_path: shared.shared_path,
+      source_agent: shared.source_agent,
+      provenance: buildProvenance(ctx, agentId, sessionId),
+    };
+    return ok(result);
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// --- unshare_atom ---
+
+const unshareAtomSchema = {
+  atom_id: z.string().min(1).describe('ID of the atom to remove from shared namespace'),
+  agent_id: z.string().optional(),
+  session_id: z.string().optional(),
+};
+
+export type UnshareAtomInput = {
+  atom_id: string;
+  agent_id?: string;
+  session_id?: string;
+};
+
+export async function handleUnshareAtom(
+  ctx: McpContext,
+  input: UnshareAtomInput,
+): Promise<ToolResult> {
+  try {
+    if (!ctx.isolated) {
+      return err('unshare_atom is only available in isolated (per-agent) mode');
+    }
+    const agentId = resolveAgentId(ctx, input.agent_id);
+    const sessionId = resolveSessionId(ctx, input.session_id);
+    unshareAtom(ctx.memoryDir, input.atom_id, {
+      agent_id: agentId,
+      session_id: sessionId,
+    });
+    const result = {
+      atom_id: input.atom_id,
+      removed: true,
+      provenance: buildProvenance(ctx, agentId, sessionId),
     };
     return ok(result);
   } catch (e) {
@@ -554,5 +647,25 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
       inputSchema: getContextBundleSchema,
     },
     (args) => handleGetContextBundle(ctx, args as GetContextBundleInput),
+  );
+
+  server.registerTool(
+    'mk_share_atom',
+    {
+      title: 'Share Atom',
+      description: 'Copy an atom from an agent\'s private store to the shared namespace (isolated mode only).',
+      inputSchema: shareAtomSchema,
+    },
+    (args) => handleShareAtom(ctx, args as ShareAtomInput),
+  );
+
+  server.registerTool(
+    'mk_unshare_atom',
+    {
+      title: 'Unshare Atom',
+      description: 'Remove an atom from the shared namespace (isolated mode only).',
+      inputSchema: unshareAtomSchema,
+    },
+    (args) => handleUnshareAtom(ctx, args as UnshareAtomInput),
   );
 }

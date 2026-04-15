@@ -4,9 +4,11 @@
  */
 
 import { recall } from './recall.js';
+import { recallIsolated } from './isolation-recall.js';
 import { countEvents } from './event-log.js';
 import { getAllRelations } from './index-db.js';
-import type { Atom } from './types.js';
+import { isIsolated, resolveAgentDir, loadRenderConfig } from './isolation.js';
+import type { Atom, RenderConfig } from './types.js';
 
 // --- Belief arc helpers ---
 
@@ -143,6 +145,8 @@ function buildBeliefArcs(
 export interface RenderClaudeMdOptions {
   /** Token budget for recall. Default: 8000 (~5% of a 200K context window, ~100 atoms). */
   maxTokens?: number;
+  /** Per-type score multipliers for recall ranking. */
+  typeWeights?: Partial<Record<string, number>>;
 }
 
 /**
@@ -153,7 +157,10 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
   const maxTokens = opts.maxTokens ?? 8000;
 
   // Recall with token budget — applies privacy filtering (no SECRET/PERSONAL) and token cap.
-  const bundle = recall(memoryDir, { max_tokens: maxTokens });
+  const bundle = recall(memoryDir, {
+    max_tokens: maxTokens,
+    type_weights: opts.typeWeights as any,
+  });
   const active = bundle.atoms;
   const eventCount = countEvents(memoryDir);
 
@@ -317,6 +324,185 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
           b.frontmatter.confidence !== undefined
             ? ` (confidence: ${b.frontmatter.confidence})`
             : '';
+        lines.push(`### ${b.frontmatter.id}${confSuffix}`);
+        lines.push(b.body.trim());
+        lines.push('');
+      }
+    }
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * Render CLAUDE.md for a specific agent in isolated mode.
+ * Loads the agent's render.yaml config and uses recallIsolated for union recall.
+ *
+ * @param baseDir - Root memory directory
+ * @param agentId - Agent ID
+ * @param opts - Override options (take precedence over render.yaml)
+ */
+export function renderAgentClaudeMd(
+  baseDir: string,
+  agentId: string,
+  opts: RenderClaudeMdOptions = {},
+): string {
+  const agentDir = resolveAgentDir(baseDir, agentId);
+  const renderConfig = loadRenderConfig(agentDir);
+
+  // Merge: explicit opts override render.yaml
+  const maxTokens = opts.maxTokens ?? renderConfig.max_tokens;
+  const typeWeights = opts.typeWeights ?? (
+    Object.keys(renderConfig.type_weights).length > 0 ? renderConfig.type_weights : undefined
+  );
+
+  if (renderConfig.include_shared && isIsolated(baseDir)) {
+    // Use isolated recall (agent + shared union), then render from the merged bundle
+    const bundle = recallIsolated(agentDir, baseDir, {
+      max_tokens: maxTokens,
+      type_weights: typeWeights as any,
+    });
+
+    // Render directly from the bundle's atoms (bypass recall in renderClaudeMd)
+    return renderFromAtoms(agentDir, bundle.atoms, maxTokens);
+  }
+
+  // No shared inclusion or not isolated — use standard render
+  return renderClaudeMd(agentDir, { maxTokens, typeWeights });
+}
+
+/**
+ * Render CLAUDE.md from a pre-fetched atom list.
+ * Used by renderAgentClaudeMd when atoms come from recallIsolated.
+ */
+function renderFromAtoms(memoryDir: string, active: Atom[], maxTokens: number): string {
+  const eventCount = countEvents(memoryDir);
+
+  const facts = active.filter((a) => a.frontmatter.type === 'fact');
+  const decisions = active.filter((a) => a.frontmatter.type === 'decision');
+  const constraints = active.filter((a) => a.frontmatter.type === 'constraint');
+  const openQuestions = active.filter((a) => a.frontmatter.type === 'open_question');
+  const preferences = active.filter((a) => a.frontmatter.type === 'preference');
+  const beliefs = active.filter((a) => a.frontmatter.type === 'belief');
+  const conflicts = active.filter((a) => a.frontmatter.type === 'conflict');
+
+  const lines: string[] = [];
+
+  lines.push('# Memory');
+  lines.push('');
+  lines.push(
+    `> Auto-generated from memory-kernel. ${active.length} atoms, ${eventCount} events.`,
+  );
+  lines.push(`> Last rendered: ${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}`);
+  lines.push(`> Source: ${memoryDir}`);
+  lines.push('');
+
+  if (active.length === 0) {
+    lines.push('## Getting Started');
+    lines.push('');
+    lines.push('This is a fresh memory. No atoms have been created yet.');
+    lines.push('');
+    return lines.join('\n') + '\n';
+  }
+
+  if (conflicts.length > 0) {
+    lines.push('## ⚠ Active Conflicts');
+    lines.push('');
+    for (const c of conflicts) {
+      lines.push(`### ${c.frontmatter.id}`);
+      lines.push(c.body.trim());
+      lines.push('');
+    }
+  }
+
+  if (facts.length > 0) {
+    lines.push('## Key Facts');
+    lines.push('');
+    for (const f of facts) {
+      lines.push(`### ${f.frontmatter.id}`);
+      lines.push(f.body.trim());
+      lines.push('');
+    }
+  }
+
+  if (decisions.length > 0) {
+    lines.push('## Decisions');
+    lines.push('');
+    for (const d of decisions) {
+      const confSuffix = d.frontmatter.confidence !== undefined ? ` (confidence: ${d.frontmatter.confidence})` : '';
+      lines.push(`### ${d.frontmatter.id}${confSuffix}`);
+      lines.push(d.body.trim());
+      lines.push('');
+    }
+  }
+
+  if (constraints.length > 0) {
+    lines.push('## Constraints');
+    lines.push('');
+    for (const c of constraints) {
+      lines.push(`### ${c.frontmatter.id}`);
+      lines.push(c.body.trim());
+      lines.push('');
+    }
+  }
+
+  if (openQuestions.length > 0) {
+    lines.push('## Open Questions');
+    lines.push('');
+    for (const q of openQuestions) {
+      lines.push(`### ${q.frontmatter.id}`);
+      lines.push(q.body.trim());
+      lines.push('');
+    }
+  }
+
+  if (preferences.length > 0) {
+    lines.push('## Preferences');
+    lines.push('');
+    for (const p of preferences) {
+      lines.push(`### ${p.frontmatter.id}`);
+      lines.push(p.body.trim());
+      lines.push('');
+    }
+  }
+
+  if (beliefs.length > 0) {
+    const { arcs, standalone } = buildBeliefArcs(beliefs, memoryDir);
+
+    if (arcs.length > 0) {
+      lines.push('## Beliefs (developmental arcs)');
+      lines.push('');
+      for (const arc of arcs) {
+        const dateStr = formatDateRange(arc.dateRange[0], arc.dateRange[1]);
+        lines.push(`### Arc: ${arc.rootSlug} \u2192 ${arc.leafSlug} (${arc.entries.length} nodes, ${dateStr})`);
+        lines.push('');
+        for (const { atom, depth } of arc.entries) {
+          const conf = atom.frontmatter.confidence !== undefined ? ` (${atom.frontmatter.confidence})` : '';
+          const indent = '  '.repeat(depth);
+          const arrow = depth > 0 ? '\u2192 ' : '';
+          lines.push(`${indent}${arrow}**${atom.frontmatter.id}**${conf}`);
+          const bodyLines = atom.body.trim().split('\n');
+          for (const line of bodyLines) {
+            lines.push(`${indent}${line}`);
+          }
+          lines.push('');
+        }
+      }
+      if (standalone.length > 0) {
+        lines.push('### Standalone beliefs');
+        lines.push('');
+        for (const b of standalone) {
+          const confSuffix = b.frontmatter.confidence !== undefined ? ` (confidence: ${b.frontmatter.confidence})` : '';
+          lines.push(`**${b.frontmatter.id}**${confSuffix}`);
+          lines.push(b.body.trim());
+          lines.push('');
+        }
+      }
+    } else {
+      lines.push('## Beliefs (unverified)');
+      lines.push('');
+      for (const b of beliefs) {
+        const confSuffix = b.frontmatter.confidence !== undefined ? ` (confidence: ${b.frontmatter.confidence})` : '';
         lines.push(`### ${b.frontmatter.id}${confSuffix}`);
         lines.push(b.body.trim());
         lines.push('');

@@ -84,6 +84,8 @@ export interface WanderOptions {
    *  Defaults to DEFAULT_TYPE_WEIGHTS. Set a preset name ('constitution',
    *  'tension', 'narrative') or provide a custom record. */
   typeWeights?: Record<string, number>;
+  /** If set, shared namespace atoms participate in the graph (per-agent isolation). */
+  sharedMemoryDir?: string;
 }
 
 export interface ActivatedAtom {
@@ -660,6 +662,16 @@ export function wander(options: WanderOptions): WanderResult {
 
   const now = Date.now();
   const graph = loadAtomGraph(memoryDir, now, options);
+
+  // Merge shared namespace graph if provided
+  if (options.sharedMemoryDir && indexExists(options.sharedMemoryDir)) {
+    const sharedGraph = loadAtomGraph(options.sharedMemoryDir, now, options);
+    for (const [id, node] of sharedGraph) {
+      if (!graph.has(id)) {
+        graph.set(id, node);
+      }
+    }
+  }
 
   return wanderWithGraph(graph, options, start);
 }
