@@ -46,7 +46,7 @@ npm run build   # compile TypeScript
 ## OpenClaw plugin isolation
 
 - Plugin source: `packages/openclaw-memory-kernel/src/index.ts`
-- `resolveEffectiveMemoryContext(cfg, agentId)` resolves routing once at bootstrap (NOT at register() time, NOT per-call)
+- `resolveEffectiveMemoryContext(cfg, agentId?)` is called: (1) once at register() time for the index-freshness check (`initCtx`), (2) once per session in the bootstrap hook (result cached in `sessionContexts`), and (3) on cache miss in `getContext()` (pre-bootstrap tool calls only, no runtime agentId)
 - 5 config fields: `isolationMode` (`auto`|`shared-only`|`per-agent-required`), `autoInitAgentStore`, `sharedRecall`, `failIfMissingAgentStore` (deprecated), `allowSharedFallback`
 - Missing agent store throws by default (prevents silent memory contamination). Set `allowSharedFallback: true` to opt-in to the old silent fallback.
 - `failIfMissingAgentStore` is deprecated — throwing is now the default. `failIfMissingAgentStore: false` maps to `allowSharedFallback: true` for backward compat.

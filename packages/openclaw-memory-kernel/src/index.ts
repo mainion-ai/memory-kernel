@@ -69,11 +69,13 @@ type PluginConfig = {
 }
 
 /**
- * Resolved memory context — computed dynamically per execution path.
+ * Resolved memory context for a single session.
  *
- * Previously created once at register() time and stored in a mutable closure.
- * Now resolved fresh for every tool call / hook invocation via
- * resolveEffectiveMemoryContext(), which accepts a runtime agent ID.
+ * Resolved once in the agent:bootstrap hook via resolveEffectiveMemoryContext()
+ * and cached in `sessionContexts` (keyed by sessionKey). All tool execute() calls
+ * and subsequent hooks for that session read from the cache via getContext().
+ * On cache miss (tool called before bootstrap, or after session-end cleanup),
+ * getContext() resolves a fresh context using static config only (no runtime agentId).
  */
 interface EffectiveMemoryContext {
   /** Base memory directory (the configured memoryDir). */
@@ -522,19 +524,6 @@ function resolveEffectiveMemoryContext(
   return { baseDir, effectiveDir, agentId, isolated, sharedRecall }
 }
 
-/**
- * Extract the effective agent ID from available sources, in priority order:
- * 1. Runtime identity from bootstrap (event.context.agentIdentity.id), per-session
- * 2. Static cfg.agentId
- * 3. Default: 'openclaw'
- */
-function extractAgentId(
-  lastRuntimeAgentId: string | undefined,
-  cfgAgentId: string | undefined,
-): string {
-  return lastRuntimeAgentId ?? cfgAgentId ?? 'openclaw'
-}
-
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const RememberParams = Type.Object({
@@ -934,6 +923,12 @@ const memoryKernelPlugin = {
       async (event: any) => {
         const sessionKey = event.sessionKey || '__default__'
         setSession(sessionKey)
+
+        // A new bootstrap implies the prior session ended without command:new/reset.
+        // Delete its cached context to prevent unbounded Map growth.
+        if (activeSessionKey !== sessionKey) {
+          sessionContexts.delete(activeSessionKey)
+        }
         activeSessionKey = sessionKey
 
         // Runtime agent identity: capture from OpenClaw event context.

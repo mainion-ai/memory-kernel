@@ -771,6 +771,88 @@ describe('per-session context caching', () => {
     expect(result.content[0].text).toContain('huston');
   });
 
+  // Note: these cleanup tests verify functional routing correctness after session
+  // transitions but do not directly observe Map.delete() on sessionContexts (which
+  // is private to the register() closure). The guard prevents unbounded Map growth
+  // in long-running processes — a property not easily observable from the public API.
+  it('bootstrap cleans up prior session context when new session arrives', async () => {
+    initIsolatedBase(testDir, 'alice');
+    initAgentStore(testDir, 'bob');
+    const aliceDir = path.join(testDir, 'agents', 'alice');
+    const bobDir = path.join(testDir, 'agents', 'bob');
+
+    createAtom({
+      memoryDir: aliceDir, ...BASE_OPTS,
+      type: 'fact', slug: 'alice-fact', body: 'Alice fact',
+    });
+    createAtom({
+      memoryDir: bobDir, ...BASE_OPTS,
+      type: 'fact', slug: 'bob-fact', body: 'Bob fact',
+    });
+
+    const { api, tools, hooks } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'alice',
+    });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+
+    // Session A bootstraps as alice
+    await bootstrapHook!.handler({
+      sessionKey: 'session-A',
+      context: { bootstrapFiles: [] as any[], agentIdentity: { id: 'alice' } },
+      messages: [] as string[],
+    });
+
+    // Session B bootstraps as bob — should clean up session-A's cached context
+    await bootstrapHook!.handler({
+      sessionKey: 'session-B',
+      context: { bootstrapFiles: [] as any[], agentIdentity: { id: 'bob' } },
+      messages: [] as string[],
+    });
+
+    // Tool calls now route to bob's store (activeSessionKey = session-B)
+    const result = await tools['mk_recall'].execute('call-1', { max_tokens: 8000 });
+    expect(result.content[0].text).toContain('Bob fact');
+    expect(result.content[0].text).not.toContain('Alice fact');
+  });
+
+  it('bootstrap with __default__ sentinel is cleaned up when real session key arrives', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'default-cleanup', body: 'Default sentinel fact',
+    });
+
+    const { api, tools, hooks } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'huston',
+    });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+
+    // First bootstrap with no sessionKey — uses __default__
+    await bootstrapHook!.handler({
+      context: { bootstrapFiles: [] as any[] },
+      messages: [] as string[],
+    });
+
+    // Second bootstrap with a real sessionKey — should delete __default__ entry
+    await bootstrapHook!.handler({
+      sessionKey: 'real-session',
+      context: { bootstrapFiles: [] as any[] },
+      messages: [] as string[],
+    });
+
+    // Should still work — routes via real-session key
+    const result = await tools['mk_status'].execute('call-1', {});
+    expect(result.content[0].text).toContain('huston');
+  });
+
   it('bootstrap without sessionKey still routes correctly', async () => {
     initIsolatedBase(testDir, 'huston');
     const hustonDir = path.join(testDir, 'agents', 'huston');
