@@ -69,16 +69,20 @@ type PluginConfig = {
 }
 
 /**
- * Resolved memory context — created at register() time, captured in closure.
- * All fields are stable after register() except `agentId`, which may be
- * updated once by the bootstrap hook when OpenClaw provides runtime identity.
+ * Resolved memory context for a single session.
+ *
+ * Resolved once in the agent:bootstrap hook via resolveEffectiveMemoryContext()
+ * and cached in `sessionContexts` (keyed by sessionKey). All tool execute() calls
+ * and subsequent hooks for that session read from the cache via getContext().
+ * On cache miss (tool called before bootstrap, or after session-end cleanup),
+ * getContext() resolves a fresh context using static config only (no runtime agentId).
  */
 interface EffectiveMemoryContext {
   /** Base memory directory (the configured memoryDir). */
   baseDir: string
   /** Working directory: baseDir in shared mode, agents/{id}/ in isolated. */
   effectiveDir: string
-  /** Resolved agent identity. May be updated by bootstrap hook with runtime identity. */
+  /** Resolved agent identity. */
   agentId: string
   /** Whether per-agent isolation is active. */
   isolated: boolean
@@ -435,27 +439,30 @@ function ok(text: string, details?: Record<string, unknown>) {
 }
 
 /**
- * Resolve the effective memory context for this plugin instance.
+ * Resolve the effective memory context for a given agent identity.
  *
- * Called once at register() time. The result is captured in closure scope and
- * used by every tool handler and lifecycle hook.
+ * Called from every tool execute() and lifecycle hook, NOT once at register().
+ * May trigger side effects: calls initAgentStore() when autoInitAgentStore is
+ * true and the agent directory doesn't exist yet.
  *
- * Agent identity is resolved from static config here. Runtime identity from
- * OpenClaw event context is late-bound: the bootstrap hook updates mctx.agentId
- * when `event.context.agentIdentity.id` is available.
- *
- * @param cfg - Parsed plugin config
+ * @param cfg           - Parsed plugin config (immutable after register())
+ * @param runtimeAgentId - Agent ID resolved at point-of-use (may differ per call)
  */
 function resolveEffectiveMemoryContext(
   cfg: PluginConfig,
+  runtimeAgentId?: string,
 ): EffectiveMemoryContext {
   const baseDir = cfg.memoryDir
   const isolationMode = cfg.isolationMode ?? 'auto'
   const sharedRecall = cfg.sharedRecall ?? true
 
-  // Step 1: Resolve agent identity from static config.
-  // Runtime identity (from OpenClaw event context) is late-bound in the bootstrap hook.
-  const agentId = cfg.agentId ?? 'openclaw'
+  // Step 1: Resolve agent identity — runtime overrides static config.
+  const agentId = runtimeAgentId ?? cfg.agentId ?? 'openclaw'
+
+  // Validate before any filesystem operations — prevents path-traversal attacks
+  // even if the bootstrap hook's validation was bypassed or a tool passes an
+  // agent_id directly.
+  assertValidAgentId(agentId)
 
   // Step 2: Determine effective isolation mode
   let isolated: boolean
@@ -593,6 +600,18 @@ const memoryKernelPlugin = {
       if (typeof s === 'string' && s.length > 0) currentSessionId = s
     }
 
+    // Per-session resolved memory context, cached at bootstrap time.
+    // Keyed by sessionKey. Eliminates per-call filesystem I/O and ensures
+    // concurrent sessions never clobber each other's routing.
+    const sessionContexts = new Map<string, EffectiveMemoryContext>()
+
+    // The session key for the most recently bootstrapped session.
+    // Used as fallback for tool execute() calls which don't receive sessionKey.
+    // Under concurrent sessions this is a last-writer-wins race, but tool calls
+    // are always serialized within a session — the race only matters if sessions
+    // interleave tool calls, which OpenClaw does not currently do.
+    let activeSessionKey = '__default__'
+
     // memory-kernel reads MEMORY_ENCRYPTION_KEY from process.env at call time.
     // Setting it here at plugin registration is intentional; a per-call override API
     // is not yet exposed. Note: this makes the key visible to all code in this process.
@@ -610,16 +629,27 @@ const memoryKernelPlugin = {
     }
     if (cfg.embeddingModel) process.env.EMBEDDING_MODEL = cfg.embeddingModel
 
-    // Resolve per-agent isolation context (stable after register() except
-    // agentId, which bootstrap may update with runtime identity).
-    const mctx = resolveEffectiveMemoryContext(cfg)
+    // Resolve memory context for a session. Bootstrap caches the result;
+    // subsequent calls within the same session return the cached value.
+    // When sessionKey is omitted (tool execute() calls), uses activeSessionKey.
+    function getContext(sessionKey?: string): EffectiveMemoryContext {
+      const key = sessionKey ?? activeSessionKey
+      const cached = sessionContexts.get(key)
+      if (cached) return cached
+      // First call for this session (or pre-bootstrap tools) — resolve and cache.
+      const ctx = resolveEffectiveMemoryContext(cfg)
+      sessionContexts.set(key, ctx)
+      return ctx
+    }
 
-    // Ensure index is fresh on plugin load — prevents silent recall failures
-    if (fs.existsSync(mctx.effectiveDir)) {
-      const stats = indexStats(mctx.effectiveDir)
+    // Ensure index is fresh on plugin load — prevents silent recall failures.
+    // Use static config identity for the one-time init check.
+    const initCtx = resolveEffectiveMemoryContext(cfg)
+    if (fs.existsSync(initCtx.effectiveDir)) {
+      const stats = indexStats(initCtx.effectiveDir)
       if (!stats) {
         try {
-          reindex(mctx.effectiveDir)
+          reindex(initCtx.effectiveDir)
         } catch (err) {
           console.warn(
             'memory-kernel: reindex on init failed:',
@@ -629,8 +659,8 @@ const memoryKernelPlugin = {
       }
     }
     // In isolated mode with sharedRecall, also ensure shared index is fresh.
-    if (mctx.isolated && mctx.sharedRecall) {
-      const sharedDir = path.join(mctx.baseDir, 'shared')
+    if (initCtx.isolated && initCtx.sharedRecall) {
+      const sharedDir = path.join(initCtx.baseDir, 'shared')
       if (fs.existsSync(sharedDir)) {
         const stats = indexStats(sharedDir)
         if (!stats) {
@@ -648,7 +678,7 @@ const memoryKernelPlugin = {
 
     // Use embedding-backed recall when both provider and key are available,
     // otherwise fall back to structured FTS5 recall. Isolation-aware.
-    async function smartRecall(query: RecallQuery): Promise<ContextBundle> {
+    async function smartRecall(mctx: EffectiveMemoryContext, query: RecallQuery): Promise<ContextBundle> {
       const useEmbeddings = !!(process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_API_KEY)
 
       if (mctx.isolated && mctx.sharedRecall) {
@@ -679,6 +709,7 @@ const memoryKernelPlugin = {
         async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof RememberParams>
+            const mctx = getContext()
             const atom = createAtom({
               memoryDir: mctx.effectiveDir,
               agent_id: mctx.agentId,
@@ -720,7 +751,8 @@ const memoryKernelPlugin = {
         async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof RecallParams>
-            const result = await smartRecall({
+            const mctx = getContext()
+            const result = await smartRecall(mctx, {
               task: p.task,
               types: p.types as AtomType[] | undefined,
               tags: p.tags,
@@ -768,6 +800,7 @@ const memoryKernelPlugin = {
         parameters: ReflectParams,
         async execute(_id: any, _params: any) {
           try {
+            const mctx = getContext()
             const result = reflect({ memoryDir: mctx.effectiveDir, agent_id: mctx.agentId, session_id: currentSessionId })
             return ok(
               `reflect complete — expired: ${result.expired}, archived: ${result.archived}, ` +
@@ -797,6 +830,7 @@ const memoryKernelPlugin = {
         async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof ContextBundleParams>
+            const mctx = getContext()
             const result = checkpoint({
               memoryDir: mctx.effectiveDir,
               agent_id: mctx.agentId,
@@ -834,6 +868,7 @@ const memoryKernelPlugin = {
         parameters: Type.Object({}),
         async execute(_id: any, _params: any) {
           try {
+            const mctx = getContext()
             const atoms = listAtoms(mctx.effectiveDir)
             const stats = indexStats(mctx.effectiveDir)
             const typeCounts: Record<string, number> = {}
@@ -886,28 +921,36 @@ const memoryKernelPlugin = {
     api.registerHook(
       ['agent:bootstrap'],
       async (event: any) => {
-        setSession(event.sessionKey)
+        const sessionKey = event.sessionKey || '__default__'
+        setSession(sessionKey)
 
-        // Runtime agent identity: update mctx.agentId if OpenClaw provides it.
-        // Runs before any tool calls in a session, so downstream handlers see
-        // the updated identity automatically via closure.
-        // NOTE: This updates the audit-trail identity only. Filesystem routing
-        // (effectiveDir) was resolved at register() from cfg.agentId. Full dynamic
-        // directory re-resolution is future work for when OpenClaw runtime identity
-        // may differ from the static config identity.
+        // A new bootstrap implies the prior session ended without command:new/reset.
+        // Delete its cached context to prevent unbounded Map growth.
+        if (activeSessionKey !== sessionKey) {
+          sessionContexts.delete(activeSessionKey)
+        }
+        activeSessionKey = sessionKey
+
+        // Runtime agent identity: capture from OpenClaw event context.
         const runtimeAgentId = event.context?.agentIdentity?.id
           ?? event.context?.agent?.id   // alternate path OpenClaw may use
+        let agentId: string | undefined
         if (typeof runtimeAgentId === 'string' && runtimeAgentId.length > 0) {
           assertValidAgentId(runtimeAgentId)
-          mctx.agentId = runtimeAgentId
+          agentId = runtimeAgentId
         }
+
+        // Resolve and cache the memory context for this session.
+        // Done once here — all subsequent tool calls and hooks use the cache.
+        const mctx = resolveEffectiveMemoryContext(cfg, agentId)
+        sessionContexts.set(sessionKey, mctx)
 
         if (!fs.existsSync(mctx.effectiveDir)) {
           event.messages?.push('mk: no memory dir — file-first fallback')
           return
         }
         try {
-          const bundle = await smartRecall({
+          const bundle = await smartRecall(mctx, {
             agent_id: mctx.agentId,
             session_id: event.sessionKey || 'bootstrap',
             max_tokens: 4000,
@@ -954,6 +997,7 @@ const memoryKernelPlugin = {
       ['session:compact:before'],
       async (event: any) => {
         setSession(event.sessionKey)
+        const mctx = getContext(event.sessionKey)
         try {
           const result = checkpoint({
             memoryDir: mctx.effectiveDir,
@@ -989,6 +1033,7 @@ const memoryKernelPlugin = {
       ['command:new', 'command:reset'],
       async (event: any) => {
         setSession(event.sessionKey)
+        const mctx = getContext(event.sessionKey)
         try {
           reflect({
             memoryDir: mctx.effectiveDir,
@@ -1006,6 +1051,10 @@ const memoryKernelPlugin = {
           event.messages?.push('mk: reflect complete')
         } catch {
           // fail silent
+        } finally {
+          // Clean up per-session state to prevent unbounded Map growth
+          const key = event.sessionKey || '__default__'
+          sessionContexts.delete(key)
         }
       },
       {
