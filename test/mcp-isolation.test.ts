@@ -178,6 +178,32 @@ describe('MCP isolation — share/unshare', () => {
     expect(data.removed).toBe(true);
   });
 
+  it('share_atom with mismatched from_agent reads from specified agent store', async () => {
+    // Beta tries to share alpha's atom by passing from_agent: 'alpha'
+    const alphaDir = path.join(testDir, 'agents', 'alpha');
+    openIndex(alphaDir);
+
+    const atom = createAtom({
+      memoryDir: alphaDir,
+      agent_id: 'alpha',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'alpha-private',
+      body: 'Alpha private data.',
+    });
+
+    // Beta's context, but passing from_agent: 'alpha' — accesses alpha's store
+    const ctxB = isoCtx('beta');
+    const result = await handleShareAtom(ctxB, {
+      atom_id: atom.frontmatter.id,
+      from_agent: 'alpha',
+    });
+    // This succeeds because from_agent is not cross-checked against ctx.defaultAgentId.
+    // Document this as a known design choice: no agent-identity enforcement at tool level.
+    const data = parseResult(result);
+    expect(data.source_agent).toBe('alpha');
+  });
+
   it('share_atom fails in shared mode', async () => {
     const ctx: McpContext = {
       memoryDir: testDir,

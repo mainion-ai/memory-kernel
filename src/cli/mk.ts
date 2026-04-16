@@ -43,7 +43,7 @@ import { compactLog } from '../event-log.js';
 import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
-import { renderClaudeMd } from '../render.js';
+import { renderClaudeMd, renderAgentClaudeMd } from '../render.js';
 import { wander, wanderFromFiles, WEIGHT_PRESETS } from '../wander.js';
 import { embedAtom, embedAllAtoms } from '../embed-sync.js';
 import type { Classification } from '../types.js';
@@ -902,7 +902,11 @@ program
     }
 
     try {
-      const content = renderClaudeMd(resolvedDir, { maxTokens });
+      const agent = getAgent();
+      const baseDir = path.resolve(memoryDir);
+      const content = agent && isIsolated(baseDir)
+        ? renderAgentClaudeMd(baseDir, agent, { maxTokens })
+        : renderClaudeMd(resolvedDir, { maxTokens });
       fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
       fs.writeFileSync(resolvedOutput, content);
       const lineCount = content.split('\n').length - 1;
@@ -969,9 +973,18 @@ program
       }
     }
 
+    // In isolated mode, include shared namespace atoms in the wander graph
+    const agent = getAgent();
+    const baseResolvedDir = path.resolve(opts.dir);
+    const sharedMemoryDir = agent && isIsolated(baseResolvedDir)
+      ? path.join(baseResolvedDir, 'shared')
+      : undefined;
+
     const wanderFn = useFiles ? wanderFromFiles : wander;
     const result = wanderFn({
       memoryDir,
+      sharedMemoryDir,
+      baseDir: sharedMemoryDir ? baseResolvedDir : undefined,
       seeds: opts.seed,
       seedTags: opts.tags,
       steps: opts.steps,
@@ -1181,10 +1194,8 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--strategy <strategy>', 'Migration strategy: fresh, partition, clone-to-shared', 'fresh')
   .option('--assign-untagged <agent>', 'Agent ID for untagged atoms (partition strategy)', 'main')
-  .option('--agent-id <id>', 'Agent ID for event log', 'cli')
-  .option('--session-id <id>', 'Session ID for event log', 'cli-session')
   .option('--json', 'Output as JSON')
-  .action((opts: { dir: string; strategy: string; assignUntagged: string; agentId: string; sessionId: string; json?: boolean }) => {
+  .action((opts: { dir: string; strategy: string; assignUntagged: string; json?: boolean }) => {
     const baseDir = path.resolve(opts.dir);
     if (!fs.existsSync(baseDir)) {
       exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
@@ -1200,8 +1211,6 @@ program
         baseDir,
         strategy,
         assignUntagged: opts.assignUntagged,
-        agent_id: opts.agentId,
-        session_id: opts.sessionId,
       });
 
       if (opts.json) {

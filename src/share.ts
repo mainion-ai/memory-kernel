@@ -64,8 +64,9 @@ export function shareAtom(
   // Read the atom
   const atom = readAtom(atomFile);
 
-  // Write snapshot to shared ENTITIES/
-  const sharedPath = path.join(sharedDir, 'ENTITIES', `${atomId}.md`);
+  // Write snapshot to shared ENTITIES/ using verified frontmatter ID
+  const verifiedId = atom.frontmatter.id;
+  const sharedPath = path.join(sharedDir, 'ENTITIES', `${verifiedId}.md`);
   assertWithinDir(sharedDir, sharedPath);
   writeAtom(atom, sharedPath);
 

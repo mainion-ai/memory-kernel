@@ -17,6 +17,7 @@ import {
   loadConfig,
   listAgents,
   migrate,
+  writeAtom,
 } from '../src/index.js';
 
 const AGENT = 'test-agent';
@@ -39,8 +40,7 @@ describe('migrate — fresh strategy', () => {
     const result = migrate({
       baseDir: testDir,
       strategy: 'fresh',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     expect(result.strategy).toBe('fresh');
@@ -53,9 +53,9 @@ describe('migrate — fresh strategy', () => {
   });
 
   it('fails if already in isolated mode', () => {
-    migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION });
+    migrate({ baseDir: testDir, strategy: 'fresh' });
     expect(() =>
-      migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION }),
+      migrate({ baseDir: testDir, strategy: 'fresh' }),
     ).toThrow(/already in isolated/);
   });
 });
@@ -84,8 +84,7 @@ describe('migrate — partition strategy', () => {
     const result = migrate({
       baseDir: testDir,
       strategy: 'partition',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     expect(result.strategy).toBe('partition');
@@ -125,8 +124,7 @@ describe('migrate — partition strategy', () => {
       baseDir: testDir,
       strategy: 'partition',
       assignUntagged: 'default-agent',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     expect(result.agents_created).toContain('worker');
@@ -157,8 +155,7 @@ describe('migrate — clone-to-shared strategy', () => {
     const result = migrate({
       baseDir: testDir,
       strategy: 'clone-to-shared',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     expect(result.strategy).toBe('clone-to-shared');
@@ -180,8 +177,7 @@ describe('migrate — clone-to-shared strategy', () => {
     const result = migrate({
       baseDir: testDir,
       strategy: 'clone-to-shared',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     expect(result.atoms_shared).toBe(0);
@@ -208,8 +204,7 @@ describe('migrate — partition removes originals', () => {
     migrate({
       baseDir: testDir,
       strategy: 'partition',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     // Original atom file should be gone from baseDir/ENTITIES/
@@ -245,8 +240,7 @@ describe('migrate — clone-to-shared removes originals', () => {
     migrate({
       baseDir: testDir,
       strategy: 'clone-to-shared',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     // Original atom file should be gone from baseDir/ENTITIES/
@@ -281,8 +275,7 @@ describe('migrate — partition validates agent_id format', () => {
       baseDir: testDir,
       strategy: 'partition',
       assignUntagged: 'fallback',
-      agent_id: AGENT,
-      session_id: SESSION,
+
     });
 
     // Should fall back to 'fallback' instead of creating nested dir
@@ -295,12 +288,55 @@ describe('migrate — partition validates agent_id format', () => {
   });
 });
 
+describe('migrate — partition with untagged atoms (no event log entry)', () => {
+  it('assigns atoms with no event log entry to assignUntagged agent', () => {
+    // Manually write an atom file without going through createAtom
+    // (no corresponding event in the event log)
+    const orphanPath = path.join(testDir, 'ENTITIES', 'FACT-2025-01-01-orphan.md');
+    writeAtom(
+      {
+        frontmatter: {
+          id: 'FACT-2025-01-01-orphan',
+          type: 'fact',
+          status: 'active',
+          slug: 'orphan',
+          confidence: 0.8,
+          tags: [],
+          created_at: '2025-01-01',
+          updated_at: '2025-01-01',
+        } as any,
+        body: 'Orphan atom with no event log entry.',
+        filePath: orphanPath,
+      },
+      orphanPath,
+    );
+
+    closeAllIndexes();
+    const result = migrate({
+      baseDir: testDir,
+      strategy: 'partition',
+      assignUntagged: 'orphan-catcher',
+    });
+
+    // The orphan atom should land in the assignUntagged agent's store
+    expect(result.agents_created).toContain('orphan-catcher');
+    expect(result.atoms_moved).toBe(1);
+
+    closeAllIndexes();
+    const orphanAgentDir = path.join(testDir, 'agents', 'orphan-catcher');
+    openIndex(orphanAgentDir);
+    const atoms = listAtoms(orphanAgentDir);
+    expect(atoms.length).toBe(1);
+    expect(atoms[0]!.body).toContain('Orphan atom');
+  });
+});
+
 describe('migrate — idempotency guard', () => {
   it('refuses to migrate an already-isolated store', () => {
-    migrate({ baseDir: testDir, strategy: 'fresh', agent_id: AGENT, session_id: SESSION });
+    migrate({ baseDir: testDir, strategy: 'fresh' });
 
     expect(() =>
-      migrate({ baseDir: testDir, strategy: 'partition', agent_id: AGENT, session_id: SESSION }),
+      migrate({ baseDir: testDir, strategy: 'partition' }),
     ).toThrow(/already in isolated/);
   });
 });

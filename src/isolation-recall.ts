@@ -8,7 +8,7 @@
 
 import fs from 'fs';
 import { recall } from './recall.js';
-import { getSharedDir } from './isolation.js';
+import { getSharedDir, DEFAULT_RENDER_CONFIG } from './isolation.js';
 import { listAtomFiles } from './store.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
@@ -70,7 +70,7 @@ export function recallIsolated(
   }
 
   // Apply token budget on merged set (single budget application point)
-  const maxTokens = query.max_tokens ?? 8000;
+  const maxTokens = query.max_tokens ?? DEFAULT_RENDER_CONFIG.max_tokens;
   let tokenCount = 0;
   const budgetedAtoms: Atom[] = [];
 

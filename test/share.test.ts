@@ -173,6 +173,7 @@ describe('listSharedAtoms', () => {
 describe('share + compact interaction', () => {
   it('compaction preserves share events and real updates independently', () => {
     const hustonDir = agentDir('huston');
+    openIndex(hustonDir);
 
     // Create an atom
     const atom = createAtom({
@@ -203,6 +204,7 @@ describe('share + compact interaction', () => {
 
     // Compact the log
     const compactResult = compactLog(hustonDir);
+    expect(compactResult.removed).toBeGreaterThan(0);
 
     // Both events should survive: atom_shared is non-mutation, atom_updated is kept as latest mutation
     const eventsAfter = readEvents(hustonDir);

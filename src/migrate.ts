@@ -39,8 +39,6 @@ export interface MigrateOptions {
   strategy: MigrateStrategy;
   /** Agent ID to assign atoms with unknown/missing agent_id (partition strategy). */
   assignUntagged?: string;
-  agent_id: string;
-  session_id: string;
 }
 
 export interface MigrateResult {

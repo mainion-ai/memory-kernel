@@ -19,6 +19,7 @@ import {
 } from '../src/index.js';
 import { recallIsolated } from '../src/isolation-recall.js';
 import { recall } from '../src/recall.js';
+import { resolveAgentDir, writeConfig } from '../src/isolation.js';
 
 const AGENT = 'test-agent';
 const SESSION = 'test-session';
@@ -219,6 +220,16 @@ describe('recallIsolated', () => {
     expect(episodeTexts.some((e) => e.includes('Unique shared'))).toBe(true);
     // Total: 1 deduped + 1 unique = 2
     expect(episodeTexts.length).toBe(2);
+  });
+
+  it('traversal agentDir does not escape base directory', () => {
+    // recallIsolated trusts its caller to pass a sanitized agentDir
+    // (via resolveAgentDir). Verify that resolveAgentDir blocks traversal
+    // before recallIsolated is ever called.
+    writeConfig(testDir, { isolation: 'per-agent' });
+
+    expect(() => resolveAgentDir(testDir, '../../etc')).toThrow(/Invalid agent ID/);
+    expect(() => resolveAgentDir(testDir, '../../../tmp')).toThrow(/Invalid agent ID/);
   });
 
   it('returns views from agent store, not shared', () => {

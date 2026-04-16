@@ -108,10 +108,10 @@ export function isIsolated(baseDir: string): boolean {
 export function resolveAgentDir(baseDir: string, agentId?: string, config?: IsolationConfig): string {
   if (!agentId) return baseDir;
 
+  assertValidAgentId(agentId);
+
   const cfg = config ?? loadConfig(baseDir);
   if (cfg.isolation === 'shared') return baseDir;
-
-  assertValidAgentId(agentId);
 
   const agentDir = path.join(baseDir, 'agents', agentId);
   assertWithinDir(baseDir, agentDir);
