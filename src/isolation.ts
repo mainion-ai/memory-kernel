@@ -134,7 +134,7 @@ export function listAgents(baseDir: string): string[] {
   if (!fs.existsSync(agentsDir)) return [];
 
   return fs.readdirSync(agentsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && AGENT_ID_PATTERN.test(entry.name))
     .map((entry) => entry.name)
     .sort();
 }

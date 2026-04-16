@@ -4,7 +4,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { resolveAgentDir, initAgentStore, assertValidAgentId } from '../isolation.js';
+import { resolveAgentDir, assertValidAgentId } from '../isolation.js';
 
 /**
  * Resolve the effective memory directory, applying agent isolation when active.
@@ -16,12 +16,13 @@ export function resolveDir(dir: string, agent?: string): string {
   const baseDir = path.resolve(dir);
   if (!agent) return baseDir;
   assertValidAgentId(agent);
-  // Only auto-initialise agent store if the base memory directory already exists.
   // Non-init commands should not silently create directories — that's mk init's job.
   if (!fs.existsSync(baseDir)) return path.join(baseDir, 'agents', agent);
   const agentDir = resolveAgentDir(baseDir, agent);
   if (agentDir !== baseDir && !fs.existsSync(agentDir)) {
-    initAgentStore(baseDir, agent);
+    throw new Error(
+      `Agent store not found: ${agentDir}\n  Run "mk init -a ${agent}" first to create the agent store.`,
+    );
   }
   return agentDir;
 }

@@ -104,15 +104,31 @@ describe('wander isolation', () => {
 
     createAtom({ ...base(hustonDir), type: 'fact', slug: 'lonely', body: 'Lonely agent.', scope: { tags: ['solo'] } });
 
-    // Non-existent shared dir
+    // Non-existent shared dir (within base directory — passes path validation)
     const result = wander({
       memoryDir: hustonDir,
-      sharedMemoryDir: '/tmp/nonexistent-shared',
+      sharedMemoryDir: path.join(testDir, 'nonexistent-shared'),
       seedTags: ['solo'],
       steps: 1,
     });
 
     // Should still work with agent's atoms only
     expect(result.activated.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('rejects sharedMemoryDir outside base directory', () => {
+    const hustonDir = agentDir('huston');
+    openIndex(hustonDir);
+
+    createAtom({ ...base(hustonDir), type: 'fact', slug: 'safe', body: 'Safe atom.', scope: { tags: ['safe'] } });
+
+    expect(() =>
+      wander({
+        memoryDir: hustonDir,
+        sharedMemoryDir: '/tmp/evil-shared',
+        seedTags: ['safe'],
+        steps: 1,
+      }),
+    ).toThrow(/Path traversal denied/);
   });
 });

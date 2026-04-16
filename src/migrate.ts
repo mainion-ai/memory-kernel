@@ -162,7 +162,14 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
     agentAtoms.get(agentId)!.push(atom);
   }
 
-  // 4. Create agent dirs and move atoms
+  // 4. Write config FIRST so a crash leaves the store in "already isolated" state
+  //    (idempotent on re-run) rather than a zombie with deleted atoms but shared config
+  writeConfig(baseDir, { isolation: 'per-agent' });
+
+  // 5. Create shared namespace
+  initSharedStore(baseDir);
+
+  // 6. Create agent dirs and move atoms
   const agentsCreated: string[] = [];
   let atomsMoved = 0;
 
@@ -183,18 +190,12 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
       atomsMoved++;
     }
 
-    // 5. Rebuild index
+    // 7. Rebuild index
     reindex(agentDir);
   }
 
-  // 6. Rebuild base index (now empty of atoms)
+  // 8. Rebuild base index (now empty of atoms)
   reindex(baseDir);
-
-  // 7. Create shared namespace
-  initSharedStore(baseDir);
-
-  // 8. Write config
-  writeConfig(baseDir, { isolation: 'per-agent' });
 
   return {
     strategy: 'partition',
@@ -219,6 +220,10 @@ function migrateCloneToShared(opts: MigrateOptions): MigrateResult {
   // 2. Copy all existing atoms to shared (backup first)
   const atoms = listAtoms(baseDir);
   const backupPath = createMigrationBackup(baseDir, atoms);
+
+  // 3. Write config FIRST so a crash leaves the store in "already isolated" state
+  writeConfig(baseDir, { isolation: 'per-agent' });
+
   let atomsShared = 0;
 
   for (const atom of atoms) {
@@ -226,18 +231,19 @@ function migrateCloneToShared(opts: MigrateOptions): MigrateResult {
     const destPath = path.join(sharedDir, subDir, path.basename(atom.filePath!));
     writeAtom(atom, destPath);
     // Remove original to prevent stale atoms if isolation config is later removed
-    fs.unlinkSync(atom.filePath!);
+    try {
+      fs.unlinkSync(atom.filePath!);
+    } catch {
+      // Source already removed or inaccessible — destination was written, so proceed
+    }
     atomsShared++;
   }
 
-  // 3. Rebuild shared index
+  // 4. Rebuild shared index
   reindex(sharedDir);
 
-  // 4. Rebuild base index (now empty of atoms)
+  // 5. Rebuild base index (now empty of atoms)
   reindex(baseDir);
-
-  // 5. Write config
-  writeConfig(baseDir, { isolation: 'per-agent' });
 
   return {
     strategy: 'clone-to-shared',

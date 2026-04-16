@@ -16,8 +16,9 @@
  * - Floop (nvandessel): Hebbian-strengthened behavior graphs
  */
 
+import path from 'path';
 import { openIndex, indexExists } from './index-db.js';
-import { listAtoms } from './store.js';
+import { listAtoms, assertWithinDir } from './store.js';
 
 // --- Types ---
 
@@ -663,7 +664,16 @@ export function wander(options: WanderOptions): WanderResult {
   const now = Date.now();
   const graph = loadAtomGraph(memoryDir, now, options);
 
-  // Merge shared namespace graph if provided
+  // Merge shared namespace graph if provided (validate path is within base directory)
+  if (options.sharedMemoryDir) {
+    // In isolation mode memoryDir is baseDir/agents/agentId — shared must be under the same baseDir
+    const resolvedShared = path.resolve(options.sharedMemoryDir);
+    const resolvedMemory = path.resolve(memoryDir);
+    const baseDir = resolvedMemory.includes(`${path.sep}agents${path.sep}`)
+      ? resolvedMemory.slice(0, resolvedMemory.indexOf(`${path.sep}agents${path.sep}`))
+      : resolvedMemory;
+    assertWithinDir(baseDir, resolvedShared);
+  }
   if (options.sharedMemoryDir && indexExists(options.sharedMemoryDir)) {
     const sharedGraph = loadAtomGraph(options.sharedMemoryDir, now, options);
     for (const [id, node] of sharedGraph) {
