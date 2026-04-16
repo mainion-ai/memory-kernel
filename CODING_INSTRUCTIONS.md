@@ -463,3 +463,17 @@ All major Milestone D stubs have been implemented. Remaining stubs for future mi
 - README Performance + Troubleshooting sections ✅
 - `package.json` version → `1.0.0` ✅
 - Total test count: **551 passing** across 21 test files
+
+### Milestone H: Per-Agent Isolation → v2.0.0 ✅ COMPLETE
+- Two isolation modes: `shared` (default, backward compatible) and `per-agent` (config.yaml or `MK_ISOLATION` env) ✅
+- Core modules: `src/isolation.ts` (config, routing, agent store init, render config), `src/isolation-recall.ts` (union recall with agent-wins dedup), `src/share.ts` (copy-based share/unshare), `src/migrate.ts` (3 strategies: fresh, partition, clone-to-shared) ✅
+- Per-agent `render.yaml`: mode (operational/constitutive/balanced), max_tokens, include_shared, type_weights ✅
+- `renderAgentClaudeMd()` in `src/render.ts` — agent-specific CLAUDE.md rendering with union recall ✅
+- Wander scoping: graph walks restricted to agent + shared namespace ✅
+- CLI: global `-a, --agent <id>` option, `mk share`, `mk unshare`, `mk migrate`, `mk status --all-agents` ✅
+- MCP: `mk_share_atom`, `mk_unshare_atom` tools, `MCP_AGENT_ID` env var routing, all tools agent-aware ✅
+- Security: `assertValidAgentId()` (alphanumeric + dash + underscore only), `assertWithinDir()` path traversal guard ✅
+- Migration backup with crash-safe ordering (config written first → idempotent on re-run) ✅
+- 7 test files: `test/isolation.test.ts`, `test/isolation-recall.test.ts`, `test/isolation-render.test.ts`, `test/isolation-wander.test.ts`, `test/isolation-migrate.test.ts`, `test/share.test.ts`, `test/mcp-isolation.test.ts` ✅
+- Documentation: `docs/isolation.md` canonical guide, CHANGELOG, README, SDK reference, migration guide, CLI integration, MCP docs, STORY.md Chapter 26, agent quickrefs, host doctrine ✅
+- Total test count: **805+ passing** across 35+ test files

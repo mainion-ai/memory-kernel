@@ -1362,3 +1362,103 @@ v1.0 proved memory-kernel could store and retrieve. v1.4 taught it what matters 
 v2.0 is the point where it stopped being a library and started being infrastructure. Bolted to the floor, wired into the host, observable from the outside, and governed by a doctrine that says: *this is where knowledge lives.*
 
 The 805 tests are 805 promises that all of this — from the simplest atom creation to the most tangled closure metric — works exactly as described. The filing cabinet is no longer in the workshop. It's in the office, and people are using it.
+
+---
+
+## Chapter 26: When Agents Need Their Own Filing Cabinets
+
+Imagine an office with one filing cabinet. Two agents — Alice and Bob — both use it. Alice files a card: "Use Redis for caching." Bob, working a different problem, files: "Use Memcached for caching." Neither knows the other filed anything. Next morning, both cards are in the same drawer, and whoever reads them sees a contradiction that neither agent intended.
+
+This isn't a merge conflict. Merge conflicts happen when two agents deliberately work on the same atom. This is something simpler and more insidious: two agents who shouldn't be sharing a drawer at all, stepping on each other because nobody told the filing cabinet that they're separate people.
+
+### Separate Drawers
+
+The fix is structural. Instead of one shared filing cabinet, each agent gets their own section:
+
+```
+The Office Filing Cabinet
+├── Alice's Section/          ← Only Alice can file and read here
+│   ├── Facts, decisions, beliefs...
+│   ├── Her event log
+│   └── Her index
+├── Bob's Section/            ← Only Bob can file and read here
+│   ├── Facts, decisions, beliefs...
+│   ├── His event log
+│   └── His index
+└── The Corkboard/            ← Shared — anyone can pin or read
+    └── Explicitly shared cards
+```
+
+In the actual system, "Alice's Section" is `agents/alice/`, "Bob's Section" is `agents/bob/`, and "The Corkboard" is `shared/`. A `config.yaml` file at the top says `isolation: per-agent`, and that single setting changes how every command works.
+
+This is all opt-in. If you don't create a config.yaml, if you don't pass an agent ID, everything works exactly as before. One cabinet, one drawer, shared by everyone. The default mode is called "shared" — backward compatible, no surprises.
+
+### Sharing Is Deliberate
+
+When Alice discovers something important that Bob should know, she doesn't give him access to her entire section. She takes a snapshot of that specific card and pins it to the corkboard.
+
+That's what `mk share` does. It copies the card — not the original, a snapshot. If Alice updates her original later, the pinned copy doesn't change. It's frozen in time. If she wants the corkboard to reflect her update, she pins it again. The new pin replaces the old one.
+
+This is intentional. Automatic synchronisation between private and shared would turn isolation into an illusion. The whole point is that sharing is a conscious decision: "I've verified this. Others should see it."
+
+Unpinning is just as deliberate. `mk unshare` removes the card from the corkboard. Alice's original stays in her section untouched.
+
+### Reading Is Inclusive
+
+When Bob needs context — when he runs `mk recall` — the system doesn't just search his section. It searches his section *and* the corkboard, then merges the results. Bob sees his own cards plus anything that's been shared.
+
+If there's a collision — Bob has a card with the same ID as one on the corkboard — Bob's version wins. His private knowledge takes precedence over the shared copy. This matters because Bob might have updated his version with information he hasn't shared yet.
+
+The token budget is applied once, on the merged result. Both sources contribute to filling Bob's context window, and neither source is starved at the expense of the other.
+
+This union recall works for everything: atoms, episodes, even graph walks. When Bob runs `mk wander`, spreading activation traverses his private atoms and shared atoms but never reaches into Alice's section. Alice's private beliefs, her personal preferences, her draft decisions — all invisible to Bob's graph walks.
+
+### Each Agent's Preferences
+
+Alice and Bob don't just have different knowledge — they have different needs. Alice is a research agent. She cares most about beliefs and open questions. Bob is an operations agent. He wants facts and procedures.
+
+Each agent section has a `render.yaml` file that controls how CLAUDE.md is generated for that agent:
+
+```yaml
+mode: operational        # Alice might use 'constitutive' instead
+max_tokens: 8000
+include_shared: true     # Pull in the corkboard
+type_weights:
+  belief: 0.5
+  fact: 1.5
+  procedure: 2.0
+```
+
+When the system renders Bob's CLAUDE.md, it uses Bob's preferences: heavier weight on facts and procedures, lighter on beliefs. Alice gets the opposite. Same memory system, different lenses.
+
+### Moving Day
+
+You've been running with one shared drawer for months. Thirty agents' worth of knowledge, all mixed together. Now you want to split it up.
+
+The `mk migrate` command offers three approaches:
+
+**Fresh start.** Just flip the switch. Enable per-agent mode, create the shared namespace, and start adding agent sections from scratch. The old cards stay where they are — they don't move, and they're only accessible if you explicitly move them into an agent section or the shared namespace. Clean, but you lose easy access to existing knowledge.
+
+**Partition.** The system reads the event log to figure out who created each card. Alice's events say she created card A, B, and C. Bob's events say he created D, E, and F. Cards G and H have no identifiable creator — they go to a fallback agent (by default, "main"). After partitioning, each agent's section contains exactly the cards they created.
+
+Before moving anything, the system takes a backup — a timestamped copy of all atoms, just in case. The config is written first: if the process crashes mid-migration, the store is already marked as isolated, and re-running migrate will refuse (it's already done). Better to be half-migrated in a known state than to have an ambiguous mess.
+
+**Clone to shared.** Instead of splitting cards between agents, copy everything to the corkboard. Every agent sees all existing knowledge through union recall. New knowledge goes to their private sections. This is the gentlest migration: nothing is lost, nothing is hidden, and agents diverge naturally over time as they accumulate private knowledge.
+
+### Safety
+
+Agent IDs aren't arbitrary strings. They must be alphanumeric, dashes, or underscores — nothing else. No dots. No slashes. No spaces.
+
+This isn't pedantry. An agent ID becomes a directory name: `agents/{agentId}/`. If someone could pass `../../etc/passwd` as an agent ID, the system would try to create a directory outside the memory folder. The ID validation catches this. Every directory operation also checks that the resolved path stays within the base directory — a second layer of defence that catches anything the regex might miss.
+
+### From Filing Cabinet to Office Building
+
+Chapters 1 through 25 described a filing cabinet. One cabinet, one set of drawers, one index. Everything in one place.
+
+Chapter 26 turns the filing cabinet into an office building. Each agent gets their own cabinet in their own room, with a bulletin board in the hallway for shared knowledge. The agents can see their own cabinets and the bulletin board, but not each other's rooms.
+
+The mechanics are the same — atoms, events, typed knowledge, confidence scores, spreading activation. The structure is different — private stores with controlled sharing instead of one shared store.
+
+This matters because agents aren't interchangeable. A research agent and a deployment agent have different jobs, different knowledge, and different priorities. Giving them separate memory isn't just about preventing collisions — it's about letting each agent develop its own understanding without being overwhelmed by knowledge that belongs to someone else.
+
+The 805 tests are now joined by 1,400 more, covering every path through isolation: config loading, union recall, share and unshare, migration strategies, graph scoping, render preferences, and the security checks that keep agent sections truly separate. The office building is load-tested. The walls are solid.

@@ -200,6 +200,52 @@ Events are deduplicated by ID — merging the same log twice is safe.
 
 ---
 
+## Path 6: From shared mode to per-agent isolation
+
+You have a single memory directory used by one or more agents and want to give each agent their own private store with optional sharing.
+
+**Three strategies:**
+
+### Strategy: `fresh` — start clean
+
+Just enables isolation mode and creates the shared directory. Existing atoms stay in place (at the root level). New agent stores are created as needed.
+
+```bash
+mk migrate -d /path/to/memory --strategy fresh
+```
+
+**After:** Create agent stores with `mk init /path/to/memory -a <agent-id>`. Existing root-level atoms are not moved — they remain accessible only if you add them to an agent store or shared namespace manually.
+
+### Strategy: `partition` — sort by creator
+
+Routes existing atoms into agent subdirectories based on the `agent_id` recorded in the event log (the first event per atom determines the creating agent). Atoms with no identifiable creator go to a fallback agent.
+
+```bash
+mk migrate -d /path/to/memory --strategy partition
+mk migrate -d /path/to/memory --strategy partition --assign-untagged default-agent
+```
+
+**After:** Each agent's atoms are in `agents/{agent_id}/ENTITIES/`. A timestamped backup (`.mk-backup-*`) is created before any files are moved.
+
+### Strategy: `clone-to-shared` — make everything shared
+
+Copies all existing atoms into the shared namespace. Every agent will see them through union recall.
+
+```bash
+mk migrate -d /path/to/memory --strategy clone-to-shared
+```
+
+**After:** All atoms are in `shared/ENTITIES/`. New agent-specific atoms will be private. A backup is created before files are moved.
+
+**Safety notes:**
+- Migration refuses to run if the store is already in isolated mode (idempotency guard).
+- Config is written first, so a crash during migration leaves the store in a recoverable "already isolated" state.
+- Use `mk status --all-agents` to verify the result.
+
+For the full isolation guide, see **[docs/isolation.md](isolation.md)**.
+
+---
+
 ## Verify migration
 
 After any migration path, run:

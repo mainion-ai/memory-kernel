@@ -9,6 +9,57 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — Per-Agent Memory Isolation
+
+- **Two isolation modes: `shared` (default) and `per-agent`** — backward-compatible by design. In shared mode, everything works unchanged. In per-agent mode, each agent gets `agents/{agentId}/` with its own atoms, index, events, and render config; a `shared/` namespace holds explicitly shared atoms. Mode is set via `config.yaml` or `MK_ISOLATION` env var.
+
+- **Isolation core** (`src/isolation.ts`) — `loadConfig()` / `writeConfig()` for config.yaml management, `isIsolated()` mode check, `resolveAgentDir()` routing (identity in shared mode, `agents/{id}/` in isolated mode), `getSharedDir()`, `listAgents()`, `initAgentStore()`, `initSharedStore()`, `initIsolatedBase()`. Agent ID validation (`assertValidAgentId()`) enforces alphanumeric + dash + underscore only — blocks path traversal via `assertWithinDir()`.
+
+- **Union recall** (`src/isolation-recall.ts`) — `recallIsolated()` searches agent store + shared namespace, merges results with agent-wins-on-collision dedup, applies token budget once at the merge step (not per-source) so shared atoms aren't starved. Episodes merged with dedup.
+
+- **Share/unshare** (`src/share.ts`) — `shareAtom()` copies an atom snapshot from an agent store to the shared namespace (not symlink — re-share to update). `unshareAtom()` removes from shared. `listSharedAtoms()` lists the shared namespace. Events: `atom_shared`, `atom_unshared`.
+
+- **Migration** (`src/migrate.ts`) — `migrate()` converts a shared-mode store to per-agent isolation with three strategies:
+  - `fresh` — Write config.yaml + create shared dir, leave existing atoms as-is
+  - `partition` — Route atoms to agent subdirs by their creating `agent_id` from the event log
+  - `clone-to-shared` — Copy all existing atoms into the shared namespace
+  - Backup: timestamped `.mk-backup-*` directory created before destructive operations. Config written first so crash leaves store in "already isolated" state (idempotent on re-run).
+
+- **Per-agent render config** — `render.yaml` per agent directory with fields: `mode` (operational | constitutive | balanced), `max_tokens`, `include_shared`, `type_weights` (per-atom-type recall weight overrides). `loadRenderConfig()` / `writeRenderConfig()` with validation and defaults.
+
+- **`renderAgentClaudeMd()`** (`src/render.ts`) — Render CLAUDE.md for a specific agent in isolated mode. Loads per-agent render.yaml, uses `recallIsolated()` for agent + shared union when `include_shared: true`.
+
+- **Wander scoping** (`src/wander.ts`) — In isolated mode, graph walks are scoped to the agent's own store + shared namespace. Agents cannot traverse into other agents' private stores.
+
+- **CLI additions:**
+  - Global `-a, --agent <id>` option threads agent isolation through all commands
+  - `mk init -a <agent>` — Initialize in per-agent isolation mode (creates config.yaml, `agents/{agent}/`, `shared/`)
+  - `mk status --all-agents` — Per-agent summary showing atom/event counts per agent + shared namespace
+  - `mk share <atom-id> --from <agent>` — Share atom snapshot to shared namespace
+  - `mk unshare <atom-id>` — Remove atom from shared namespace
+  - `mk migrate --strategy <fresh|partition|clone-to-shared>` — Convert shared store to isolated mode
+
+- **MCP additions** (`src/mcp/`):
+  - `mk_share_atom` tool — Share atom from agent to shared namespace (isolated mode only)
+  - `mk_unshare_atom` tool — Remove atom from shared namespace (isolated mode only)
+  - `MCP_AGENT_ID` env var — Determines which agent store the MCP server routes to (defaults to `mcp-server`)
+  - All existing tools automatically route to the correct agent store via `resolveMemoryDir()`
+
+- **New types** (`src/types.ts`): `IsolationConfig`, `RenderConfig`, `RenderMode`, event actions `atom_shared` and `atom_unshared`.
+
+- **[Isolation guide →](docs/isolation.md)** — Dedicated documentation covering concepts, quick start, sharing, union recall, migration, CLI/SDK/MCP reference, and troubleshooting.
+
+### Tests — Per-Agent Isolation
+
+- 7 new test modules, ~1,450 lines:
+  - `test/isolation.test.ts` — Config loading, agent store init, render config, path validation
+  - `test/isolation-recall.test.ts` — Union recall, agent-wins dedup, token budget, episodes
+  - `test/isolation-render.test.ts` — Per-agent render with type_weights, include_shared
+  - `test/isolation-wander.test.ts` — Graph scoping, shared accessibility, cross-agent invisibility
+  - `test/isolation-migrate.test.ts` — All 3 migration strategies, backup, idempotency
+  - `test/share.test.ts` — Share/unshare operations, snapshots, re-share, events
+  - `test/mcp-isolation.test.ts` — Tool routing, share/unshare tools, shared-mode rejection
+
 ### Changed — OpenClaw plugin (SecretRef support for sensitive config)
 
 - **`embeddingApiKey` and `encryptionKey` now accept file SecretRefs** in addition to plain strings. Users can write `{ "source": "file", "provider": "vault", "id": "/openai-api-key" }` and the plugin resolves it locally at init via a `secretProviders` map. Lets users keep sensitive values out of both `openclaw.json` and `~/.openclaw/.env` (which `openclaw gateway install` otherwise inlines into the launchd/systemd service file).

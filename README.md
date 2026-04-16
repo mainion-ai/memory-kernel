@@ -120,9 +120,33 @@ my-memory/
 └── .memory-index.db       ← SQLite cache (derived, gitignored)
 ```
 
+### Per-Agent Isolation (optional)
+
+When multiple agents use the same memory directory, enable **per-agent isolation** to give each agent private memory with controlled sharing:
+
+```
+my-memory/
+├── config.yaml            ← isolation: per-agent
+├── agents/
+│   ├── alice/             ← Full memory layout (private to Alice)
+│   └── bob/               ← Full memory layout (private to Bob)
+└── shared/                ← Explicitly shared atoms (visible to all)
+```
+
+```bash
+mk init ./memory -a alice                    # Initialize in isolated mode
+mk remember "..." -d ./memory -a alice -t fact
+mk share FACT-xxx --from alice -d ./memory   # Snapshot to shared namespace
+mk recall -d ./memory -a bob                 # Bob sees his atoms + shared
+```
+
+Shared mode (default) works unchanged. **[Isolation guide →](docs/isolation.md)**
+
 ---
 
 ## CLI
+
+> **Tip:** All commands accept `-a, --agent <id>` for per-agent isolation. In shared mode the flag is ignored.
 
 | Command | Description |
 |---------|-------------|
@@ -150,6 +174,10 @@ my-memory/
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
 | `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational closure metrics (self-referential density, entanglement, phase detection) |
+| `mk share <atom-id> --from <agent> -d <dir> [--json]` | Copy atom snapshot to shared namespace (isolated mode) |
+| `mk unshare <atom-id> -d <dir> [--json]` | Remove atom from shared namespace (isolated mode) |
+| `mk migrate -d <dir> --strategy <fresh\|partition\|clone-to-shared>` | Convert shared store to per-agent isolation |
+| `mk status -d <dir> --all-agents [--json]` | Show per-agent summary (isolated mode) |
 
 ---
 
@@ -192,7 +220,7 @@ import { renderClaudeMd } from 'memory-kernel';
 const md = renderClaudeMd('./memory', { maxTokens: 8000 });
 ```
 
-Full API covers event sourcing, replay, episodes, multi-agent merge, encryption, import, conflict resolution, and more. **[SDK reference →](docs/sdk-reference.md)**
+Full API covers event sourcing, replay, episodes, multi-agent merge, encryption, import, conflict resolution, per-agent isolation, and more. **[SDK reference →](docs/sdk-reference.md)** | **[Isolation guide →](docs/isolation.md)**
 
 ---
 
@@ -266,8 +294,12 @@ MEMORY_DIR=/path/to/memory mk-mcp
 | `mk_list_conflicts` | `queryIndex` | List conflicts |
 | `mk_resolve_conflict` | `resolveConflict()` | Resolve conflict |
 | `mk_get_context_bundle` | `checkpoint()` | Full handoff bundle |
+| `mk_share_atom` | `shareAtom()` | Share atom to shared namespace (isolated mode) |
+| `mk_unshare_atom` | `unshareAtom()` | Remove from shared namespace (isolated mode) |
 
 Resources: `memory://decisions`, `memory://constraints`, `memory://handoff`, `memory://open-questions`
+
+Set `MCP_AGENT_ID` env var to route all tools to a specific agent store in isolated mode (defaults to `mcp-server`).
 
 **Claude Desktop config:**
 ```json
@@ -337,6 +369,8 @@ Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, c
 | No atoms after merge | Run `mk reflect` — merge doesn't auto-regenerate views |
 | Embeddings not working | Set `EMBEDDING_PROVIDER=voyage` + `EMBEDDING_API_KEY=...`, then `mk reindex --embed` |
 | Conflict resolution | `mk reflect` → inspect `CONFLICTS/` → update atoms → `resolveConflict()` |
+| Invalid agent ID | Agent IDs must be alphanumeric, dashes, or underscores only |
+| `share requires per-agent isolation mode` | Enable isolation first: `mk migrate --strategy fresh` or set `isolation: per-agent` in config.yaml |
 
 ---
 

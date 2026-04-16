@@ -590,3 +590,159 @@ closeIndex('./memory');
 ```
 
 Or use the CLI: `mk wander -d ./memory --tags philosophy accounting --steps 5 --json`
+
+---
+
+## Per-Agent Isolation
+
+For the full guide, see **[docs/isolation.md](isolation.md)**.
+
+### Configuration
+
+```typescript
+import {
+  loadConfig,
+  writeConfig,
+  isIsolated,
+  assertValidAgentId,
+  resolveAgentDir,
+  getSharedDir,
+  listAgents,
+  DEFAULT_ISOLATION_CONFIG,
+  DEFAULT_RENDER_CONFIG,
+} from 'memory-kernel';
+import type { IsolationConfig, RenderConfig, RenderMode } from 'memory-kernel';
+
+// Load config (config.yaml > MK_ISOLATION env > default shared)
+const config: IsolationConfig = loadConfig('./memory');
+// config.isolation: 'shared' | 'per-agent'
+
+// Write config
+writeConfig('./memory', { isolation: 'per-agent' });
+
+// Check mode
+isIsolated('./memory'); // boolean
+
+// Validate agent ID (throws on invalid — blocks path traversal)
+assertValidAgentId('my-agent');    // ok
+assertValidAgentId('../../hack');  // throws
+
+// Resolve directory for an agent
+// Isolated mode:  './memory/agents/alice'
+// Shared mode:    './memory' (identity — backward compatible)
+const agentDir = resolveAgentDir('./memory', 'alice');
+
+// Shared namespace path
+getSharedDir('./memory'); // './memory/shared'
+
+// List all agent IDs with stores
+listAgents('./memory');   // ['alice', 'bob']
+```
+
+### Initialization
+
+```typescript
+import { initAgentStore, initSharedStore, initIsolatedBase } from 'memory-kernel';
+
+// Full bootstrap: config.yaml + shared namespace + optional first agent
+initIsolatedBase('./memory', 'alice');
+
+// Initialize a single agent store (creates dirs + default render.yaml)
+const agentDir = initAgentStore('./memory', 'alice');
+
+// Initialize shared namespace only
+const sharedDir = initSharedStore('./memory');
+```
+
+### Union Recall
+
+```typescript
+import { recallIsolated } from 'memory-kernel';
+import type { ContextBundle, RecallQuery } from 'memory-kernel';
+
+// Merges agent store + shared namespace atoms
+// Agent atoms win on ID collision; token budget applied once on merged set
+const bundle: ContextBundle = recallIsolated(
+  './memory/agents/alice',  // Resolved agent directory
+  './memory',               // Base directory (to locate shared/)
+  { task: 'API design', max_tokens: 4000 },
+);
+// bundle.atoms — merged atoms (alice's + shared, alice wins on collision)
+// bundle.episodes — merged episodes with dedup
+// bundle.token_estimate — estimated tokens of merged result
+```
+
+### Share / Unshare
+
+```typescript
+import { shareAtom, unshareAtom, listSharedAtoms } from 'memory-kernel';
+import type { ShareResult, ShareOptions } from 'memory-kernel';
+
+// Copy an atom snapshot from agent store to shared namespace
+const result: ShareResult = shareAtom(
+  './memory',         // Base directory
+  'FACT-2026-xxx',    // Atom ID
+  'alice',            // Agent that owns the atom
+  { agent_id: 'alice', session_id: 'session-1' },
+);
+// result: { atom_id, shared_path, source_agent }
+
+// Remove from shared namespace
+unshareAtom('./memory', 'FACT-2026-xxx', {
+  agent_id: 'alice',
+  session_id: 'session-1',
+});
+
+// List all atoms in shared namespace
+const shared = listSharedAtoms('./memory');
+```
+
+### Per-Agent Render Config
+
+```typescript
+import { loadRenderConfig, writeRenderConfig } from 'memory-kernel';
+import type { RenderConfig } from 'memory-kernel';
+
+// Load (falls back to defaults for missing fields)
+const config: RenderConfig = loadRenderConfig('./memory/agents/alice');
+// { mode: 'balanced', max_tokens: 8000, include_shared: true, type_weights: {} }
+
+// Write custom config
+writeRenderConfig('./memory/agents/alice', {
+  mode: 'operational',     // 'operational' | 'constitutive' | 'balanced'
+  max_tokens: 12000,
+  include_shared: true,
+  type_weights: { belief: 1.5, fact: 1.0 },
+});
+```
+
+### Render Agent CLAUDE.md
+
+```typescript
+import { renderAgentClaudeMd } from 'memory-kernel';
+
+// Renders CLAUDE.md for a specific agent using their render.yaml config
+// Uses recallIsolated() internally when include_shared is true
+const markdown = renderAgentClaudeMd('./memory', 'alice');
+```
+
+### Migration
+
+```typescript
+import { migrate } from 'memory-kernel';
+import type { MigrateStrategy, MigrateOptions, MigrateResult } from 'memory-kernel';
+
+const result: MigrateResult = migrate({
+  baseDir: './memory',
+  strategy: 'partition',        // 'fresh' | 'partition' | 'clone-to-shared'
+  assignUntagged: 'main',      // Fallback agent for partition (default: 'main')
+  agent_id: 'cli',
+  session_id: 'migration-1',
+});
+// result.strategy — strategy used
+// result.agents_created — agent IDs whose stores were created
+// result.atoms_moved — atoms moved to agent stores (partition)
+// result.atoms_shared — atoms copied to shared namespace (clone-to-shared)
+// result.config_written — true
+// result.backup_path — path to timestamped backup (empty for fresh strategy)
+```
