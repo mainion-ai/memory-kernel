@@ -42,3 +42,13 @@ npm run build   # compile TypeScript
 - Per-agent `render.yaml` controls render mode, token budget, type weights, include_shared
 - Migration: `mk migrate --strategy fresh|partition|clone-to-shared`
 - Key files: `src/isolation.ts`, `src/isolation-recall.ts`, `src/share.ts`, `src/migrate.ts`, `src/render.ts` (renderAgentClaudeMd)
+
+## OpenClaw plugin isolation
+
+- Plugin source: `packages/openclaw-memory-kernel/src/index.ts`
+- `resolveEffectiveMemoryContext(cfg)` decides shared vs isolated routing at register() time
+- 4 config fields: `isolationMode` (`auto`|`shared-only`|`per-agent-required`), `autoInitAgentStore`, `sharedRecall`, `failIfMissingAgentStore`
+- `failIfMissingAgentStore: true` throws at register() when agent store is missing and autoInit is off; `false` (default) falls back to shared mode with a warning
+- All 5 tools and 3 hooks route through the resolved `EffectiveMemoryContext`
+- `recallIsolatedWithEmbeddings()` + `mergeIsolatedBundles()` handle union recall in the async embedding path
+- Tests: `test/openclaw-plugin-isolation.test.ts`

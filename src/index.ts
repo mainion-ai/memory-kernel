@@ -215,7 +215,8 @@ export { enrichRelations } from './enrich-relations.js';
 export type { EnrichmentProposal, EnrichResult } from './enrich-relations.js';
 
 // Isolated recall (agent + shared union)
-export { recallIsolated } from './isolation-recall.js';
+export { recallIsolated, recallIsolatedWithEmbeddings } from './isolation-recall.js';
+export type { IsolatedRecallOptions } from './isolation-recall.js';
 
 // Share/unshare (per-agent isolation)
 export { shareAtom, unshareAtom, listSharedAtoms } from './share.js';

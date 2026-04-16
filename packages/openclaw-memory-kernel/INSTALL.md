@@ -142,10 +142,64 @@ Use mk_recall with task "package manager" — what comes back?
 |---|---|---|
 | `memoryDir` | `$MEMORY_DIR` env | Path to memory directory. Required if env var not set. |
 | `encryptionKey` | — | Key for SECRET atom encryption. Omit to skip encryption. |
-| `agentId` | `"openclaw"` | Label recorded in the audit event log. |
+| `agentId` | `"openclaw"` | Durable memory identity. In isolated mode, routes to `agents/{agentId}/`. Default: `"openclaw"`. |
 | `embeddingProvider` | — | Enables semantic recall. Set to `"openai"`. |
 | `embeddingApiKey` | `$OPENAI_API_KEY` fallback | API key for embeddings. Falls back to `OPENAI_API_KEY` when provider is `openai`. |
 | `embeddingModel` | provider default | e.g. `"text-embedding-3-small"`. |
+| `isolationMode` | `"auto"` | Per-agent isolation: `"auto"` reads config.yaml, `"shared-only"` forces flat mode, `"per-agent-required"` fails if not isolated. |
+| `autoInitAgentStore` | `false` | Auto-create agent store if missing. Recommended: `false` (surface workflow errors early). |
+| `sharedRecall` | `true` | Include shared namespace atoms in isolated recall. |
+| `failIfMissingAgentStore` | `false` | Error on all operations (not just writes) if agent store is missing. |
+
+## Per-agent memory isolation
+
+When the memory-kernel store is configured for `per-agent` isolation (via `config.yaml`), the plugin automatically routes all tools and hooks to the correct agent store.
+
+### How it works
+
+1. The plugin reads `agentId` from its config (e.g., `"huston"` or `"main"`)
+2. In isolated mode, writes go to `agents/{agentId}/` and reads use union recall (agent + shared)
+3. In shared mode, everything works exactly as before — no change needed
+
+### Setup for named agents
+
+For a named agent like Huston:
+
+```bash
+# 1. Set up the base store with per-agent isolation
+mk init ~/.openclaw/memory
+mk migrate --strategy fresh -d ~/.openclaw/memory
+
+# 2. Initialize agent stores
+mk init -a main ~/.openclaw/memory
+mk init -a huston ~/.openclaw/memory
+```
+
+Then configure each OpenClaw agent with its own `agentId`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "memory-kernel": {
+        "enabled": true,
+        "config": {
+          "memoryDir": "~/.openclaw/memory",
+          "agentId": "huston"
+        }
+      }
+    }
+  }
+}
+```
+
+### Isolation guarantees
+
+- Huston's `mk_remember` writes to `agents/huston/`, never to `agents/main/`
+- Huston's `mk_recall` returns `huston + shared` atoms, never `main`'s private atoms
+- Bootstrap context for Huston includes only `huston + shared` atoms
+- Session-end reflect and episodes stay in Huston's store
+- Missing agent stores produce clear error messages with `mk init -a` suggestions
 
 ## Enabling semantic recall (optional)
 

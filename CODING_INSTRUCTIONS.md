@@ -43,6 +43,8 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/isolation-migrate.test.ts` | Migration strategies: fresh, partition, clone-to-shared, idempotency guard |
 | `test/share.test.ts` | Share/unshare: copy to shared, unshare removal, listSharedAtoms, error cases |
 | `test/mcp-isolation.test.ts` | MCP isolation: tool routing to agent stores, share/unshare tools, shared-mode rejection |
+| `test/openclaw-plugin.test.ts` | OpenClaw plugin: tools (remember/recall/reflect/bundle/status), hooks (bootstrap/compact/session-end), config parsing, SecretRef resolution |
+| `test/openclaw-plugin-isolation.test.ts` | OpenClaw plugin isolation: config parsing, effective context resolution, tool routing to agent stores, hook routing, cross-agent isolation, backward compatibility |
 
 ### Standard test boilerplate
 
