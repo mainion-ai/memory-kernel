@@ -15,7 +15,7 @@ All notable changes to this project will be documented in this file.
 
 - **`allowSharedFallback` config field** — New opt-in field (default: false) that restores the pre-hardening fallback behavior for migration/development scenarios.
 
-- **`failIfMissingAgentStore` deprecated** — Now a no-op since throwing is the default. Retained for backward compatibility; `failIfMissingAgentStore: false` maps to `allowSharedFallback: true`.
+- **`failIfMissingAgentStore` deprecated** — `true` is now redundant (throwing is the default). Retained for backward compatibility; `failIfMissingAgentStore: false` maps to `allowSharedFallback: true`.
 
 - **Isolation-aware checkpoint** — `mk_context_bundle` and the pre-compaction hook now include shared namespace atoms in isolated mode, matching `mk_recall` and bootstrap behavior. `CheckpointOptions` extended with `baseDir`, `isolated`, `sharedRecall` params.
 

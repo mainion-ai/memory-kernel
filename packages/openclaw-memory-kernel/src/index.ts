@@ -8,6 +8,7 @@ import {
   ATOM_TYPES,
   // Per-agent isolation
   resolveAgentDir, isIsolated, loadConfig, initAgentStore,
+  assertValidAgentId,
   recallIsolatedWithEmbeddings,
 } from 'memory-kernel'
 import type { AtomType, Classification, ContextBundle, IsolationConfig, RecallQuery } from 'memory-kernel'
@@ -609,7 +610,8 @@ const memoryKernelPlugin = {
     }
     if (cfg.embeddingModel) process.env.EMBEDDING_MODEL = cfg.embeddingModel
 
-    // Resolve per-agent isolation context (once, captured in closure).
+    // Resolve per-agent isolation context (stable after register() except
+    // agentId, which bootstrap may update with runtime identity).
     const mctx = resolveEffectiveMemoryContext(cfg)
 
     // Ensure index is fresh on plugin load — prevents silent recall failures
@@ -896,6 +898,7 @@ const memoryKernelPlugin = {
         const runtimeAgentId = event.context?.agentIdentity?.id
           ?? event.context?.agent?.id   // alternate path OpenClaw may use
         if (typeof runtimeAgentId === 'string' && runtimeAgentId.length > 0) {
+          assertValidAgentId(runtimeAgentId)
           mctx.agentId = runtimeAgentId
         }
 

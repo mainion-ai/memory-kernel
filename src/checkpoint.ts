@@ -79,6 +79,7 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
       meta: {
         error: errorMsg,
         task: opts.task,
+        ...(opts.isolated ? { isolated: true, shared_recall: opts.sharedRecall !== false } : {}),
       },
     });
 
