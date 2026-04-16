@@ -60,7 +60,11 @@
       },
       "failIfMissingAgentStore": {
         "type": "boolean",
-        "description": "Error on all operations (not just writes) if agent store is missing. Default: false."
+        "description": "Deprecated — throwing is now the default behavior when agent store is missing. Retained for backward compatibility. Setting to false maps to allowSharedFallback: true."
+      },
+      "allowSharedFallback": {
+        "type": "boolean",
+        "description": "Allow silent fallback to shared mode when agent store is missing in isolated mode. Default: false (errors instead). Use only during migration or development."
       },
       "secretProviders": {
         "type": "object",

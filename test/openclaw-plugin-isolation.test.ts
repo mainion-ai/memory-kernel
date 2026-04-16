@@ -184,6 +184,30 @@ describe('effective memory context resolution', () => {
     const result = await tools['mk_status'].execute('call-1', {});
     expect(result.content[0].text).toContain('agent: openclaw');
   });
+
+  it('allowSharedFallback: true restores old fallback behavior', async () => {
+    initIsolatedBase(testDir); // no agent store created
+    const { api, tools } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'huston',
+      allowSharedFallback: true,
+    });
+    plugin.register(api); // should NOT throw
+
+    const result = await tools['mk_status'].execute('call-1', {});
+    expect(result.content[0].text).toContain('Isolation: shared');
+  });
+
+  it('failIfMissingAgentStore: false maps to allowSharedFallback for backward compat', () => {
+    initIsolatedBase(testDir); // no agent store created
+    const { api } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'huston',
+      failIfMissingAgentStore: false,
+    });
+    // Should NOT throw — legacy failIfMissingAgentStore: false implies allowSharedFallback
+    expect(() => plugin.register(api)).not.toThrow();
+  });
 });
 
 // ── Tool routing in isolated mode ───────────────────────────────────────────
@@ -336,6 +360,28 @@ describe('tool routing in isolated mode', () => {
     expect(result.details.atomCount).toBeGreaterThanOrEqual(1);
   });
 
+  it('mk_context_bundle includes shared atoms in isolated mode', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+    const sharedDir = path.join(testDir, 'shared');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'agent-bundle-fact', body: 'Agent fact for context bundle',
+    });
+    createAtom({
+      memoryDir: sharedDir, ...BASE_OPTS,
+      type: 'decision', slug: 'shared-bundle-dec', body: 'Shared decision for context bundle',
+    });
+
+    const { api, tools } = createMockApi({ memoryDir: testDir, agentId: 'huston' });
+    plugin.register(api);
+
+    const result = await tools['mk_context_bundle'].execute('call-1', { max_tokens: 8000 });
+    // Should include both agent and shared atoms
+    expect(result.details.atomCount).toBe(2);
+  });
+
   it('mk_status reports isolation info', async () => {
     initIsolatedBase(testDir, 'huston');
 
@@ -478,6 +524,87 @@ describe('hook routing in isolated mode', () => {
     expect(fs.existsSync(episodesDir)).toBe(true);
     const episodeFiles = fs.readdirSync(episodesDir);
     expect(episodeFiles.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('bootstrap extracts runtime agent identity from event context', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'id-test', body: 'Identity test atom',
+    });
+
+    const { api, hooks } = createMockApi({ memoryDir: testDir, agentId: 'huston' });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    const event = {
+      context: {
+        bootstrapFiles: [] as any[],
+        agentIdentity: { id: 'runtime-huston' },
+      },
+      messages: [] as string[],
+    };
+    await bootstrapHook!.handler(event);
+
+    // Bootstrap message should reflect the updated runtime identity
+    expect(event.messages[0]).toContain('agent=runtime-huston');
+  });
+
+  it('bootstrap uses config agentId when runtime identity is absent', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'no-runtime-id', body: 'No runtime identity',
+    });
+
+    const { api, hooks } = createMockApi({ memoryDir: testDir, agentId: 'huston' });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    const event = {
+      context: { bootstrapFiles: [] as any[] },
+      messages: [] as string[],
+    };
+    await bootstrapHook!.handler(event);
+
+    // Should fall back to the configured agentId
+    expect(event.messages[0]).toContain('agent=huston');
+  });
+
+  it('pre-compaction checkpoint includes shared atoms in isolated mode', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+    const sharedDir = path.join(testDir, 'shared');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'agent-precompact', body: 'Agent pre-compact fact',
+    });
+    createAtom({
+      memoryDir: sharedDir, ...BASE_OPTS,
+      type: 'constraint', slug: 'shared-precompact', body: 'Shared pre-compact constraint',
+    });
+
+    const { api, hooks } = createMockApi({ memoryDir: testDir, agentId: 'huston' });
+    plugin.register(api);
+
+    const compactHook = findHook(hooks, 'session:compact:before');
+    const event = { sessionKey: 'session-789', messages: [] as string[] };
+    await compactHook!.handler(event);
+
+    // Checkpoint event should include both agent and shared atoms
+    const eventsPath = path.join(hustonDir, 'events.ndjson');
+    const events = fs.readFileSync(eventsPath, 'utf-8').trim().split('\n');
+    const ckptEvent = events
+      .map((l) => JSON.parse(l))
+      .find((e: any) => e.action === 'checkpoint_created');
+    expect(ckptEvent).toBeDefined();
+    expect(ckptEvent.meta.atom_count).toBe(2);
+    expect(ckptEvent.meta.isolated).toBe(true);
   });
 
   it('bootstrap with missing shared/ dir does not crash', async () => {

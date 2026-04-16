@@ -49,6 +49,6 @@ Call to check memory health: atom counts by type, index status, embedding count.
 
 The plugin handles these automatically — you don't need to call them:
 
-- **Bootstrap**: On agent startup, relevant memories are recalled and injected into context.
-- **Pre-compaction**: Before context compaction, a checkpoint is saved so nothing is lost.
+- **Bootstrap**: On agent startup, relevant memories are recalled and injected into context. In isolated mode, both agent-private and shared atoms are included. Runtime agent identity is extracted from OpenClaw event context when available.
+- **Pre-compaction**: Before context compaction, a checkpoint is saved so nothing is lost. In isolated mode, the checkpoint includes both agent and shared atoms.
 - **Session end**: When `/new` or `/reset` is used, reflect runs automatically and an episode is written.

@@ -47,8 +47,12 @@ npm run build   # compile TypeScript
 
 - Plugin source: `packages/openclaw-memory-kernel/src/index.ts`
 - `resolveEffectiveMemoryContext(cfg)` decides shared vs isolated routing at register() time
-- 4 config fields: `isolationMode` (`auto`|`shared-only`|`per-agent-required`), `autoInitAgentStore`, `sharedRecall`, `failIfMissingAgentStore`
-- `failIfMissingAgentStore: true` throws at register() when agent store is missing and autoInit is off; `false` (default) falls back to shared mode with a warning
+- 5 config fields: `isolationMode` (`auto`|`shared-only`|`per-agent-required`), `autoInitAgentStore`, `sharedRecall`, `failIfMissingAgentStore` (deprecated), `allowSharedFallback`
+- Missing agent store throws by default (prevents silent memory contamination). Set `allowSharedFallback: true` to opt-in to the old silent fallback.
+- `failIfMissingAgentStore` is deprecated — throwing is now the default. `failIfMissingAgentStore: false` maps to `allowSharedFallback: true` for backward compat.
 - All 5 tools and 3 hooks route through the resolved `EffectiveMemoryContext`
+- Runtime agent identity: bootstrap hook extracts from `event.context.agentIdentity.id` when available (audit trail only; filesystem routing is config-time)
+- `checkpoint()` supports isolation-aware recall via `baseDir`/`isolated`/`sharedRecall` opts — `mk_context_bundle` and pre-compaction hook pass these
 - `recallIsolatedWithEmbeddings()` + `mergeIsolatedBundles()` handle union recall in the async embedding path
-- Tests: `test/openclaw-plugin-isolation.test.ts`
+- Key files: `src/checkpoint.ts`, `src/isolation-recall.ts`, `packages/openclaw-memory-kernel/src/index.ts`
+- Tests: `test/openclaw-plugin-isolation.test.ts`, `test/checkpoint.test.ts`

@@ -9,6 +9,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — OpenClaw Plugin Isolation Hardening
+
+- **BREAKING: Missing agent store now throws by default** — Previously, when an agent store was missing and `autoInitAgentStore` was off, the plugin silently fell back to shared mode. Now it throws with an actionable error message. Set `allowSharedFallback: true` to restore the old behavior.
+
+- **`allowSharedFallback` config field** — New opt-in field (default: false) that restores the pre-hardening fallback behavior for migration/development scenarios.
+
+- **`failIfMissingAgentStore` deprecated** — Now a no-op since throwing is the default. Retained for backward compatibility; `failIfMissingAgentStore: false` maps to `allowSharedFallback: true`.
+
+- **Isolation-aware checkpoint** — `mk_context_bundle` and the pre-compaction hook now include shared namespace atoms in isolated mode, matching `mk_recall` and bootstrap behavior. `CheckpointOptions` extended with `baseDir`, `isolated`, `sharedRecall` params.
+
+- **Runtime agent identity wiring** — Bootstrap hook extracts agent identity from `event.context.agentIdentity.id` (or `event.context.agent.id`) when available. Prepares for OpenClaw runtime identity support. Falls back to static `cfg.agentId` when absent.
+
 ### Added — OpenClaw Plugin Per-Agent Isolation
 
 - **OpenClaw plugin isolation routing** — All 5 tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`) and 3 hooks (`agent:bootstrap`, `session:compact:before`, `command:new/reset`) now route through `resolveEffectiveMemoryContext()`. In isolated mode, writes go to `agents/{agentId}/`, reads use union recall (agent + shared). Shared mode is fully backward compatible.

@@ -61,16 +61,23 @@ type PluginConfig = {
   isolationMode?: PluginIsolationMode
   autoInitAgentStore?: boolean
   sharedRecall?: boolean
+  /** @deprecated Throwing is now the default. Use `allowSharedFallback: true` to opt-in to the old silent fallback. */
   failIfMissingAgentStore?: boolean
+  /** Opt-in to silent shared-mode fallback when agent store is missing. Default: false (errors instead). */
+  allowSharedFallback?: boolean
 }
 
-/** Resolved memory context — immutable once register() completes. */
+/**
+ * Resolved memory context — created at register() time, captured in closure.
+ * All fields are stable after register() except `agentId`, which may be
+ * updated once by the bootstrap hook when OpenClaw provides runtime identity.
+ */
 interface EffectiveMemoryContext {
   /** Base memory directory (the configured memoryDir). */
   baseDir: string
   /** Working directory: baseDir in shared mode, agents/{id}/ in isolated. */
   effectiveDir: string
-  /** Resolved agent identity. */
+  /** Resolved agent identity. May be updated by bootstrap hook with runtime identity. */
   agentId: string
   /** Whether per-agent isolation is active. */
   isolated: boolean
@@ -250,6 +257,11 @@ const pluginConfigSchema = {
       autoInitAgentStore: cfg['autoInitAgentStore'] === true,
       sharedRecall: cfg['sharedRecall'] !== false, // default: true
       failIfMissingAgentStore: cfg['failIfMissingAgentStore'] === true,
+      // Backward compat: explicit failIfMissingAgentStore: false implies allowSharedFallback
+      // (someone who explicitly opted out of throwing keeps the old fallback behavior).
+      allowSharedFallback:
+        cfg['allowSharedFallback'] === true ||
+        (cfg['failIfMissingAgentStore'] === false && cfg['allowSharedFallback'] === undefined),
     }
   },
   jsonSchema: {
@@ -341,7 +353,15 @@ const pluginConfigSchema = {
       },
       failIfMissingAgentStore: {
         type: 'boolean',
-        description: 'Error on all operations (not just writes) if agent store is missing. Default: false.',
+        description:
+          'Deprecated — throwing is now the default behavior when agent store is missing. ' +
+          'Retained for backward compatibility. Setting to false maps to allowSharedFallback: true.',
+      },
+      allowSharedFallback: {
+        type: 'boolean',
+        description:
+          'Allow silent fallback to shared mode when agent store is missing in isolated mode. ' +
+          'Default: false (errors instead). Use only during migration or development.',
       },
     },
     required: [],
@@ -400,7 +420,11 @@ const pluginConfigSchema = {
     },
     failIfMissingAgentStore: {
       label: 'Fail if agent store missing',
-      help: 'Error on all operations when agent store is missing, not just writes. Default: false.',
+      help: 'Deprecated — throwing is now the default. Setting to false maps to allowSharedFallback.',
+    },
+    allowSharedFallback: {
+      label: 'Allow shared fallback',
+      help: 'Allow silent fallback to shared mode when agent store is missing. Default: false (errors instead). Use only during migration.',
     },
   },
 }
@@ -415,20 +439,22 @@ function ok(text: string, details?: Record<string, unknown>) {
  * Called once at register() time. The result is captured in closure scope and
  * used by every tool handler and lifecycle hook.
  *
+ * Agent identity is resolved from static config here. Runtime identity from
+ * OpenClaw event context is late-bound: the bootstrap hook updates mctx.agentId
+ * when `event.context.agentIdentity.id` is available.
+ *
  * @param cfg - Parsed plugin config
- * @param runtimeAgentId - Future: from OpenClaw runtime/event context. Currently undefined.
  */
 function resolveEffectiveMemoryContext(
   cfg: PluginConfig,
-  runtimeAgentId?: string,
 ): EffectiveMemoryContext {
   const baseDir = cfg.memoryDir
   const isolationMode = cfg.isolationMode ?? 'auto'
   const sharedRecall = cfg.sharedRecall ?? true
 
-  // Step 1: Resolve agent identity
-  // Priority: runtime OpenClaw context > static config > default
-  const agentId = runtimeAgentId ?? cfg.agentId ?? 'openclaw'
+  // Step 1: Resolve agent identity from static config.
+  // Runtime identity (from OpenClaw event context) is late-bound in the bootstrap hook.
+  const agentId = cfg.agentId ?? 'openclaw'
 
   // Step 2: Determine effective isolation mode
   let isolated: boolean
@@ -465,20 +491,24 @@ function resolveEffectiveMemoryContext(
     if (!fs.existsSync(effectiveDir)) {
       if (cfg.autoInitAgentStore) {
         initAgentStore(baseDir, agentId)
-      } else if (cfg.failIfMissingAgentStore) {
+      } else if (cfg.allowSharedFallback) {
+        // Explicitly opted in to dangerous fallback — warn but continue.
+        // Use only during migration or development; in production this risks
+        // contaminating shared memory with agent-specific writes.
+        console.warn(
+          `memory-kernel: agent store for "${agentId}" not found at ${effectiveDir}. ` +
+            `Falling back to shared mode (allowSharedFallback: true). ` +
+            `Run: mk init -a ${agentId} ${baseDir}`,
+        )
+        effectiveDir = baseDir
+        isolated = false
+      } else {
+        // Default: fail with actionable error to prevent silent memory contamination
         throw new Error(
           `memory-kernel: agent store for "${agentId}" does not exist at ${effectiveDir}. ` +
             `Run: mk init -a ${agentId} ${baseDir}` +
             ' (or set autoInitAgentStore: true in plugin config)',
         )
-      } else {
-        // Default: fall back to shared mode with a warning
-        console.warn(
-          `memory-kernel: agent store for "${agentId}" not found at ${effectiveDir}. ` +
-            `Falling back to shared mode. Run: mk init -a ${agentId} ${baseDir}`,
-        )
-        effectiveDir = baseDir
-        isolated = false
       }
     }
   }
@@ -772,6 +802,10 @@ const memoryKernelPlugin = {
               task: p.task,
               max_tokens: p.max_tokens,
               skipReflect: p.skipReflect,
+              // Isolation-aware recall: merge agent + shared atoms
+              baseDir: mctx.baseDir,
+              isolated: mctx.isolated,
+              sharedRecall: mctx.sharedRecall,
             })
             return ok(result.markdown, {
               atomCount: result.bundle.atoms?.length ?? 0,
@@ -851,8 +885,20 @@ const memoryKernelPlugin = {
       ['agent:bootstrap'],
       async (event: any) => {
         setSession(event.sessionKey)
-        // Future: extract runtime agent identity from OpenClaw event context
-        // const runtimeAgentId = event.context?.agentIdentity?.id
+
+        // Runtime agent identity: update mctx.agentId if OpenClaw provides it.
+        // Runs before any tool calls in a session, so downstream handlers see
+        // the updated identity automatically via closure.
+        // NOTE: This updates the audit-trail identity only. Filesystem routing
+        // (effectiveDir) was resolved at register() from cfg.agentId. Full dynamic
+        // directory re-resolution is future work for when OpenClaw runtime identity
+        // may differ from the static config identity.
+        const runtimeAgentId = event.context?.agentIdentity?.id
+          ?? event.context?.agent?.id   // alternate path OpenClaw may use
+        if (typeof runtimeAgentId === 'string' && runtimeAgentId.length > 0) {
+          mctx.agentId = runtimeAgentId
+        }
+
         if (!fs.existsSync(mctx.effectiveDir)) {
           event.messages?.push('mk: no memory dir — file-first fallback')
           return
@@ -911,6 +957,10 @@ const memoryKernelPlugin = {
             agent_id: mctx.agentId,
             session_id: event.sessionKey || 'unknown',
             task: 'pre-compaction save',
+            // Isolation-aware recall: merge agent + shared atoms
+            baseDir: mctx.baseDir,
+            isolated: mctx.isolated,
+            sharedRecall: mctx.sharedRecall,
           })
           const atoms = result.bundle?.atoms?.length ?? 0
           const tokens = result.bundle?.token_estimate ?? 0
