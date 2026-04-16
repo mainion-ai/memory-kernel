@@ -25,7 +25,7 @@ import {
   unshareAtom,
   listSharedAtoms,
 } from '../index.js';
-import { isIsolated } from '../isolation.js';
+import { isIsolated, assertValidAgentId } from '../isolation.js';
 import { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS } from '../types.js';
 import { embedAtom } from '../embed-sync.js';
 import { resolveAgentId, resolveSessionId, resolveMemoryDir, type McpContext } from './context.js';

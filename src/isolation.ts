@@ -13,7 +13,24 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { initMemoryDir, assertWithinDir } from './store.js';
-import type { IsolationConfig, RenderConfig } from './types.js';
+import { ATOM_TYPES } from './types.js';
+import type { AtomType, IsolationConfig, RenderConfig } from './types.js';
+
+/** Valid agent ID pattern: alphanumeric, dash, underscore only. */
+const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Validate that an agent ID is safe for use as a directory name.
+ * Rejects path separators, traversal sequences, and non-alphanumeric characters.
+ * This is the single source of truth for agent ID validation across all entry points.
+ */
+export function assertValidAgentId(agentId: string): void {
+  if (!agentId || !AGENT_ID_PATTERN.test(agentId)) {
+    throw new Error(
+      `Invalid agent ID "${agentId}": must be non-empty and contain only alphanumeric characters, dashes, or underscores`,
+    );
+  }
+}
 
 /** Default isolation config (shared mode, backward compatible). */
 export const DEFAULT_ISOLATION_CONFIG: IsolationConfig = {
@@ -94,10 +111,7 @@ export function resolveAgentDir(baseDir: string, agentId?: string, config?: Isol
   const cfg = config ?? loadConfig(baseDir);
   if (cfg.isolation === 'shared') return baseDir;
 
-  // Reject agent IDs with path separators or traversal sequences
-  if (agentId.includes('/') || agentId.includes('\\') || agentId.includes('..') || agentId === '.') {
-    throw new Error(`Invalid agent ID (contains path traversal sequence): ${agentId}`);
-  }
+  assertValidAgentId(agentId);
 
   const agentDir = path.join(baseDir, 'agents', agentId);
   assertWithinDir(baseDir, agentDir);
@@ -135,6 +149,7 @@ export function listAgents(baseDir: string): string[] {
  * plus a default render.yaml.
  */
 export function initAgentStore(baseDir: string, agentId: string): string {
+  assertValidAgentId(agentId);
   const agentDir = path.join(baseDir, 'agents', agentId);
   assertWithinDir(baseDir, agentDir);
   initMemoryDir(agentDir);
@@ -172,6 +187,19 @@ export function initIsolatedBase(baseDir: string, initialAgent?: string): void {
 // Render config
 // ---------------------------------------------------------------------------
 
+const VALID_ATOM_TYPES = new Set<string>(ATOM_TYPES);
+
+/** Validate type_weights: keep only entries where key is a valid AtomType and value is a finite number. */
+function validateTypeWeights(raw: Record<string, unknown>): Partial<Record<AtomType, number>> {
+  const result: Partial<Record<AtomType, number>> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (VALID_ATOM_TYPES.has(key) && typeof value === 'number' && Number.isFinite(value)) {
+      result[key as AtomType] = value;
+    }
+  }
+  return result;
+}
+
 /**
  * Load per-agent render config from `render.yaml` in the agent directory.
  * Falls back to defaults for missing fields.
@@ -202,8 +230,8 @@ export function loadRenderConfig(agentDir: string): RenderConfig {
     include_shared: typeof parsed.include_shared === 'boolean'
       ? parsed.include_shared
       : defaults.include_shared,
-    type_weights: parsed.type_weights && typeof parsed.type_weights === 'object'
-      ? (parsed.type_weights as RenderConfig['type_weights'])
+    type_weights: parsed.type_weights && typeof parsed.type_weights === 'object' && !Array.isArray(parsed.type_weights)
+      ? validateTypeWeights(parsed.type_weights as Record<string, unknown>)
       : defaults.type_weights,
   };
 }

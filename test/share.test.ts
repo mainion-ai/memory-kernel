@@ -10,9 +10,12 @@ import {
   initIsolatedBase,
   initAgentStore,
   createAtom,
+  updateAtom,
   closeAllIndexes,
   openIndex,
   readAtom,
+  readEvents,
+  compactLog,
   listAtoms,
 } from '../src/index.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../src/share.js';
@@ -164,5 +167,55 @@ describe('listSharedAtoms', () => {
   it('returns empty when shared dir does not exist', () => {
     fs.rmSync(sharedDir(), { recursive: true, force: true });
     expect(listSharedAtoms(testDir)).toEqual([]);
+  });
+});
+
+describe('share + compact interaction', () => {
+  it('compaction preserves share events and real updates independently', () => {
+    const hustonDir = agentDir('huston');
+
+    // Create an atom
+    const atom = createAtom({
+      ...base(hustonDir),
+      type: 'fact',
+      slug: 'compact-test',
+      body: 'Original body',
+    });
+
+    // Share it
+    shareAtom(testDir, atom.frontmatter.id, 'huston', opts());
+
+    // Now do a real update to the same atom
+    updateAtom({
+      ...base(hustonDir),
+      filePath: atom.filePath!,
+      updates: { confidence: 0.9 },
+      body: 'Updated body',
+    });
+
+    // Read events before compaction
+    const eventsBefore = readEvents(hustonDir);
+    const shareEvents = eventsBefore.filter((e) => e.action === 'atom_shared');
+    const updateEvents = eventsBefore.filter((e) => e.action === 'atom_updated');
+
+    expect(shareEvents.length).toBe(1);
+    expect(updateEvents.length).toBe(1);
+
+    // Compact the log
+    const compactResult = compactLog(hustonDir);
+
+    // Both events should survive: atom_shared is non-mutation, atom_updated is kept as latest mutation
+    const eventsAfter = readEvents(hustonDir);
+    const shareEventsAfter = eventsAfter.filter((e) => e.action === 'atom_shared');
+    const updateEventsAfter = eventsAfter.filter((e) => e.action === 'atom_updated');
+
+    expect(shareEventsAfter.length).toBe(1);
+    expect(updateEventsAfter.length).toBe(1);
+
+    // The atom_created event for the same atom should be compacted away (atom_updated is latest mutation)
+    const createEventsAfter = eventsAfter.filter(
+      (e) => e.action === 'atom_created' && e.atom_refs?.includes(atom.frontmatter.id),
+    );
+    expect(createEventsAfter.length).toBe(0);
   });
 });

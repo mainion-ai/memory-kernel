@@ -226,6 +226,7 @@ export {
   loadConfig,
   writeConfig,
   isIsolated,
+  assertValidAgentId,
   resolveAgentDir,
   getSharedDir,
   listAgents,

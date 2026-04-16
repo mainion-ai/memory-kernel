@@ -108,6 +108,8 @@ export const EVENT_ACTIONS = [
   'atom_promoted',
   'atom_expired',
   'atom_imported',
+  'atom_shared',
+  'atom_unshared',
   'atom_read',
   'checkpoint_created',
   'conflict_detected',

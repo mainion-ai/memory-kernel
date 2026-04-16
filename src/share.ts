@@ -76,11 +76,11 @@ export function shareAtom(
   }
 
   // Emit event in agent's log
-  appendEvent(agentDir, 'atom_updated', {
+  appendEvent(agentDir, 'atom_shared', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [atomId],
-    meta: { action: 'shared', shared_to: 'shared', source_agent: fromAgent },
+    meta: { shared_to: 'shared', source_agent: fromAgent },
   });
 
   return {
@@ -128,11 +128,11 @@ export function unshareAtom(
   fs.unlinkSync(atomFile);
 
   // Emit event in shared log
-  appendEvent(sharedDir, 'atom_archived', {
+  appendEvent(sharedDir, 'atom_unshared', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
     atom_refs: [atomId],
-    meta: { action: 'unshared' },
+    meta: { unshared_from: 'shared' },
   });
 }
 

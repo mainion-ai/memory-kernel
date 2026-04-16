@@ -15,15 +15,21 @@ import {
   initAgentStore,
   initSharedStore,
   isIsolated,
+  assertValidAgentId,
 } from './isolation.js';
 import { listAtoms, readAtom, writeAtom } from './store.js';
 import { readEvents } from './event-log.js';
 import { reindex } from './index-db.js';
 import type { Atom } from './types.js';
 
-/** Reject agent IDs that would create nested directories or break the flat agents/ layout. */
+/** Check if an agent ID is valid without throwing. */
 function isValidAgentId(id: string): boolean {
-  return !!id && !id.includes('/') && !id.includes('\\') && !id.includes('..');
+  try {
+    assertValidAgentId(id);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type MigrateStrategy = 'fresh' | 'partition' | 'clone-to-shared';
@@ -43,6 +49,7 @@ export interface MigrateResult {
   atoms_moved: number;
   atoms_shared: number;
   config_written: boolean;
+  backup_path: string;
 }
 
 /**
@@ -69,6 +76,32 @@ export function migrate(opts: MigrateOptions): MigrateResult {
 }
 
 // ---------------------------------------------------------------------------
+// Backup helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a timestamped backup of all atom files before destructive migration.
+ * Returns the backup directory path, or '' if no atoms to back up.
+ */
+function createMigrationBackup(baseDir: string, atoms: Atom[]): string {
+  if (atoms.length === 0) return '';
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupDir = path.join(baseDir, `.mk-backup-${timestamp}`);
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  for (const atom of atoms) {
+    if (!atom.filePath) continue;
+    const relPath = path.relative(baseDir, atom.filePath);
+    const destPath = path.join(backupDir, relPath);
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.copyFileSync(atom.filePath, destPath);
+  }
+
+  return backupDir;
+}
+
+// ---------------------------------------------------------------------------
 // Strategy: fresh
 // ---------------------------------------------------------------------------
 
@@ -84,6 +117,7 @@ function migrateFresh(opts: MigrateOptions): MigrateResult {
     atoms_moved: 0,
     atoms_shared: 0,
     config_written: true,
+    backup_path: '',
   };
 }
 
@@ -114,8 +148,9 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
     }
   }
 
-  // 2. Load all atoms
+  // 2. Load all atoms and create backup before any destructive operations
   const atoms = listAtoms(baseDir);
+  const backupPath = createMigrationBackup(baseDir, atoms);
 
   // 3. Group atoms by agent
   const agentAtoms = new Map<string, Atom[]>();
@@ -167,6 +202,7 @@ function migratePartition(opts: MigrateOptions): MigrateResult {
     atoms_moved: atomsMoved,
     atoms_shared: 0,
     config_written: true,
+    backup_path: backupPath,
   };
 }
 
@@ -180,8 +216,9 @@ function migrateCloneToShared(opts: MigrateOptions): MigrateResult {
   // 1. Create shared namespace
   const sharedDir = initSharedStore(baseDir);
 
-  // 2. Copy all existing atoms to shared
+  // 2. Copy all existing atoms to shared (backup first)
   const atoms = listAtoms(baseDir);
+  const backupPath = createMigrationBackup(baseDir, atoms);
   let atomsShared = 0;
 
   for (const atom of atoms) {
@@ -208,5 +245,6 @@ function migrateCloneToShared(opts: MigrateOptions): MigrateResult {
     atoms_moved: 0,
     atoms_shared: atomsShared,
     config_written: true,
+    backup_path: backupPath,
   };
 }
