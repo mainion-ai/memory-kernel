@@ -439,8 +439,9 @@ function ok(text: string, details?: Record<string, unknown>) {
 /**
  * Resolve the effective memory context for a given agent identity.
  *
- * Pure function — no side effects beyond optional auto-init when configured.
  * Called from every tool execute() and lifecycle hook, NOT once at register().
+ * May trigger side effects: calls initAgentStore() when autoInitAgentStore is
+ * true and the agent directory doesn't exist yet.
  *
  * @param cfg           - Parsed plugin config (immutable after register())
  * @param runtimeAgentId - Agent ID resolved at point-of-use (may differ per call)
@@ -455,6 +456,11 @@ function resolveEffectiveMemoryContext(
 
   // Step 1: Resolve agent identity — runtime overrides static config.
   const agentId = runtimeAgentId ?? cfg.agentId ?? 'openclaw'
+
+  // Validate before any filesystem operations — prevents path-traversal attacks
+  // even if the bootstrap hook's validation was bypassed or a tool passes an
+  // agent_id directly.
+  assertValidAgentId(agentId)
 
   // Step 2: Determine effective isolation mode
   let isolated: boolean
@@ -518,13 +524,9 @@ function resolveEffectiveMemoryContext(
 
 /**
  * Extract the effective agent ID from available sources, in priority order:
- * 1. Explicit agent_id from tool params (if provided)
- * 2. Last-seen runtime identity from bootstrap (event.context.agentIdentity.id)
- * 3. Static cfg.agentId
- * 4. Default: 'openclaw'
- *
- * The lastRuntimeAgentId is updated by the bootstrap hook and serves as the
- * "most recently known" identity for the current session.
+ * 1. Runtime identity from bootstrap (event.context.agentIdentity.id), per-session
+ * 2. Static cfg.agentId
+ * 3. Default: 'openclaw'
  */
 function extractAgentId(
   lastRuntimeAgentId: string | undefined,
@@ -609,10 +611,10 @@ const memoryKernelPlugin = {
       if (typeof s === 'string' && s.length > 0) currentSessionId = s
     }
 
-    // Last-seen runtime agent identity, updated by the bootstrap hook when
-    // OpenClaw provides event.context.agentIdentity.id. Used as the preferred
-    // identity source for all subsequent tool calls in the session.
-    let lastRuntimeAgentId: string | undefined
+    // Per-session runtime agent identity, keyed by sessionKey. Updated by the
+    // bootstrap hook when OpenClaw provides event.context.agentIdentity.id.
+    // Map avoids cross-session clobbering when the plugin handles concurrent sessions.
+    const runtimeAgentIds = new Map<string, string>()
 
     // memory-kernel reads MEMORY_ENCRYPTION_KEY from process.env at call time.
     // Setting it here at plugin registration is intentional; a per-call override API
@@ -633,9 +635,13 @@ const memoryKernelPlugin = {
 
     // Resolve context dynamically per call. This replaces the old single
     // mutable `mctx` closure — effectiveDir is now computed fresh each time,
-    // using the most current agent identity.
-    function getContext(): EffectiveMemoryContext {
-      const agentId = extractAgentId(lastRuntimeAgentId, cfg.agentId)
+    // using the most current agent identity for the given session.
+    // When sessionKey is omitted (tool execute() calls), falls back to
+    // currentSessionId which is set by the most recent lifecycle hook.
+    function getContext(sessionKey?: string): EffectiveMemoryContext {
+      const key = sessionKey ?? currentSessionId
+      const runtimeId = runtimeAgentIds.get(key)
+      const agentId = extractAgentId(runtimeId, cfg.agentId)
       return resolveEffectiveMemoryContext(cfg, agentId)
     }
 
@@ -921,17 +927,18 @@ const memoryKernelPlugin = {
         setSession(event.sessionKey)
 
         // Runtime agent identity: capture from OpenClaw event context.
-        // This updates lastRuntimeAgentId so all subsequent tool calls in this
-        // session resolve to the correct agent directory.
+        // Stored per-session so concurrent sessions don't clobber each other.
         const runtimeAgentId = event.context?.agentIdentity?.id
           ?? event.context?.agent?.id   // alternate path OpenClaw may use
         if (typeof runtimeAgentId === 'string' && runtimeAgentId.length > 0) {
           assertValidAgentId(runtimeAgentId)
-          lastRuntimeAgentId = runtimeAgentId
+          if (event.sessionKey) {
+            runtimeAgentIds.set(event.sessionKey, runtimeAgentId)
+          }
         }
 
         // Resolve context dynamically — uses the just-captured runtime identity
-        const mctx = getContext()
+        const mctx = getContext(event.sessionKey)
 
         if (!fs.existsSync(mctx.effectiveDir)) {
           event.messages?.push('mk: no memory dir — file-first fallback')
@@ -985,7 +992,7 @@ const memoryKernelPlugin = {
       ['session:compact:before'],
       async (event: any) => {
         setSession(event.sessionKey)
-        const mctx = getContext()
+        const mctx = getContext(event.sessionKey)
         try {
           const result = checkpoint({
             memoryDir: mctx.effectiveDir,
@@ -1021,7 +1028,7 @@ const memoryKernelPlugin = {
       ['command:new', 'command:reset'],
       async (event: any) => {
         setSession(event.sessionKey)
-        const mctx = getContext()
+        const mctx = getContext(event.sessionKey)
         try {
           reflect({
             memoryDir: mctx.effectiveDir,
@@ -1039,6 +1046,11 @@ const memoryKernelPlugin = {
           event.messages?.push('mk: reflect complete')
         } catch {
           // fail silent
+        } finally {
+          // Clean up per-session state to prevent unbounded Map growth
+          if (event.sessionKey) {
+            runtimeAgentIds.delete(event.sessionKey)
+          }
         }
       },
       {
