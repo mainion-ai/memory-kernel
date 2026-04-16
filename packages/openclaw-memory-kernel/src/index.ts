@@ -611,10 +611,17 @@ const memoryKernelPlugin = {
       if (typeof s === 'string' && s.length > 0) currentSessionId = s
     }
 
-    // Per-session runtime agent identity, keyed by sessionKey. Updated by the
-    // bootstrap hook when OpenClaw provides event.context.agentIdentity.id.
-    // Map avoids cross-session clobbering when the plugin handles concurrent sessions.
-    const runtimeAgentIds = new Map<string, string>()
+    // Per-session resolved memory context, cached at bootstrap time.
+    // Keyed by sessionKey. Eliminates per-call filesystem I/O and ensures
+    // concurrent sessions never clobber each other's routing.
+    const sessionContexts = new Map<string, EffectiveMemoryContext>()
+
+    // The session key for the most recently bootstrapped session.
+    // Used as fallback for tool execute() calls which don't receive sessionKey.
+    // Under concurrent sessions this is a last-writer-wins race, but tool calls
+    // are always serialized within a session — the race only matters if sessions
+    // interleave tool calls, which OpenClaw does not currently do.
+    let activeSessionKey = '__default__'
 
     // memory-kernel reads MEMORY_ENCRYPTION_KEY from process.env at call time.
     // Setting it here at plugin registration is intentional; a per-call override API
@@ -633,16 +640,17 @@ const memoryKernelPlugin = {
     }
     if (cfg.embeddingModel) process.env.EMBEDDING_MODEL = cfg.embeddingModel
 
-    // Resolve context dynamically per call. This replaces the old single
-    // mutable `mctx` closure — effectiveDir is now computed fresh each time,
-    // using the most current agent identity for the given session.
-    // When sessionKey is omitted (tool execute() calls), falls back to
-    // currentSessionId which is set by the most recent lifecycle hook.
+    // Resolve memory context for a session. Bootstrap caches the result;
+    // subsequent calls within the same session return the cached value.
+    // When sessionKey is omitted (tool execute() calls), uses activeSessionKey.
     function getContext(sessionKey?: string): EffectiveMemoryContext {
-      const key = sessionKey ?? currentSessionId
-      const runtimeId = runtimeAgentIds.get(key)
-      const agentId = extractAgentId(runtimeId, cfg.agentId)
-      return resolveEffectiveMemoryContext(cfg, agentId)
+      const key = sessionKey ?? activeSessionKey
+      const cached = sessionContexts.get(key)
+      if (cached) return cached
+      // First call for this session (or pre-bootstrap tools) — resolve and cache.
+      const ctx = resolveEffectiveMemoryContext(cfg)
+      sessionContexts.set(key, ctx)
+      return ctx
     }
 
     // Ensure index is fresh on plugin load — prevents silent recall failures.
@@ -924,21 +932,23 @@ const memoryKernelPlugin = {
     api.registerHook(
       ['agent:bootstrap'],
       async (event: any) => {
-        setSession(event.sessionKey)
+        const sessionKey = event.sessionKey || '__default__'
+        setSession(sessionKey)
+        activeSessionKey = sessionKey
 
         // Runtime agent identity: capture from OpenClaw event context.
-        // Stored per-session so concurrent sessions don't clobber each other.
         const runtimeAgentId = event.context?.agentIdentity?.id
           ?? event.context?.agent?.id   // alternate path OpenClaw may use
+        let agentId: string | undefined
         if (typeof runtimeAgentId === 'string' && runtimeAgentId.length > 0) {
           assertValidAgentId(runtimeAgentId)
-          if (event.sessionKey) {
-            runtimeAgentIds.set(event.sessionKey, runtimeAgentId)
-          }
+          agentId = runtimeAgentId
         }
 
-        // Resolve context dynamically — uses the just-captured runtime identity
-        const mctx = getContext(event.sessionKey)
+        // Resolve and cache the memory context for this session.
+        // Done once here — all subsequent tool calls and hooks use the cache.
+        const mctx = resolveEffectiveMemoryContext(cfg, agentId)
+        sessionContexts.set(sessionKey, mctx)
 
         if (!fs.existsSync(mctx.effectiveDir)) {
           event.messages?.push('mk: no memory dir — file-first fallback')
@@ -1048,9 +1058,8 @@ const memoryKernelPlugin = {
           // fail silent
         } finally {
           // Clean up per-session state to prevent unbounded Map growth
-          if (event.sessionKey) {
-            runtimeAgentIds.delete(event.sessionKey)
-          }
+          const key = event.sessionKey || '__default__'
+          sessionContexts.delete(key)
         }
       },
       {

@@ -528,10 +528,11 @@ describe('hook routing in isolated mode', () => {
 
   it('bootstrap extracts runtime agent identity from event context', async () => {
     initIsolatedBase(testDir, 'huston');
-    const hustonDir = path.join(testDir, 'agents', 'huston');
+    initAgentStore(testDir, 'runtime-huston');
+    const runtimeHustonDir = path.join(testDir, 'agents', 'runtime-huston');
 
     createAtom({
-      memoryDir: hustonDir, ...BASE_OPTS,
+      memoryDir: runtimeHustonDir, ...BASE_OPTS,
       type: 'fact', slug: 'id-test', body: 'Identity test atom',
     });
 
@@ -670,5 +671,167 @@ describe('backward compatibility', () => {
     );
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     expect(plugin.configSchema.jsonSchema).toEqual(manifest.configSchema);
+  });
+});
+
+// ── Per-session context caching and dynamic routing ─────────────────────────
+
+describe('per-session context caching', () => {
+  it('bootstrap runtime identity routes subsequent tool calls to correct agent store', async () => {
+    // Set up isolated base with two agents
+    initIsolatedBase(testDir, 'static-agent');
+    initAgentStore(testDir, 'runtime-agent');
+
+    const staticDir = path.join(testDir, 'agents', 'static-agent');
+    const runtimeDir = path.join(testDir, 'agents', 'runtime-agent');
+
+    createAtom({
+      memoryDir: runtimeDir, ...BASE_OPTS,
+      type: 'fact', slug: 'runtime-fact', body: 'Runtime agent fact',
+    });
+
+    // Config says "static-agent", but bootstrap provides runtime identity "runtime-agent"
+    const { api, tools, hooks } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'static-agent',
+    });
+    plugin.register(api);
+
+    // Bootstrap with runtime identity
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    await bootstrapHook!.handler({
+      sessionKey: 'session-A',
+      context: {
+        bootstrapFiles: [] as any[],
+        agentIdentity: { id: 'runtime-agent' },
+      },
+      messages: [] as string[],
+    });
+
+    // Tool call (no sessionKey) should use the cached runtime identity
+    const result = await tools['mk_recall'].execute('call-1', { max_tokens: 8000 });
+    expect(result.content[0].text).toContain('Runtime agent fact');
+    expect(result.details.atomCount).toBe(1);
+  });
+
+  it('tool calls before bootstrap use static config identity', async () => {
+    initIsolatedBase(testDir, 'static-agent');
+    const staticDir = path.join(testDir, 'agents', 'static-agent');
+
+    createAtom({
+      memoryDir: staticDir, ...BASE_OPTS,
+      type: 'fact', slug: 'static-fact', body: 'Static agent fact',
+    });
+
+    const { api, tools } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'static-agent',
+    });
+    plugin.register(api);
+
+    // Tool call without any bootstrap — should fall back to cfg.agentId
+    const result = await tools['mk_recall'].execute('call-1', { max_tokens: 8000 });
+    expect(result.content[0].text).toContain('Static agent fact');
+  });
+
+  it('session-end cleans up cached context', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'cleanup-test', body: 'Cleanup test fact',
+    });
+
+    const { api, tools, hooks } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'huston',
+    });
+    plugin.register(api);
+
+    // Bootstrap
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    await bootstrapHook!.handler({
+      sessionKey: 'session-X',
+      context: { bootstrapFiles: [] as any[] },
+      messages: [] as string[],
+    });
+
+    // Session end should clean up
+    const sessionEndHook = findHook(hooks, 'command:new');
+    await sessionEndHook!.handler({
+      sessionKey: 'session-X',
+      action: 'new',
+      context: {},
+      messages: [] as string[],
+    });
+
+    // After cleanup, a new tool call should still work (re-resolves from config)
+    const result = await tools['mk_status'].execute('call-1', {});
+    expect(result.content[0].text).toContain('huston');
+  });
+
+  it('bootstrap without sessionKey still routes correctly', async () => {
+    initIsolatedBase(testDir, 'huston');
+    const hustonDir = path.join(testDir, 'agents', 'huston');
+
+    createAtom({
+      memoryDir: hustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'no-key-test', body: 'No session key fact',
+    });
+
+    const { api, hooks } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'huston',
+    });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    // No sessionKey provided — should use __default__ sentinel
+    const event = {
+      context: { bootstrapFiles: [] as any[] },
+      messages: [] as string[],
+    };
+    await bootstrapHook!.handler(event);
+
+    // Should still work and find the atom
+    expect(event.context.bootstrapFiles).toHaveLength(1);
+    expect(event.context.bootstrapFiles[0].content).toContain('NO-KEY-TEST');
+  });
+
+  it('assertValidAgentId rejects path-traversal in resolveEffectiveMemoryContext', () => {
+    initIsolatedBase(testDir, 'legit');
+
+    // Attempting to register with a path-traversal agentId should throw
+    expect(() =>
+      plugin.register(
+        createMockApi({
+          memoryDir: testDir,
+          agentId: '../../../etc/passwd',
+        }).api,
+      ),
+    ).toThrow();
+  });
+
+  it('assertValidAgentId rejects path-traversal in runtime identity', async () => {
+    initIsolatedBase(testDir, 'legit');
+    const { api, hooks } = createMockApi({
+      memoryDir: testDir,
+      agentId: 'legit',
+    });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    // Runtime identity with path-traversal should throw
+    await expect(
+      bootstrapHook!.handler({
+        sessionKey: 'session-evil',
+        context: {
+          bootstrapFiles: [] as any[],
+          agentIdentity: { id: '../../etc/shadow' },
+        },
+        messages: [] as string[],
+      }),
+    ).rejects.toThrow();
   });
 });

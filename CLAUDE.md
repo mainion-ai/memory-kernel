@@ -46,12 +46,12 @@ npm run build   # compile TypeScript
 ## OpenClaw plugin isolation
 
 - Plugin source: `packages/openclaw-memory-kernel/src/index.ts`
-- `resolveEffectiveMemoryContext(cfg, agentId)` resolves routing per-call (NOT at register() time)
+- `resolveEffectiveMemoryContext(cfg, agentId)` resolves routing once at bootstrap (NOT at register() time, NOT per-call)
 - 5 config fields: `isolationMode` (`auto`|`shared-only`|`per-agent-required`), `autoInitAgentStore`, `sharedRecall`, `failIfMissingAgentStore` (deprecated), `allowSharedFallback`
 - Missing agent store throws by default (prevents silent memory contamination). Set `allowSharedFallback: true` to opt-in to the old silent fallback.
 - `failIfMissingAgentStore` is deprecated — throwing is now the default. `failIfMissingAgentStore: false` maps to `allowSharedFallback: true` for backward compat.
 - All 5 tools and 3 hooks route through the resolved `EffectiveMemoryContext`
-- Runtime agent identity: bootstrap hook extracts from `event.context.agentIdentity.id` and stores per-session in `runtimeAgentIds` Map (keyed by sessionKey). All tools and hooks resolve identity dynamically via `getContext(sessionKey?)`, which falls back to `currentSessionId` when sessionKey is unavailable (tool execute() calls)
+- Runtime agent identity: bootstrap hook extracts from `event.context.agentIdentity.id`, resolves `EffectiveMemoryContext` once, and caches it in `sessionContexts` Map (keyed by sessionKey). All tools and hooks use `getContext(sessionKey?)` which returns the cached context, falling back to `activeSessionKey` when sessionKey is unavailable (tool execute() calls). Session cleanup deletes the cached context to prevent unbounded Map growth.
 - Security: `assertValidAgentId()` is called both in bootstrap (input validation) AND inside `resolveEffectiveMemoryContext()` (defense-in-depth before any filesystem operations)
 - `checkpoint()` supports isolation-aware recall via `baseDir`/`isolated`/`sharedRecall` opts — `mk_context_bundle` and pre-compaction hook pass these
 - `recallIsolatedWithEmbeddings()` + `mergeIsolatedBundles()` handle union recall in the async embedding path
