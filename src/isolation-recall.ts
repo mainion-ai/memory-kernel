@@ -7,10 +7,15 @@
  */
 
 import fs from 'fs';
-import { recall } from './recall.js';
+import { recall, recallWithEmbeddings } from './recall.js';
 import { getSharedDir, DEFAULT_RENDER_CONFIG } from './isolation.js';
 import { listAtomFiles } from './store.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
+
+export interface IsolatedRecallOptions {
+  /** Use embedding-backed recall instead of FTS5-only. Default: false. */
+  useEmbeddings?: boolean;
+}
 
 /**
  * Estimate tokens for an atom (rough: 1 token ≈ 4 chars).
@@ -99,4 +104,104 @@ export function recallIsolated(
     episodes: episodes.length > 0 ? episodes : undefined,
     token_estimate: tokenCount,
   };
+}
+
+/**
+ * Merge two ContextBundles with agent-wins-on-collision dedup and token budget.
+ * Shared helper for both sync and async isolated recall.
+ */
+function mergeIsolatedBundles(
+  agentBundle: ContextBundle,
+  sharedBundle: ContextBundle | null,
+  maxTokens: number,
+): ContextBundle {
+  const mergedAtoms: Atom[] = [...agentBundle.atoms];
+
+  if (sharedBundle && sharedBundle.atoms.length > 0) {
+    const agentIds = new Set(agentBundle.atoms.map((a) => a.frontmatter.id));
+    for (const atom of sharedBundle.atoms) {
+      if (!agentIds.has(atom.frontmatter.id)) {
+        mergedAtoms.push(atom);
+      }
+    }
+  }
+
+  // Apply token budget on merged set
+  let tokenCount = 0;
+  const budgetedAtoms: Atom[] = [];
+
+  for (const atom of mergedAtoms) {
+    const est = estimateTokens(atom);
+    if (tokenCount + est > maxTokens && budgetedAtoms.length > 0) break;
+    budgetedAtoms.push(atom);
+    tokenCount += est;
+  }
+
+  // Merge episodes with dedup (agent wins)
+  const agentEpisodes = agentBundle.episodes ?? [];
+  const sharedEpisodes = sharedBundle?.episodes ?? [];
+  const episodeSet = new Set(agentEpisodes);
+  const episodes = [
+    ...agentEpisodes,
+    ...sharedEpisodes.filter((e) => !episodeSet.has(e)),
+  ];
+
+  return {
+    index: agentBundle.index,
+    handoff: agentBundle.handoff,
+    constraints: agentBundle.constraints,
+    atoms: budgetedAtoms,
+    episodes: episodes.length > 0 ? episodes : undefined,
+    token_estimate: tokenCount,
+  };
+}
+
+/**
+ * Async isolated recall with optional embedding support.
+ *
+ * Like recallIsolated(), searches the agent's store + shared namespace and
+ * merges with agent-wins dedup. When `useEmbeddings: true`, uses
+ * `recallWithEmbeddings()` (async, embedding API calls) instead of `recall()`.
+ *
+ * @param agentDir - Resolved agent memory directory
+ * @param baseDir - Root memory directory (for locating shared/)
+ * @param query - Recall query (same as regular recall)
+ * @param options - Isolated recall options
+ * @returns Merged ContextBundle with agent atoms taking priority
+ */
+export async function recallIsolatedWithEmbeddings(
+  agentDir: string,
+  baseDir: string,
+  query: RecallQuery = {},
+  options: IsolatedRecallOptions = {},
+): Promise<ContextBundle> {
+  const { useEmbeddings = false } = options;
+
+  // Strip max_tokens from sub-queries so each recall returns all matching atoms.
+  const unboundedQuery = { ...query, max_tokens: undefined };
+
+  const recallFn = useEmbeddings
+    ? (dir: string, q: RecallQuery) => recallWithEmbeddings(dir, q)
+    : (dir: string, q: RecallQuery) => Promise.resolve(recall(dir, q));
+
+  // Primary: agent's own store
+  const agentBundle = await recallFn(agentDir, unboundedQuery);
+
+  // Secondary: shared namespace (if it exists and has atoms)
+  const sharedDir = getSharedDir(baseDir);
+  let sharedBundle: ContextBundle | null = null;
+
+  if (fs.existsSync(sharedDir)) {
+    try {
+      const sharedAtomFiles = listAtomFiles(sharedDir);
+      if (sharedAtomFiles.length > 0) {
+        sharedBundle = await recallFn(sharedDir, unboundedQuery);
+      }
+    } catch {
+      // Shared store not initialized or corrupted — skip silently
+    }
+  }
+
+  const maxTokens = query.max_tokens ?? DEFAULT_RENDER_CONFIG.max_tokens;
+  return mergeIsolatedBundles(agentBundle, sharedBundle, maxTokens);
 }

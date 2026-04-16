@@ -45,6 +45,23 @@
         "description": "API key for embedding provider. Accepts a string or a file SecretRef. Falls back to OPENAI_API_KEY env when provider is openai and this is unset."
       },
       "embeddingModel": { "type": "string", "description": "Embedding model ID (e.g. \"text-embedding-3-small\"). Provider default if omitted." },
+      "isolationMode": {
+        "type": "string",
+        "enum": ["auto", "shared-only", "per-agent-required"],
+        "description": "Per-agent isolation mode. \"auto\" reads config.yaml (default), \"shared-only\" forces flat mode, \"per-agent-required\" fails if not isolated."
+      },
+      "autoInitAgentStore": {
+        "type": "boolean",
+        "description": "Auto-create agent store on first use if missing. Default: false."
+      },
+      "sharedRecall": {
+        "type": "boolean",
+        "description": "Include shared namespace atoms in isolated recall. Default: true."
+      },
+      "failIfMissingAgentStore": {
+        "type": "boolean",
+        "description": "Error on all operations (not just writes) if agent store is missing. Default: false."
+      },
       "secretProviders": {
         "type": "object",
         "description": "Map of alias → file provider used to resolve SecretRefs for encryptionKey/embeddingApiKey. Plugin-local; does not interact with OpenClaw core SecretRef resolution.",

@@ -9,6 +9,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — OpenClaw Plugin Per-Agent Isolation
+
+- **OpenClaw plugin isolation routing** — All 5 tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`) and 3 hooks (`agent:bootstrap`, `session:compact:before`, `command:new/reset`) now route through `resolveEffectiveMemoryContext()`. In isolated mode, writes go to `agents/{agentId}/`, reads use union recall (agent + shared). Shared mode is fully backward compatible.
+
+- **Plugin config: isolation fields** — 4 new config fields: `isolationMode` (`auto` | `shared-only` | `per-agent-required`), `autoInitAgentStore` (default: false), `sharedRecall` (default: true), `failIfMissingAgentStore` (default: false). Config schema updated in both plugin source and `openclaw.plugin.json` manifest.
+
+- **`recallIsolatedWithEmbeddings()`** (`src/isolation-recall.ts`) — Async variant of `recallIsolated()` with optional embedding-backed recall. When `useEmbeddings: true`, uses `recallWithEmbeddings()` per store instead of FTS-only `recall()`. Same agent-wins-on-collision merge and token budget logic.
+
+- **Enhanced `mk_status`** — In isolated mode, reports: isolation mode, effective agent ID, base dir, shared namespace status, shared atom count, and shared recall enabled/disabled.
+
+- **Enhanced bootstrap observability** — In isolated mode, bootstrap message includes agent routing info: `mk: bootstrap agent=<id> isolated=true shared=<bool> atoms=<n>`.
+
+- **Actionable errors** — Missing agent stores produce clear error messages with `mk init -a <id> <baseDir>` suggestions.
+
+- **Test coverage** — `test/openclaw-plugin-isolation.test.ts` (24 tests): config parsing, effective context resolution, tool routing, hook routing, cross-agent isolation, backward compatibility.
+
 ### Added — Per-Agent Memory Isolation
 
 - **Two isolation modes: `shared` (default) and `per-agent`** — backward-compatible by design. In shared mode, everything works unchanged. In per-agent mode, each agent gets `agents/{agentId}/` with its own atoms, index, events, and render config; a `shared/` namespace holds explicitly shared atoms. Mode is set via `config.yaml` or `MK_ISOLATION` env var.

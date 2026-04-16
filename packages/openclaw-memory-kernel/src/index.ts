@@ -6,8 +6,11 @@ import {
   createAtom, recall, recallWithEmbeddings, reflect, checkpoint,
   writeEpisode, listAtoms, indexStats, reindex,
   ATOM_TYPES,
+  // Per-agent isolation
+  resolveAgentDir, isIsolated, loadConfig, initAgentStore,
+  recallIsolatedWithEmbeddings,
 } from 'memory-kernel'
-import type { AtomType, Classification, ContextBundle, RecallQuery } from 'memory-kernel'
+import type { AtomType, Classification, ContextBundle, IsolationConfig, RecallQuery } from 'memory-kernel'
 // OpenClaw SDK types — resolved at runtime via peer dependency
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface OpenClawPluginApi {
@@ -43,6 +46,8 @@ type FileSecretRef = {
 type SecretValue = string | FileSecretRef
 type SecretProviderEntry = { source: 'file'; path: string }
 
+type PluginIsolationMode = 'auto' | 'shared-only' | 'per-agent-required'
+
 // Resolved config — what register() consumes. `secretProviders` is input-only
 // and is never exposed here; all refs are materialized into strings.
 type PluginConfig = {
@@ -52,6 +57,25 @@ type PluginConfig = {
   embeddingProvider?: string
   embeddingApiKey?: string
   embeddingModel?: string
+  // Per-agent isolation
+  isolationMode?: PluginIsolationMode
+  autoInitAgentStore?: boolean
+  sharedRecall?: boolean
+  failIfMissingAgentStore?: boolean
+}
+
+/** Resolved memory context — immutable once register() completes. */
+interface EffectiveMemoryContext {
+  /** Base memory directory (the configured memoryDir). */
+  baseDir: string
+  /** Working directory: baseDir in shared mode, agents/{id}/ in isolated. */
+  effectiveDir: string
+  /** Resolved agent identity. */
+  agentId: string
+  /** Whether per-agent isolation is active. */
+  isolated: boolean
+  /** Whether recall should include shared namespace atoms. */
+  sharedRecall: boolean
 }
 
 function isFileSecretRef(value: unknown): value is FileSecretRef {
@@ -206,6 +230,12 @@ const pluginConfigSchema = {
       )
     }
 
+    const rawIsolationMode = cfg['isolationMode']
+    const isolationMode: PluginIsolationMode | undefined =
+      rawIsolationMode === 'auto' || rawIsolationMode === 'shared-only' || rawIsolationMode === 'per-agent-required'
+        ? rawIsolationMode
+        : undefined
+
     return {
       memoryDir: path.resolve(memoryDir ?? process.env.MEMORY_DIR!),
       encryptionKey: resolveIfRef('encryptionKey', cfg['encryptionKey']),
@@ -215,6 +245,11 @@ const pluginConfigSchema = {
       embeddingApiKey: resolveIfRef('embeddingApiKey', cfg['embeddingApiKey']),
       embeddingModel:
         typeof cfg['embeddingModel'] === 'string' ? cfg['embeddingModel'] : undefined,
+      // Per-agent isolation
+      isolationMode,
+      autoInitAgentStore: cfg['autoInitAgentStore'] === true,
+      sharedRecall: cfg['sharedRecall'] !== false, // default: true
+      failIfMissingAgentStore: cfg['failIfMissingAgentStore'] === true,
     }
   },
   jsonSchema: {
@@ -289,6 +324,25 @@ const pluginConfigSchema = {
           required: ['source', 'path'],
         },
       },
+      isolationMode: {
+        type: 'string',
+        enum: ['auto', 'shared-only', 'per-agent-required'],
+        description:
+          'Per-agent isolation mode. "auto" reads config.yaml (default), ' +
+          '"shared-only" forces flat mode, "per-agent-required" fails if not isolated.',
+      },
+      autoInitAgentStore: {
+        type: 'boolean',
+        description: 'Auto-create agent store on first use if missing. Default: false.',
+      },
+      sharedRecall: {
+        type: 'boolean',
+        description: 'Include shared namespace atoms in isolated recall. Default: true.',
+      },
+      failIfMissingAgentStore: {
+        type: 'boolean',
+        description: 'Error on all operations (not just writes) if agent store is missing. Default: false.',
+      },
     },
     required: [],
   },
@@ -329,6 +383,25 @@ const pluginConfigSchema = {
       placeholder: 'text-embedding-3-small',
       help: 'Optional. Provider-specific default if omitted.',
     },
+    isolationMode: {
+      label: 'Isolation mode',
+      placeholder: 'auto',
+      help:
+        'Per-agent isolation: "auto" reads config.yaml (default), "shared-only" forces flat mode, ' +
+        '"per-agent-required" fails if not isolated.',
+    },
+    autoInitAgentStore: {
+      label: 'Auto-init agent store',
+      help: 'Automatically create agent store if missing. Default: false (errors instead).',
+    },
+    sharedRecall: {
+      label: 'Include shared recall',
+      help: 'Include shared namespace atoms in isolated recall. Default: true.',
+    },
+    failIfMissingAgentStore: {
+      label: 'Fail if agent store missing',
+      help: 'Error on all operations when agent store is missing, not just writes. Default: false.',
+    },
   },
 }
 
@@ -336,13 +409,75 @@ function ok(text: string, details?: Record<string, unknown>) {
   return { content: [{ type: 'text' as const, text }], ...(details ? { details } : {}) }
 }
 
-// Use embedding-backed recall when both provider and key are available,
-// otherwise fall back to structured FTS5 recall.
-async function smartRecall(memoryDir: string, query: RecallQuery): Promise<ContextBundle> {
-  if (process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_API_KEY) {
-    return await recallWithEmbeddings(memoryDir, query)
+/**
+ * Resolve the effective memory context for this plugin instance.
+ *
+ * Called once at register() time. The result is captured in closure scope and
+ * used by every tool handler and lifecycle hook.
+ *
+ * @param cfg - Parsed plugin config
+ * @param runtimeAgentId - Future: from OpenClaw runtime/event context. Currently undefined.
+ */
+function resolveEffectiveMemoryContext(
+  cfg: PluginConfig,
+  runtimeAgentId?: string,
+): EffectiveMemoryContext {
+  const baseDir = cfg.memoryDir
+  const isolationMode = cfg.isolationMode ?? 'auto'
+  const sharedRecall = cfg.sharedRecall ?? true
+
+  // Step 1: Resolve agent identity
+  // Priority: runtime OpenClaw context > static config > default
+  const agentId = runtimeAgentId ?? cfg.agentId ?? 'openclaw'
+
+  // Step 2: Determine effective isolation mode
+  let isolated: boolean
+  if (isolationMode === 'shared-only') {
+    isolated = false
+  } else if (isolationMode === 'per-agent-required') {
+    if (!fs.existsSync(baseDir)) {
+      throw new Error(
+        `memory-kernel: isolationMode is "per-agent-required" but memoryDir ` +
+          `does not exist at ${baseDir}. Run: mk init ${baseDir}`,
+      )
+    }
+    const diskConfig = loadConfig(baseDir)
+    if (diskConfig.isolation !== 'per-agent') {
+      throw new Error(
+        `memory-kernel: isolationMode is "per-agent-required" but ${baseDir}/config.yaml ` +
+          `has isolation="${diskConfig.isolation}". Run: mk init -a ${agentId} ${baseDir}`,
+      )
+    }
+    isolated = true
+  } else {
+    // 'auto': respect whatever config.yaml / MK_ISOLATION says
+    isolated = fs.existsSync(baseDir) ? isIsolated(baseDir) : false
   }
-  return recall(memoryDir, query)
+
+  // Step 3: Resolve effective directory
+  let effectiveDir: string
+  if (!isolated) {
+    effectiveDir = baseDir
+  } else {
+    effectiveDir = resolveAgentDir(baseDir, agentId, { isolation: 'per-agent' })
+
+    // Step 4: Handle missing agent store
+    if (!fs.existsSync(effectiveDir)) {
+      if (cfg.autoInitAgentStore) {
+        initAgentStore(baseDir, agentId)
+      } else {
+        throw new Error(
+          `memory-kernel: agent store for "${agentId}" does not exist at ${effectiveDir}. ` +
+            `Run: mk init -a ${agentId} ${baseDir}` +
+            (cfg.autoInitAgentStore === undefined
+              ? ' (or set autoInitAgentStore: true in plugin config)'
+              : ''),
+        )
+      }
+    }
+  }
+
+  return { baseDir, effectiveDir, agentId, isolated, sharedRecall }
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -412,8 +547,6 @@ const memoryKernelPlugin = {
 
   register(api: OpenClawPluginApi) {
     const cfg = pluginConfigSchema.parse(api.pluginConfig)
-    const { memoryDir } = cfg
-    const agentId = cfg.agentId ?? 'openclaw'
 
     // Track the current session id for audit-trail propagation into tool calls.
     // Updated by lifecycle hooks (agent:bootstrap, command:*, session:compact:before).
@@ -440,12 +573,15 @@ const memoryKernelPlugin = {
     }
     if (cfg.embeddingModel) process.env.EMBEDDING_MODEL = cfg.embeddingModel
 
+    // Resolve per-agent isolation context (once, captured in closure).
+    const mctx = resolveEffectiveMemoryContext(cfg)
+
     // Ensure index is fresh on plugin load — prevents silent recall failures
-    if (fs.existsSync(memoryDir)) {
-      const stats = indexStats(memoryDir)
+    if (fs.existsSync(mctx.effectiveDir)) {
+      const stats = indexStats(mctx.effectiveDir)
       if (!stats) {
         try {
-          reindex(memoryDir)
+          reindex(mctx.effectiveDir)
         } catch (err) {
           console.warn(
             'memory-kernel: reindex on init failed:',
@@ -453,6 +589,41 @@ const memoryKernelPlugin = {
           )
         }
       }
+    }
+    // In isolated mode with sharedRecall, also ensure shared index is fresh.
+    if (mctx.isolated && mctx.sharedRecall) {
+      const sharedDir = path.join(mctx.baseDir, 'shared')
+      if (fs.existsSync(sharedDir)) {
+        const stats = indexStats(sharedDir)
+        if (!stats) {
+          try {
+            reindex(sharedDir)
+          } catch (err) {
+            console.warn(
+              'memory-kernel: reindex shared on init failed:',
+              err instanceof Error ? err.message : String(err),
+            )
+          }
+        }
+      }
+    }
+
+    // Use embedding-backed recall when both provider and key are available,
+    // otherwise fall back to structured FTS5 recall. Isolation-aware.
+    async function smartRecall(query: RecallQuery): Promise<ContextBundle> {
+      const useEmbeddings = !!(process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_API_KEY)
+
+      if (mctx.isolated && mctx.sharedRecall) {
+        return recallIsolatedWithEmbeddings(mctx.effectiveDir, mctx.baseDir, query, {
+          useEmbeddings,
+        })
+      }
+
+      // Shared mode or isolated-without-shared: direct recall on effectiveDir
+      if (useEmbeddings) {
+        return recallWithEmbeddings(mctx.effectiveDir, query)
+      }
+      return recall(mctx.effectiveDir, query)
     }
 
     // ── mk_remember ──────────────────────────────────────────────────────────
@@ -471,8 +642,8 @@ const memoryKernelPlugin = {
           try {
             const p = params as Static<typeof RememberParams>
             const atom = createAtom({
-              memoryDir,
-              agent_id: agentId,
+              memoryDir: mctx.effectiveDir,
+              agent_id: mctx.agentId,
               session_id: currentSessionId,
               type: p.type as AtomType,
               slug: p.slug,
@@ -511,7 +682,7 @@ const memoryKernelPlugin = {
         async execute(_id: any, params: any) {
           try {
             const p = params as Static<typeof RecallParams>
-            const result = await smartRecall(memoryDir, {
+            const result = await smartRecall({
               task: p.task,
               types: p.types as AtomType[] | undefined,
               tags: p.tags,
@@ -559,7 +730,7 @@ const memoryKernelPlugin = {
         parameters: ReflectParams,
         async execute(_id: any, _params: any) {
           try {
-            const result = reflect({ memoryDir, agent_id: agentId, session_id: currentSessionId })
+            const result = reflect({ memoryDir: mctx.effectiveDir, agent_id: mctx.agentId, session_id: currentSessionId })
             return ok(
               `reflect complete — expired: ${result.expired}, archived: ${result.archived}, ` +
                 `deduped: ${result.deduped}, promoted: ${result.promoted}, conflicts: ${result.conflicts_found}`,
@@ -589,8 +760,8 @@ const memoryKernelPlugin = {
           try {
             const p = params as Static<typeof ContextBundleParams>
             const result = checkpoint({
-              memoryDir,
-              agent_id: agentId,
+              memoryDir: mctx.effectiveDir,
+              agent_id: mctx.agentId,
               session_id: currentSessionId,
               task: p.task,
               max_tokens: p.max_tokens,
@@ -621,19 +792,43 @@ const memoryKernelPlugin = {
         parameters: Type.Object({}),
         async execute(_id: any, _params: any) {
           try {
-            const atoms = listAtoms(memoryDir)
-            const stats = indexStats(memoryDir)
+            const atoms = listAtoms(mctx.effectiveDir)
+            const stats = indexStats(mctx.effectiveDir)
             const typeCounts: Record<string, number> = {}
             for (const a of atoms) {
               const t = a.frontmatter?.type ?? 'unknown'
               typeCounts[t] = (typeCounts[t] || 0) + 1
             }
-            return ok(
-              `**Memory Kernel** (${memoryDir})\n` +
-                `Atoms: ${atoms.length}\n` +
-                `Types: ${JSON.stringify(typeCounts)}\n` +
-                `Index: ${stats ? `${stats.atoms} indexed, ${stats.embeddings} embeddings` : 'no index (run mk_reflect to rebuild)'}`,
+
+            const lines = [
+              `**Memory Kernel** (${mctx.effectiveDir})`,
+              mctx.isolated
+                ? `Isolation: per-agent (agent: ${mctx.agentId})`
+                : 'Isolation: shared',
+            ]
+
+            if (mctx.isolated) {
+              lines.push(`Base dir: ${mctx.baseDir}`)
+              const sharedDir = path.join(mctx.baseDir, 'shared')
+              const sharedExists = fs.existsSync(sharedDir)
+              lines.push(`Shared namespace: ${sharedExists ? 'exists' : 'missing'}`)
+              if (sharedExists) {
+                try {
+                  const sharedAtoms = listAtoms(sharedDir)
+                  lines.push(`Shared atoms: ${sharedAtoms.length}`)
+                } catch {
+                  lines.push('Shared atoms: (read error)')
+                }
+              }
+              lines.push(`Shared recall: ${mctx.sharedRecall ? 'enabled' : 'disabled'}`)
+            }
+
+            lines.push(
+              `Atoms: ${atoms.length}`,
+              `Types: ${JSON.stringify(typeCounts)}`,
+              `Index: ${stats ? `${stats.atoms} indexed, ${stats.embeddings} embeddings` : 'no index (run mk_reflect to rebuild)'}`,
             )
+            return ok(lines.join('\n'))
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
             return ok(`Error: ${msg}`)
@@ -650,13 +845,15 @@ const memoryKernelPlugin = {
       ['agent:bootstrap'],
       async (event: any) => {
         setSession(event.sessionKey)
-        if (!fs.existsSync(memoryDir)) {
+        // Future: extract runtime agent identity from OpenClaw event context
+        // const runtimeAgentId = event.context?.agentIdentity?.id
+        if (!fs.existsSync(mctx.effectiveDir)) {
           event.messages?.push('mk: no memory dir — file-first fallback')
           return
         }
         try {
-          const bundle = await smartRecall(memoryDir, {
-            agent_id: agentId,
+          const bundle = await smartRecall({
+            agent_id: mctx.agentId,
             session_id: event.sessionKey || 'bootstrap',
             max_tokens: 4000,
           })
@@ -679,7 +876,10 @@ const memoryKernelPlugin = {
             if (idx >= 0) files[idx] = next
             else files.push(next)
           }
-          event.messages?.push(`mk: bootstrap injected ${count} atoms`)
+          const bootstrapMsg = mctx.isolated
+            ? `mk: bootstrap agent=${mctx.agentId} isolated=true shared=${mctx.sharedRecall} atoms=${count}`
+            : `mk: bootstrap injected ${count} atoms`
+          event.messages?.push(bootstrapMsg)
         } catch (err) {
           // Don't block bootstrap on failure, but surface a signal so the host
           // doctrine can fall back to memory_search / file layer instead of
@@ -701,8 +901,8 @@ const memoryKernelPlugin = {
         setSession(event.sessionKey)
         try {
           const result = checkpoint({
-            memoryDir,
-            agent_id: agentId,
+            memoryDir: mctx.effectiveDir,
+            agent_id: mctx.agentId,
             session_id: event.sessionKey || 'unknown',
             task: 'pre-compaction save',
           })
@@ -732,15 +932,15 @@ const memoryKernelPlugin = {
         setSession(event.sessionKey)
         try {
           reflect({
-            memoryDir,
-            agent_id: agentId,
+            memoryDir: mctx.effectiveDir,
+            agent_id: mctx.agentId,
             session_id: event.sessionKey || 'unknown',
           })
 
           const sessionId = event.context?.sessionEntry?.id
           if (sessionId) {
-            writeEpisode(memoryDir, sessionId, `Session ended via /${event.action} command`, {
-              agent_id: agentId,
+            writeEpisode(mctx.effectiveDir, sessionId, `Session ended via /${event.action} command`, {
+              agent_id: mctx.agentId,
             })
           }
 
