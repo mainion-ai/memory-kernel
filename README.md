@@ -144,6 +144,43 @@ Shared mode (default) works unchanged. **[Isolation guide →](docs/isolation.md
 
 ---
 
+## Per-Agent Isolation
+
+When multiple agents share a memory directory, isolation prevents cross-contamination. Two modes:
+
+- **`shared`** (default) — All agents read/write the same store. No configuration needed.
+- **`per-agent`** — Each agent gets its own store under `agents/{agentId}/`. Explicitly shared atoms live in `shared/`.
+
+**Enable via `config.yaml`:**
+```yaml
+isolation: per-agent
+```
+Or set `MK_ISOLATION=per-agent` env var.
+
+**Isolated layout:**
+```
+my-memory/
+├── config.yaml                ← isolation: per-agent
+├── agents/
+│   ├── agent-alpha/           ← Agent-specific store (full layout)
+│   │   ├── ENTITIES/
+│   │   ├── events.ndjson
+│   │   ├── render.yaml        ← Per-agent render config
+│   │   └── ...
+│   └── agent-beta/
+│       └── ...
+└── shared/                    ← Explicitly shared atoms
+    ├── ENTITIES/
+    └── ...
+```
+
+**Key concepts:**
+- **Union recall:** `recallIsolated()` merges agent + shared atoms (agent wins on ID collision).
+- **Share is copy-based:** `mk share` creates a snapshot — re-share to propagate updates.
+- **Migration:** `mk migrate --strategy fresh|partition|clone-to-shared` converts existing shared-mode stores.
+
+---
+
 ## CLI
 
 > **Tip:** All commands accept `-a, --agent <id>` for per-agent isolation. In shared mode the flag is ignored.
@@ -218,6 +255,25 @@ const result = wander({ memoryDir: './memory', seedTags: ['api', 'design'], step
 // Render to CLAUDE.md
 import { renderClaudeMd } from 'memory-kernel';
 const md = renderClaudeMd('./memory', { maxTokens: 8000 });
+```
+
+```typescript
+// Per-agent isolation
+import { initIsolatedBase, resolveAgentDir, isIsolated, recallIsolated, shareAtom } from 'memory-kernel';
+
+// Initialize with isolation
+initIsolatedBase('./memory', 'agent-alpha');
+// Creates: agents/agent-alpha/, shared/, config.yaml
+
+// Route operations to agent store
+const agentDir = resolveAgentDir('./memory', 'agent-alpha');
+createAtom({ memoryDir: agentDir, type: 'decision', slug: 'my-call', body: '...', agent_id: 'agent-alpha', session_id: 's1', confidence: 0.9 });
+
+// Union recall (agent + shared atoms, agent wins on collision)
+const bundle = recallIsolated('./memory', 'agent-alpha', { task: 'review decisions' });
+
+// Share an atom with all agents
+shareAtom('./memory', 'DECI-2026-04-16-MY-CALL-1234', 'agent-alpha', { agent_id: 'agent-alpha', session_id: 's1' });
 ```
 
 Full API covers event sourcing, replay, episodes, multi-agent merge, encryption, import, conflict resolution, per-agent isolation, and more. **[SDK reference →](docs/sdk-reference.md)** | **[Isolation guide →](docs/isolation.md)**
