@@ -149,7 +149,8 @@ Use mk_recall with task "package manager" — what comes back?
 | `isolationMode` | `"auto"` | Per-agent isolation: `"auto"` reads config.yaml, `"shared-only"` forces flat mode, `"per-agent-required"` fails if not isolated. |
 | `autoInitAgentStore` | `false` | Auto-create agent store if missing. Recommended: `false` (surface workflow errors early). |
 | `sharedRecall` | `true` | Include shared namespace atoms in isolated recall. |
-| `failIfMissingAgentStore` | `false` | Error on all operations (not just writes) if agent store is missing. |
+| `failIfMissingAgentStore` | `false` | Deprecated — throwing is now the default when agent store is missing. Setting to `false` maps to `allowSharedFallback: true`. |
+| `allowSharedFallback` | `false` | Allow silent fallback to shared mode when agent store is missing in isolated mode. Default: `false` (errors instead). Use only during migration or development. |
 
 ## Per-agent memory isolation
 
@@ -157,9 +158,10 @@ When the memory-kernel store is configured for `per-agent` isolation (via `confi
 
 ### How it works
 
-1. The plugin reads `agentId` from its config (e.g., `"huston"` or `"main"`)
-2. In isolated mode, writes go to `agents/{agentId}/` and reads use union recall (agent + shared)
-3. In shared mode, everything works exactly as before — no change needed
+1. The plugin reads `agentId` from its config (e.g., `"huston"` or `"main"`). At bootstrap time, if OpenClaw provides runtime agent identity via `event.context.agentIdentity.id`, the plugin updates the audit-trail identity automatically.
+2. In isolated mode, writes go to `agents/{agentId}/` and reads use union recall (agent + shared) — this applies to `mk_recall`, `mk_context_bundle`, bootstrap injection, and pre-compaction checkpoints.
+3. In shared mode, everything works exactly as before — no change needed.
+4. If the agent store is missing, the plugin throws an actionable error by default. Set `allowSharedFallback: true` to fall back to shared mode instead (not recommended for production).
 
 ### Setup for named agents
 
