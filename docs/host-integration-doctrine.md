@@ -130,6 +130,19 @@ If further migration is needed:
 
 Avoid migrating volatile history (backtest results, long logs, giant dumps) — those belong in files.
 
+## Multi-agent isolation
+
+When running multiple agents against the same memory directory, use [per-agent isolation](isolation.md) instead of giving each agent a separate directory:
+
+- Set `isolation: per-agent` in `config.yaml` (or `MK_ISOLATION=per-agent` env var).
+- Each agent gets `agents/{agentId}/` — its own atoms, index, events, render config.
+- Shared atoms go to `shared/` via explicit `mk_share_atom` / `mk share` operations.
+- Each agent's `mk_context_bundle` returns their private atoms + shared atoms (union recall).
+- Compaction routes to each agent's own store via `MCP_AGENT_ID` or the CLI `-a` flag.
+- Shared knowledge is the coordination mechanism — agents don't read each other's private stores.
+
+For MCP: set `MCP_AGENT_ID` to the agent's identifier so all tool calls route to the correct store.
+
 ## Health checks
 
 A healthy kernel-first integration shows:
