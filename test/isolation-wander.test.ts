@@ -65,6 +65,7 @@ describe('wander isolation', () => {
     const result = wander({
       memoryDir: hustonDir,
       sharedMemoryDir: shared,
+      baseDir: testDir,
       seedTags: ['infra'],
       steps: 1,
     });
@@ -90,6 +91,7 @@ describe('wander isolation', () => {
     const result = wander({
       memoryDir: hustonDir,
       sharedMemoryDir: shared,
+      baseDir: testDir,
       seedTags: ['ops'],
       steps: 1,
     });
@@ -108,6 +110,7 @@ describe('wander isolation', () => {
     const result = wander({
       memoryDir: hustonDir,
       sharedMemoryDir: path.join(testDir, 'nonexistent-shared'),
+      baseDir: testDir,
       seedTags: ['solo'],
       steps: 1,
     });
@@ -126,6 +129,7 @@ describe('wander isolation', () => {
       wander({
         memoryDir: hustonDir,
         sharedMemoryDir: '/tmp/evil-shared',
+        baseDir: testDir,
         seedTags: ['safe'],
         steps: 1,
       }),

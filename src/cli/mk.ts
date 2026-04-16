@@ -53,7 +53,7 @@ import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
 import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { closure } from '../closure.js';
-import { isIsolated, initSharedStore, listAgents } from '../isolation.js';
+import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
 import { migrate } from '../migrate.js';
 import { resolveDir as resolveDirBase } from './resolve-dir.js';
@@ -93,11 +93,21 @@ program
   .argument('[dir]', 'Directory to initialize', './memory')
   .action((dir: string) => {
     const memoryDir = path.resolve(dir);
-    initMemoryDir(memoryDir);
-    console.log(`✓ Memory initialized at ${memoryDir}`);
-    console.log('  Created: INDEX.md, HANDOFF.md, DECISIONS.md, CONSTRAINTS.md, OPEN_QUESTIONS.md');
-    console.log('  Created: ENTITIES/, EPISODES/, EVIDENCE/, CONFLICTS/, ARCHIVE/');
-    console.log('  Created: events.ndjson');
+    const agent = getAgent();
+    if (agent) {
+      // Initialize in per-agent isolation mode with the specified agent store
+      initIsolatedBase(memoryDir, agent);
+      console.log(`✓ Isolated memory initialized at ${memoryDir}`);
+      console.log(`  Created agent store: agents/${agent}/`);
+      console.log('  Created shared store: shared/');
+      console.log('  Created: config.yaml (isolation: per-agent)');
+    } else {
+      initMemoryDir(memoryDir);
+      console.log(`✓ Memory initialized at ${memoryDir}`);
+      console.log('  Created: INDEX.md, HANDOFF.md, DECISIONS.md, CONSTRAINTS.md, OPEN_QUESTIONS.md');
+      console.log('  Created: ENTITIES/, EPISODES/, EVIDENCE/, CONFLICTS/, ARCHIVE/');
+      console.log('  Created: events.ndjson');
+    }
   });
 
 // --- mk status ---

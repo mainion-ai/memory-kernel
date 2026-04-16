@@ -87,6 +87,8 @@ export interface WanderOptions {
   typeWeights?: Record<string, number>;
   /** If set, shared namespace atoms participate in the graph (per-agent isolation). */
   sharedMemoryDir?: string;
+  /** Root memory directory (used for path validation when sharedMemoryDir is set). */
+  baseDir?: string;
 }
 
 export interface ActivatedAtom {
@@ -666,12 +668,13 @@ export function wander(options: WanderOptions): WanderResult {
 
   // Merge shared namespace graph if provided (validate path is within base directory)
   if (options.sharedMemoryDir) {
-    // In isolation mode memoryDir is baseDir/agents/agentId — shared must be under the same baseDir
+    // Shared dir must be within the base memory directory
     const resolvedShared = path.resolve(options.sharedMemoryDir);
     const resolvedMemory = path.resolve(memoryDir);
-    const baseDir = resolvedMemory.includes(`${path.sep}agents${path.sep}`)
-      ? resolvedMemory.slice(0, resolvedMemory.indexOf(`${path.sep}agents${path.sep}`))
-      : resolvedMemory;
+    // Use explicit baseDir when provided; fall back to parent-of-parent for agents/{id} layout
+    const baseDir = options.baseDir
+      ? path.resolve(options.baseDir)
+      : path.dirname(path.dirname(resolvedMemory));
     assertWithinDir(baseDir, resolvedShared);
   }
   if (options.sharedMemoryDir && indexExists(options.sharedMemoryDir)) {

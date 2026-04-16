@@ -71,8 +71,8 @@ export function shareAtom(
 
   // Index in shared store if index exists
   if (indexExists(sharedDir)) {
-    atom.filePath = sharedPath;
-    indexAtom(sharedDir, atom);
+    const sharedAtom = { ...atom, filePath: sharedPath };
+    indexAtom(sharedDir, sharedAtom);
   }
 
   // Emit event in agent's log

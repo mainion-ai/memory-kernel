@@ -81,13 +81,13 @@ export function recallIsolated(
     tokenCount += est;
   }
 
-  // Merge episodes with dedup by episode ID (agent wins on collision)
+  // Merge episodes with dedup (agent wins on collision)
   const agentEpisodes = agentBundle.episodes ?? [];
   const sharedEpisodes = sharedBundle?.episodes ?? [];
-  const episodeIds = new Set(agentEpisodes.map((e) => e.id));
+  const episodeSet = new Set(agentEpisodes);
   const episodes = [
     ...agentEpisodes,
-    ...sharedEpisodes.filter((e) => !episodeIds.has(e.id)),
+    ...sharedEpisodes.filter((e) => !episodeSet.has(e)),
   ];
 
   // Use agent's views (primary), not shared's

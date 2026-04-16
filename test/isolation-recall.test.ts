@@ -15,6 +15,7 @@ import {
   listAtoms,
   readAtom,
   writeAtom,
+  writeEpisode,
 } from '../src/index.js';
 import { recallIsolated } from '../src/isolation-recall.js';
 import { recall } from '../src/recall.js';
@@ -173,7 +174,7 @@ describe('recallIsolated', () => {
     expect(bundle.atoms.length).toBe(1);
   });
 
-  it('merges episodes from agent and shared', () => {
+  it('merges episodes from agent and shared stores', () => {
     const hustonDir = agentDir('huston');
     const shared = sharedDir();
     openIndex(hustonDir);
@@ -182,10 +183,42 @@ describe('recallIsolated', () => {
     createAtom({ ...base(hustonDir), type: 'fact', slug: 'agent-fact', body: 'Agent fact.' });
     createAtom({ ...base(shared), type: 'fact', slug: 'shared-fact', body: 'Shared fact.' });
 
-    // Include episodes in recall
+    // Write episodes to both stores
+    writeEpisode(hustonDir, 'agent-session', 'Agent episode summary.');
+    writeEpisode(shared, 'shared-session', 'Shared episode summary.');
+
     const bundle = recallIsolated(hustonDir, testDir, { include_episodes: true });
-    expect(bundle.atoms.length).toBe(2);
-    // Episodes may be empty since we didn't write any, but the field should exist or be undefined
+    expect(bundle.episodes).toBeDefined();
+    expect(bundle.episodes!.length).toBe(2);
+    expect(bundle.episodes!.some((e) => e.includes('Agent episode'))).toBe(true);
+    expect(bundle.episodes!.some((e) => e.includes('Shared episode'))).toBe(true);
+  });
+
+  it('deduplicates identical episodes across agent and shared', () => {
+    const hustonDir = agentDir('huston');
+    const shared = sharedDir();
+    openIndex(hustonDir);
+    openIndex(shared);
+
+    createAtom({ ...base(hustonDir), type: 'fact', slug: 'agent-fact', body: 'Agent fact.' });
+    createAtom({ ...base(shared), type: 'fact', slug: 'shared-fact', body: 'Shared fact.' });
+
+    // Write identical episode to both stores (same session ID + same summary)
+    writeEpisode(hustonDir, 'dup-session', 'Identical episode summary.');
+    writeEpisode(shared, 'dup-session', 'Identical episode summary.');
+    // Write a unique shared episode
+    writeEpisode(shared, 'unique-shared-session', 'Unique shared episode.');
+
+    const bundle = recallIsolated(hustonDir, testDir, { include_episodes: true });
+    expect(bundle.episodes).toBeDefined();
+    const episodeTexts = bundle.episodes!;
+    // The identical episode should appear only once (deduplicated)
+    const dupCount = episodeTexts.filter((e) => e.includes('Identical episode')).length;
+    expect(dupCount).toBe(1);
+    // The unique shared episode should be present
+    expect(episodeTexts.some((e) => e.includes('Unique shared'))).toBe(true);
+    // Total: 1 deduped + 1 unique = 2
+    expect(episodeTexts.length).toBe(2);
   });
 
   it('returns views from agent store, not shared', () => {
