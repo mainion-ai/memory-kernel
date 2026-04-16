@@ -465,14 +465,20 @@ function resolveEffectiveMemoryContext(
     if (!fs.existsSync(effectiveDir)) {
       if (cfg.autoInitAgentStore) {
         initAgentStore(baseDir, agentId)
-      } else {
+      } else if (cfg.failIfMissingAgentStore) {
         throw new Error(
           `memory-kernel: agent store for "${agentId}" does not exist at ${effectiveDir}. ` +
             `Run: mk init -a ${agentId} ${baseDir}` +
-            (cfg.autoInitAgentStore === undefined
-              ? ' (or set autoInitAgentStore: true in plugin config)'
-              : ''),
+            ' (or set autoInitAgentStore: true in plugin config)',
         )
+      } else {
+        // Default: fall back to shared mode with a warning
+        console.warn(
+          `memory-kernel: agent store for "${agentId}" not found at ${effectiveDir}. ` +
+            `Falling back to shared mode. Run: mk init -a ${agentId} ${baseDir}`,
+        )
+        effectiveDir = baseDir
+        isolated = false
       }
     }
   }
