@@ -13,6 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
+import { resolveDir } from './resolve-dir.js';
 import { relinkAll } from '../relink.js';
 
 export function registerRelinkCommand(program: Command): void {
@@ -31,7 +32,7 @@ export function registerRelinkCommand(program: Command): void {
         process.exit(1);
       }
 
-      const memoryDir = path.resolve(opts.dir);
+      const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
         console.error(`✗ Memory directory not found: ${memoryDir}`);
         process.exit(1);

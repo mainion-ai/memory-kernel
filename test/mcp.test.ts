@@ -33,7 +33,7 @@ let testDir: string;
 let ctx: McpContext;
 
 function base(): McpContext {
-  return { memoryDir: testDir, defaultAgentId: 'test-agent', defaultSessionId: 'test-session' };
+  return { memoryDir: testDir, defaultAgentId: 'test-agent', defaultSessionId: 'test-session', isolated: false };
 }
 
 function parseResult(result: { content: Array<{ type: string; text: string }>; isError?: boolean }) {

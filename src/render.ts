@@ -4,9 +4,11 @@
  */
 
 import { recall } from './recall.js';
+import { recallIsolated } from './isolation-recall.js';
 import { countEvents } from './event-log.js';
 import { getAllRelations } from './index-db.js';
-import type { Atom } from './types.js';
+import { isIsolated, resolveAgentDir, loadRenderConfig } from './isolation.js';
+import type { Atom, RenderConfig } from './types.js';
 
 // --- Belief arc helpers ---
 
@@ -143,6 +145,8 @@ function buildBeliefArcs(
 export interface RenderClaudeMdOptions {
   /** Token budget for recall. Default: 8000 (~5% of a 200K context window, ~100 atoms). */
   maxTokens?: number;
+  /** Per-type score multipliers for recall ranking. */
+  typeWeights?: Partial<Record<string, number>>;
 }
 
 /**
@@ -153,11 +157,58 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
   const maxTokens = opts.maxTokens ?? 8000;
 
   // Recall with token budget — applies privacy filtering (no SECRET/PERSONAL) and token cap.
-  const bundle = recall(memoryDir, { max_tokens: maxTokens });
-  const active = bundle.atoms;
+  const bundle = recall(memoryDir, {
+    max_tokens: maxTokens,
+    type_weights: opts.typeWeights as any,
+  });
+
+  return renderFromAtoms(memoryDir, bundle.atoms);
+}
+
+/**
+ * Render CLAUDE.md for a specific agent in isolated mode.
+ * Loads the agent's render.yaml config and uses recallIsolated for union recall.
+ *
+ * @param baseDir - Root memory directory
+ * @param agentId - Agent ID
+ * @param opts - Override options (take precedence over render.yaml)
+ */
+export function renderAgentClaudeMd(
+  baseDir: string,
+  agentId: string,
+  opts: RenderClaudeMdOptions = {},
+): string {
+  const agentDir = resolveAgentDir(baseDir, agentId);
+  const renderConfig = loadRenderConfig(agentDir);
+
+  // Merge: explicit opts override render.yaml
+  const maxTokens = opts.maxTokens ?? renderConfig.max_tokens;
+  const typeWeights = opts.typeWeights ?? (
+    Object.keys(renderConfig.type_weights).length > 0 ? renderConfig.type_weights : undefined
+  );
+
+  if (renderConfig.include_shared && isIsolated(baseDir)) {
+    // Use isolated recall (agent + shared union), then render from the merged bundle
+    const bundle = recallIsolated(agentDir, baseDir, {
+      max_tokens: maxTokens,
+      type_weights: typeWeights as any,
+    });
+
+    // Render directly from the bundle's atoms (bypass recall in renderClaudeMd)
+    return renderFromAtoms(agentDir, bundle.atoms);
+  }
+
+  // No shared inclusion or not isolated — use standard render
+  return renderClaudeMd(agentDir, { maxTokens, typeWeights });
+}
+
+/**
+ * Render CLAUDE.md from a pre-fetched atom list.
+ * Used by renderAgentClaudeMd when atoms come from recallIsolated.
+ */
+function renderFromAtoms(memoryDir: string, active: Atom[]): string {
   const eventCount = countEvents(memoryDir);
 
-  // Group by type
   const facts = active.filter((a) => a.frontmatter.type === 'fact');
   const decisions = active.filter((a) => a.frontmatter.type === 'decision');
   const constraints = active.filter((a) => a.frontmatter.type === 'constraint');
@@ -201,7 +252,6 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
     return lines.join('\n') + '\n';
   }
 
-  // Conflicts first (most urgent)
   if (conflicts.length > 0) {
     lines.push('## ⚠ Active Conflicts');
     lines.push('');
@@ -226,8 +276,7 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
     lines.push('## Decisions');
     lines.push('');
     for (const d of decisions) {
-      const confSuffix =
-        d.frontmatter.confidence !== undefined ? ` (confidence: ${d.frontmatter.confidence})` : '';
+      const confSuffix = d.frontmatter.confidence !== undefined ? ` (confidence: ${d.frontmatter.confidence})` : '';
       lines.push(`### ${d.frontmatter.id}${confSuffix}`);
       lines.push(d.body.trim());
       lines.push('');
@@ -270,23 +319,15 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
     if (arcs.length > 0) {
       lines.push('## Beliefs (developmental arcs)');
       lines.push('');
-
       for (const arc of arcs) {
         const dateStr = formatDateRange(arc.dateRange[0], arc.dateRange[1]);
-        lines.push(
-          `### Arc: ${arc.rootSlug} \u2192 ${arc.leafSlug} (${arc.entries.length} nodes, ${dateStr})`,
-        );
+        lines.push(`### Arc: ${arc.rootSlug} \u2192 ${arc.leafSlug} (${arc.entries.length} nodes, ${dateStr})`);
         lines.push('');
-
         for (const { atom, depth } of arc.entries) {
-          const conf =
-            atom.frontmatter.confidence !== undefined
-              ? ` (${atom.frontmatter.confidence})`
-              : '';
+          const conf = atom.frontmatter.confidence !== undefined ? ` (${atom.frontmatter.confidence})` : '';
           const indent = '  '.repeat(depth);
           const arrow = depth > 0 ? '\u2192 ' : '';
           lines.push(`${indent}${arrow}**${atom.frontmatter.id}**${conf}`);
-          // Indent body lines to match
           const bodyLines = atom.body.trim().split('\n');
           for (const line of bodyLines) {
             lines.push(`${indent}${line}`);
@@ -294,29 +335,21 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
           lines.push('');
         }
       }
-
       if (standalone.length > 0) {
         lines.push('### Standalone beliefs');
         lines.push('');
         for (const b of standalone) {
-          const confSuffix =
-            b.frontmatter.confidence !== undefined
-              ? ` (confidence: ${b.frontmatter.confidence})`
-              : '';
+          const confSuffix = b.frontmatter.confidence !== undefined ? ` (confidence: ${b.frontmatter.confidence})` : '';
           lines.push(`**${b.frontmatter.id}**${confSuffix}`);
           lines.push(b.body.trim());
           lines.push('');
         }
       }
     } else {
-      // No arcs — preserve original flat-list format
       lines.push('## Beliefs (unverified)');
       lines.push('');
       for (const b of beliefs) {
-        const confSuffix =
-          b.frontmatter.confidence !== undefined
-            ? ` (confidence: ${b.frontmatter.confidence})`
-            : '';
+        const confSuffix = b.frontmatter.confidence !== undefined ? ` (confidence: ${b.frontmatter.confidence})` : '';
         lines.push(`### ${b.frontmatter.id}${confSuffix}`);
         lines.push(b.body.trim());
         lines.push('');

@@ -6,6 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
+import { resolveDir } from './resolve-dir.js';
 import {
   listAtomFiles,
   readAtom,
@@ -41,7 +42,7 @@ export function registerRelateCommand(program: Command): void {
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--json', 'Output as JSON')
     .action((sourceId: string, relationType: string, targetId: string, opts: { dir: string; json?: boolean }) => {
-      const memoryDir = path.resolve(opts.dir);
+      const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
         exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }
@@ -114,7 +115,7 @@ export function registerRelationsCommand(program: Command): void {
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--json', 'Output as JSON')
     .action((atomId: string, opts: { dir: string; json?: boolean }) => {
-      const memoryDir = path.resolve(opts.dir);
+      const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
         exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }

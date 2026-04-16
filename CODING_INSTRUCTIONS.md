@@ -36,6 +36,13 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/recall-scoring.test.ts` | Type-weight multipliers; confidence floor; token reservation two-pass; MCP schema coverage |
 | `test/relations.test.ts` | DDL creation; `indexAtom` edge sync; `getRelationsForAtom`; graph-walk boost in recall |
 | `test/migrate-relations.test.ts` | `links.related` migration; body-text atom ID mining; dry-run; idempotency |
+| `test/isolation.test.ts` | Per-agent isolation: config loading, resolveAgentDir, initAgentStore, listAgents, render config |
+| `test/isolation-recall.test.ts` | Union recall: agent + shared merge, agent-wins dedup, token budget, episodes |
+| `test/isolation-render.test.ts` | Per-agent render: type_weights, include_shared, renderAgentClaudeMd |
+| `test/isolation-wander.test.ts` | Wander graph scoping: agent-only, shared participation, cross-agent invisibility |
+| `test/isolation-migrate.test.ts` | Migration strategies: fresh, partition, clone-to-shared, idempotency guard |
+| `test/share.test.ts` | Share/unshare: copy to shared, unshare removal, listSharedAtoms, error cases |
+| `test/mcp-isolation.test.ts` | MCP isolation: tool routing to agent stores, share/unshare tools, shared-mode rejection |
 
 ### Standard test boilerplate
 

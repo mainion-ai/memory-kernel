@@ -1,6 +1,6 @@
 /**
  * MCP tool registrations for Memory Kernel.
- * 8 tools: remember, recall, reflect, merge, gc, list_conflicts, resolve_conflict, get_context_bundle.
+ * 10 tools: remember, recall, reflect, merge, gc, list_conflicts, resolve_conflict, get_context_bundle, share_atom, unshare_atom.
  * All tool outputs include a provenance block for traceability.
  */
 
@@ -21,10 +21,14 @@ import {
   getLastEventId,
   queryIndex,
   indexExists,
+  shareAtom,
+  unshareAtom,
+  listSharedAtoms,
 } from '../index.js';
+import { isIsolated, assertValidAgentId } from '../isolation.js';
 import { ATOM_TYPES, ATOM_STATUSES, CLASSIFICATIONS } from '../types.js';
 import { embedAtom } from '../embed-sync.js';
-import { resolveAgentId, resolveSessionId, type McpContext } from './context.js';
+import { resolveAgentId, resolveSessionId, resolveMemoryDir, type McpContext } from './context.js';
 
 // ---------------------------------------------------------------------------
 // Provenance
@@ -75,6 +79,9 @@ function err(message: string): ToolResult {
   return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
 }
 
+/** Reusable Zod schema for agent IDs — alphanumeric, dash, underscore only. */
+const agentIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/, 'agent_id must be alphanumeric, dash, or underscore');
+
 // ---------------------------------------------------------------------------
 // Tool handlers (exported for contract tests — no transport needed)
 // ---------------------------------------------------------------------------
@@ -89,7 +96,7 @@ const rememberSchema = {
   classification: z.enum(CLASSIFICATIONS).optional().describe('Visibility classification, default TEAM'),
   scope_paths: z.array(z.string()).optional().describe('Filesystem paths this atom is scoped to'),
   scope_tags: z.array(z.string()).optional().describe('Tags for filtering'),
-  agent_id: z.string().optional().describe('Override agent ID for this operation'),
+  agent_id: agentIdSchema.optional().describe('Override agent ID for this operation'),
   session_id: z.string().optional().describe('Override session ID for this operation'),
 };
 
@@ -109,8 +116,9 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
     const atom = createAtom({
-      memoryDir: ctx.memoryDir,
+      memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,
       type: input.type,
@@ -123,7 +131,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         : undefined,
     });
     // Auto-embed the new atom (no-op if embeddings not configured)
-    const embedded = await embedAtom(ctx.memoryDir, atom);
+    const embedded = await embedAtom(memDir, atom);
 
     const result = {
       atom: {
@@ -136,7 +144,7 @@ export async function handleRemember(ctx: McpContext, input: RememberInput): Pro
         embedded,
       },
       provenance: buildProvenance(ctx, agentId, sessionId, {
-        event_id: getLastEventId(ctx.memoryDir),
+        event_id: getLastEventId(memDir),
         atom_refs: [atom.frontmatter.id],
       }),
     };
@@ -161,7 +169,7 @@ const recallSchema = {
   type_weights: z.record(z.string(), z.number()).optional().describe('Per-type score multipliers, e.g. {"constraint": 2.0}'),
   type_reservations: z.record(z.string(), z.number()).optional().describe('Minimum token slots reserved per type, e.g. {"decision": 800}'),
   graph_boost: z.boolean().optional().describe('Enable graph-walk neighbour boost (default: true)'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -186,7 +194,8 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const bundle = await recallWithEmbeddings(ctx.memoryDir, {
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const bundle = await recallWithEmbeddings(memDir, {
       task: input.task,
       paths: input.paths,
       types: input.types,
@@ -227,7 +236,7 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
 // --- reflect ---
 
 const reflectSchema = {
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -237,7 +246,8 @@ export async function handleReflect(ctx: McpContext, input: ReflectInput): Promi
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const reflectResult = reflect({ memoryDir: ctx.memoryDir, agent_id: agentId, session_id: sessionId });
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const reflectResult = reflect({ memoryDir: memDir, agent_id: agentId, session_id: sessionId });
     const result = {
       ...reflectResult,
       provenance: buildProvenance(ctx, agentId, sessionId),
@@ -253,7 +263,7 @@ export async function handleReflect(ctx: McpContext, input: ReflectInput): Promi
 const mergeSchema = {
   remote_dir: z.string().min(1).describe('Absolute path to remote memory directory'),
   dry_run: z.boolean().optional().describe('Preview without writing, default false'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -266,8 +276,9 @@ export async function handleMerge(ctx: McpContext, input: MergeInput): Promise<T
     }
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
     const mergeResult = mergeEventLogs({
-      localDir: ctx.memoryDir,
+      localDir: memDir,
       remoteDir: input.remote_dir,
       agent_id: agentId,
       session_id: sessionId,
@@ -287,7 +298,7 @@ export async function handleMerge(ctx: McpContext, input: MergeInput): Promise<T
 // --- gc ---
 
 const gcSchema = {
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -297,7 +308,8 @@ export async function handleGc(ctx: McpContext, input: GcInput): Promise<ToolRes
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const reflectResult = reflect({ memoryDir: ctx.memoryDir, agent_id: agentId, session_id: sessionId });
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const reflectResult = reflect({ memoryDir: memDir, agent_id: agentId, session_id: sessionId });
     const result = {
       expired: reflectResult.expired,
       archived: reflectResult.archived,
@@ -315,7 +327,7 @@ export async function handleGc(ctx: McpContext, input: GcInput): Promise<ToolRes
 // --- list_conflicts ---
 
 const listConflictsSchema = {
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -328,21 +340,22 @@ export async function handleListConflicts(
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
 
     let conflicts;
-    if (indexExists(ctx.memoryDir)) {
-      const rows = queryIndex(ctx.memoryDir, { types: ['conflict'], statuses: ['active'] });
+    if (indexExists(memDir)) {
+      const rows = queryIndex(memDir, { types: ['conflict'], statuses: ['active'] });
       if (rows !== null) {
-        const atoms = listAtoms(ctx.memoryDir);
+        const atoms = listAtoms(memDir);
         const conflictIds = new Set(rows.map((r) => r.atom_id));
         conflicts = atoms.filter((a) => conflictIds.has(a.frontmatter.id));
       } else {
-        conflicts = listAtoms(ctx.memoryDir).filter(
+        conflicts = listAtoms(memDir).filter(
           (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
         );
       }
     } else {
-      conflicts = listAtoms(ctx.memoryDir).filter(
+      conflicts = listAtoms(memDir).filter(
         (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
       );
     }
@@ -372,7 +385,7 @@ export async function handleListConflicts(
 const resolveConflictSchema = {
   conflict_atom_id: z.string().min(1).describe('ID of the conflict atom to resolve'),
   resolution_note: z.string().optional().describe('Optional note about how the conflict was resolved'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -390,12 +403,13 @@ export async function handleResolveConflict(
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
-    const filePath = atomFilePath(ctx.memoryDir, input.conflict_atom_id, 'conflict');
+    const memDir = resolveMemoryDir(ctx, agentId);
+    const filePath = atomFilePath(memDir, input.conflict_atom_id, 'conflict');
     if (!fs.existsSync(filePath)) {
       return err(`Conflict atom not found: ${input.conflict_atom_id}`);
     }
     const { atom, event_id } = resolveConflict({
-      memoryDir: ctx.memoryDir,
+      memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,
       filePath,
@@ -419,7 +433,7 @@ const getContextBundleSchema = {
   task: z.string().optional().describe('Task description for scoping and FTS re-ranking'),
   max_tokens: z.number().int().min(0).optional().describe('Token budget, default 4000'),
   skip_reflect: z.boolean().optional().describe('Skip reflect step, default false'),
-  agent_id: z.string().optional(),
+  agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),
 };
 
@@ -438,15 +452,16 @@ export async function handleGetContextBundle(
   try {
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
+    const memDir = resolveMemoryDir(ctx, agentId);
     const checkpointResult = checkpoint({
-      memoryDir: ctx.memoryDir,
+      memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,
       task: input.task,
       max_tokens: input.max_tokens,
       skipReflect: input.skip_reflect,
     });
-    appendEvent(ctx.memoryDir, 'atom_read', {
+    appendEvent(memDir, 'atom_read', {
       agent_id: agentId,
       session_id: sessionId,
       atom_refs: checkpointResult.bundle.atoms.map((a) => a.frontmatter.id),
@@ -464,6 +479,87 @@ export async function handleGetContextBundle(
       event_id: checkpointResult.event_id,
       error: checkpointResult.error,
       provenance: buildProvenance(ctx, agentId, sessionId, { event_id: checkpointResult.event_id }),
+    };
+    return ok(result);
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// --- share_atom ---
+
+const shareAtomSchema = {
+  atom_id: z.string().min(1).describe('ID of the atom to share'),
+  from_agent: agentIdSchema.describe('Agent ID that owns the atom'),
+  agent_id: agentIdSchema.optional(),
+  session_id: z.string().optional(),
+};
+
+export type ShareAtomInput = {
+  atom_id: string;
+  from_agent: string;
+  agent_id?: string;
+  session_id?: string;
+};
+
+export async function handleShareAtom(
+  ctx: McpContext,
+  input: ShareAtomInput,
+): Promise<ToolResult> {
+  try {
+    if (!ctx.isolated) {
+      return err('share_atom is only available in isolated (per-agent) mode');
+    }
+    const agentId = resolveAgentId(ctx, input.agent_id);
+    const sessionId = resolveSessionId(ctx, input.session_id);
+    const shared = shareAtom(ctx.memoryDir, input.atom_id, input.from_agent, {
+      agent_id: agentId,
+      session_id: sessionId,
+    });
+    const result = {
+      atom_id: shared.atom_id,
+      shared_path: shared.shared_path,
+      source_agent: shared.source_agent,
+      provenance: buildProvenance(ctx, agentId, sessionId),
+    };
+    return ok(result);
+  } catch (e) {
+    return err(e instanceof Error ? e.message : String(e));
+  }
+}
+
+// --- unshare_atom ---
+
+const unshareAtomSchema = {
+  atom_id: z.string().min(1).describe('ID of the atom to remove from shared namespace'),
+  agent_id: agentIdSchema.optional(),
+  session_id: z.string().optional(),
+};
+
+export type UnshareAtomInput = {
+  atom_id: string;
+  agent_id?: string;
+  session_id?: string;
+};
+
+export async function handleUnshareAtom(
+  ctx: McpContext,
+  input: UnshareAtomInput,
+): Promise<ToolResult> {
+  try {
+    if (!ctx.isolated) {
+      return err('unshare_atom is only available in isolated (per-agent) mode');
+    }
+    const agentId = resolveAgentId(ctx, input.agent_id);
+    const sessionId = resolveSessionId(ctx, input.session_id);
+    unshareAtom(ctx.memoryDir, input.atom_id, {
+      agent_id: agentId,
+      session_id: sessionId,
+    });
+    const result = {
+      atom_id: input.atom_id,
+      removed: true,
+      provenance: buildProvenance(ctx, agentId, sessionId),
     };
     return ok(result);
   } catch (e) {
@@ -554,5 +650,25 @@ export function registerTools(server: McpServer, ctx: McpContext): void {
       inputSchema: getContextBundleSchema,
     },
     (args) => handleGetContextBundle(ctx, args as GetContextBundleInput),
+  );
+
+  server.registerTool(
+    'mk_share_atom',
+    {
+      title: 'Share Atom',
+      description: 'Copy an atom from an agent\'s private store to the shared namespace (isolated mode only).',
+      inputSchema: shareAtomSchema,
+    },
+    (args) => handleShareAtom(ctx, args as ShareAtomInput),
+  );
+
+  server.registerTool(
+    'mk_unshare_atom',
+    {
+      title: 'Unshare Atom',
+      description: 'Remove an atom from the shared namespace (isolated mode only).',
+      inputSchema: unshareAtomSchema,
+    },
+    (args) => handleUnshareAtom(ctx, args as UnshareAtomInput),
   );
 }
