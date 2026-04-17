@@ -4,7 +4,7 @@ TypeScript library for persistent agent memory with event sourcing. npm package:
 
 ## Development workflow
 
-**All new feature development MUST happen on `memory-kernel-dev` (private repo), NOT directly on `memory-kernel` (public).** Features are promoted to public only after review and approval. See `docs/AUTONOMOUS-DEV-PIPELINE.md` for the full workflow.
+**All new feature development MUST happen on `memory-kernel-dev` (private repo), NOT directly on `memory-kernel` (public).** Features are promoted to public only after review and approval.
 
 ## Before writing code, read CODING_INSTRUCTIONS.md
 
