@@ -1,6 +1,6 @@
 {
   "name": "memory-kernel",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -48,6 +48,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@sinclair/typebox": "^0.34.48",
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
     "tsx": "^4.21.0",

@@ -160,6 +160,27 @@ node /workspace/extra/memory-kernel-code/dist/cli/mk.js --version
 | `entity_summary` | Descriptions of key things | 180 days |
 | `conflict` | Contradicting information | 30 days |
 
+## Per-Agent Isolation (Optional)
+
+If multiple agents share the same memory directory, use per-agent isolation to keep stores separate:
+
+```bash
+# Initialize in isolated mode
+npx mk init /workspace/extra/memory -a my-agent
+
+# All commands accept -a for agent routing
+npx mk remember "..." -d /workspace/extra/memory -a my-agent -t fact
+npx mk recall -d /workspace/extra/memory -a my-agent --json
+
+# Share an atom with other agents
+npx mk share FACT-2026-xxx --from my-agent -d /workspace/extra/memory
+
+# View all agents
+npx mk status -d /workspace/extra/memory --all-agents
+```
+
+See the **[isolation guide](isolation.md)** for full details.
+
 ## Troubleshooting
 
 | Problem | Fix |

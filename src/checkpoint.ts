@@ -4,6 +4,7 @@
  */
 
 import { appendEvent } from './event-log.js';
+import { recallIsolated } from './isolation-recall.js';
 import { recall } from './recall.js';
 import { reflect } from './reflect.js';
 import { readView } from './store.js';
@@ -16,6 +17,11 @@ export interface CheckpointOptions {
   task?: string;
   max_tokens?: number; // default: 4000
   skipReflect?: boolean;
+  // Isolation-aware recall: when all three are set and isolated=true,
+  // checkpoint uses recallIsolated() to merge agent + shared atoms.
+  baseDir?: string;        // Root memory dir (for locating shared/). Required when isolated=true.
+  isolated?: boolean;      // Use isolation-aware recall. Default: false.
+  sharedRecall?: boolean;  // Include shared atoms in isolated recall. Default: true.
 }
 
 export interface CheckpointResult {
@@ -49,10 +55,18 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
   // 2. Recall context with optional task/token budget
   let bundle: ContextBundle;
   try {
-    bundle = recall(opts.memoryDir, {
+    const recallQuery = {
       task: opts.task,
       max_tokens: opts.max_tokens ?? 4000,
-    });
+    };
+
+    if (opts.isolated && opts.sharedRecall !== false && opts.baseDir) {
+      // Isolation-aware: merge agent store + shared namespace (sync path, FTS5)
+      bundle = recallIsolated(opts.memoryDir, opts.baseDir, recallQuery);
+    } else {
+      // Shared mode or isolated-without-shared: single-dir recall
+      bundle = recall(opts.memoryDir, recallQuery);
+    }
   } catch (err) {
     // If recall also fails, emit error event and return minimal checkpoint
     const errorMsg = reflectError
@@ -65,6 +79,7 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
       meta: {
         error: errorMsg,
         task: opts.task,
+        ...(opts.isolated ? { isolated: true, shared_recall: opts.sharedRecall !== false } : {}),
       },
     });
 
@@ -131,6 +146,7 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
       token_estimate: bundle.token_estimate,
       atom_count: bundle.atoms.length,
       task: opts.task,
+      ...(opts.isolated ? { isolated: true, shared_recall: opts.sharedRecall !== false } : {}),
       ...(reflectError ? { reflect_error: reflectError } : {}),
     },
   });

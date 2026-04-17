@@ -1,6 +1,6 @@
 # Using memory-kernel with OpenClaw (MCP)
 
-memory-kernel ships an MCP server (`mk-mcp`) that exposes 8 tools and 4 resources over stdio. If you have OpenClaw with MCP support, this is the fastest way to get structured, typed memory alongside your existing session.
+memory-kernel ships an MCP server (`mk-mcp`) that exposes 10 tools and 4 resources over stdio. If you have OpenClaw with MCP support, this is the fastest way to get structured, typed memory alongside your existing session.
 
 **No code changes required to either project.**
 
@@ -45,7 +45,7 @@ Optional env vars:
 | Variable | Default | Purpose |
 |---|---|---|
 | `MEMORY_DIR` | *required* | Path to your memory directory |
-| `MCP_AGENT_ID` | `"mcp-server"` | Agent label in the audit trail |
+| `MCP_AGENT_ID` | `"mcp-server"` | Agent ID — in isolated mode, determines which agent store all tools route to |
 | `MCP_SESSION_ID` | auto | Session label in the audit trail |
 | `MEMORY_ENCRYPTION_KEY` | — | 64-char hex key for SECRET atom encryption |
 
@@ -63,8 +63,16 @@ Optional env vars:
 | `mk_list_conflicts` | `listAtoms()` | List active conflict atoms |
 | `mk_resolve_conflict` | `resolveConflict()` | Mark a conflict atom resolved |
 | `mk_get_context_bundle` | `checkpoint()` | Pre-assembled Markdown context (reflect + recall in one call) |
+| `mk_share_atom` | `shareAtom()` | Copy atom snapshot to shared namespace (isolated mode only) |
+| `mk_unshare_atom` | `unshareAtom()` | Remove atom from shared namespace (isolated mode only) |
 
-> **MCP vs. plugin tool coverage:** The MCP server exposes all 8 tools above. The native OpenClaw plugin (`packages/openclaw-memory-kernel`) exposes only the 4 core tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`) — the 4 maintenance tools (`mk_merge`, `mk_gc`, `mk_list_conflicts`, `mk_resolve_conflict`) are available via the MCP server path if you need them.
+### Per-agent isolation
+
+In [isolated mode](isolation.md), all tools automatically route to the agent store determined by `MCP_AGENT_ID`. Set this env var to the agent's identifier (e.g., `claude-desktop`, `coder-1`).
+
+The two isolation-specific tools (`mk_share_atom`, `mk_unshare_atom`) are only available when the memory directory is configured with `isolation: per-agent` in `config.yaml`. They return an error in shared mode.
+
+> **MCP vs. plugin tool coverage:** The MCP server exposes all 8 tools above. The native OpenClaw plugin (`packages/openclaw-memory-kernel`) exposes 5 tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`) plus 3 named lifecycle hooks that run `recall` on agent bootstrap, `checkpoint` before session compaction, and `reflect` + `writeEpisode` on `/new` or `/reset`. The 4 maintenance tools (`mk_merge`, `mk_gc`, `mk_list_conflicts`, `mk_resolve_conflict`) are only available via the MCP server path — use it if you need those.
 
 ## Resources exposed
 

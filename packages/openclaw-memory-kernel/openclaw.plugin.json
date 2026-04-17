@@ -1,0 +1,88 @@
+{
+  "id": "memory-kernel",
+  "name": "Memory Kernel",
+  "description": "Structured memory with typed atoms, relations, spreading activation, and event sourcing.",
+  "version": "0.1.0",
+  "kind": "tool",
+  "enabled-by-default": false,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "memoryDir": { "type": "string", "description": "Absolute path to the memory-kernel directory" },
+      "encryptionKey": {
+        "oneOf": [
+          { "type": "string", "description": "AES-256-GCM key for SECRET atom encryption (literal)" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": { "type": "string", "enum": ["file"] },
+              "provider": { "type": "string", "minLength": 1 },
+              "id": { "type": "string", "pattern": "^/.+", "description": "JSON pointer (slash-delimited object keys; arrays and RFC 6901 escapes not supported)" }
+            },
+            "required": ["source", "provider", "id"]
+          }
+        ],
+        "description": "AES-256-GCM key for SECRET atom encryption. Accepts a string or a file SecretRef."
+      },
+      "agentId": { "type": "string", "description": "Agent label written to the audit trail" },
+      "embeddingProvider": { "type": "string", "description": "Embedding provider (e.g. \"openai\"). Enables semantic recall." },
+      "embeddingApiKey": {
+        "oneOf": [
+          { "type": "string", "description": "API key for embedding provider (literal)" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": { "type": "string", "enum": ["file"] },
+              "provider": { "type": "string", "minLength": 1 },
+              "id": { "type": "string", "pattern": "^/.+", "description": "JSON pointer (slash-delimited object keys; arrays and RFC 6901 escapes not supported)" }
+            },
+            "required": ["source", "provider", "id"]
+          }
+        ],
+        "description": "API key for embedding provider. Accepts a string or a file SecretRef. Falls back to OPENAI_API_KEY env when provider is openai and this is unset."
+      },
+      "embeddingModel": { "type": "string", "description": "Embedding model ID (e.g. \"text-embedding-3-small\"). Provider default if omitted." },
+      "isolationMode": {
+        "type": "string",
+        "enum": ["auto", "shared-only", "per-agent-required"],
+        "description": "Per-agent isolation mode. \"auto\" reads config.yaml (default), \"shared-only\" forces flat mode, \"per-agent-required\" fails if not isolated."
+      },
+      "autoInitAgentStore": {
+        "type": "boolean",
+        "description": "Auto-create agent store on first use if missing. Default: false."
+      },
+      "sharedRecall": {
+        "type": "boolean",
+        "description": "Include shared namespace atoms in isolated recall. Default: true."
+      },
+      "failIfMissingAgentStore": {
+        "type": "boolean",
+        "description": "Deprecated — throwing is now the default behavior when agent store is missing. Retained for backward compatibility. Setting to false maps to allowSharedFallback: true."
+      },
+      "allowSharedFallback": {
+        "type": "boolean",
+        "description": "Allow silent fallback to shared mode when agent store is missing in isolated mode. Default: false (errors instead). Use only during migration or development."
+      },
+      "secretProviders": {
+        "type": "object",
+        "description": "Map of alias → file provider used to resolve SecretRefs for encryptionKey/embeddingApiKey. Plugin-local; does not interact with OpenClaw core SecretRef resolution.",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": { "type": "string", "enum": ["file"] },
+            "path": { "type": "string", "minLength": 1, "description": "Absolute path (or ~-prefixed) to a JSON file" }
+          },
+          "required": ["source", "path"]
+        }
+      }
+    },
+    "required": []
+  },
+  "contracts": {
+    "tools": ["mk_remember", "mk_recall", "mk_reflect", "mk_context_bundle", "mk_status"]
+  }
+}

@@ -16,8 +16,9 @@
  * - Floop (nvandessel): Hebbian-strengthened behavior graphs
  */
 
+import path from 'path';
 import { openIndex, indexExists } from './index-db.js';
-import { listAtoms } from './store.js';
+import { listAtoms, assertWithinDir } from './store.js';
 
 // --- Types ---
 
@@ -84,6 +85,10 @@ export interface WanderOptions {
    *  Defaults to DEFAULT_TYPE_WEIGHTS. Set a preset name ('constitution',
    *  'tension', 'narrative') or provide a custom record. */
   typeWeights?: Record<string, number>;
+  /** If set, shared namespace atoms participate in the graph (per-agent isolation). */
+  sharedMemoryDir?: string;
+  /** Root memory directory (used for path validation when sharedMemoryDir is set). */
+  baseDir?: string;
 }
 
 export interface ActivatedAtom {
@@ -661,6 +666,26 @@ export function wander(options: WanderOptions): WanderResult {
   const now = Date.now();
   const graph = loadAtomGraph(memoryDir, now, options);
 
+  // Merge shared namespace graph if provided (validate path is within base directory)
+  if (options.sharedMemoryDir) {
+    // Shared dir must be within the base memory directory
+    const resolvedShared = path.resolve(options.sharedMemoryDir);
+    const resolvedMemory = path.resolve(memoryDir);
+    // Use explicit baseDir when provided; fall back to parent-of-parent for agents/{id} layout
+    const baseDir = options.baseDir
+      ? path.resolve(options.baseDir)
+      : path.dirname(path.dirname(resolvedMemory));
+    assertWithinDir(baseDir, resolvedShared);
+  }
+  if (options.sharedMemoryDir && indexExists(options.sharedMemoryDir)) {
+    const sharedGraph = loadAtomGraph(options.sharedMemoryDir, now, options);
+    for (const [id, node] of sharedGraph) {
+      if (!graph.has(id)) {
+        graph.set(id, node);
+      }
+    }
+  }
+
   return wanderWithGraph(graph, options, start);
 }
 
@@ -676,8 +701,28 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
   const { memoryDir } = options;
   const start = Date.now();
 
-  const atoms = listAtoms(memoryDir);
-  if (atoms.length === 0) {
+  const now = Date.now();
+  const graph = buildGraphFromFiles(memoryDir, now, options);
+
+  // Merge shared namespace graph if provided (validate path is within base directory).
+  // Mirrors the index-backed wander() path so isolated-mode agents see shared atoms
+  // even when the SQLite index is absent.
+  if (options.sharedMemoryDir) {
+    const resolvedShared = path.resolve(options.sharedMemoryDir);
+    const resolvedMemory = path.resolve(memoryDir);
+    const baseDir = options.baseDir
+      ? path.resolve(options.baseDir)
+      : path.dirname(path.dirname(resolvedMemory));
+    assertWithinDir(baseDir, resolvedShared);
+    const sharedGraph = buildGraphFromFiles(options.sharedMemoryDir, now, options);
+    for (const [id, node] of sharedGraph) {
+      if (!graph.has(id)) {
+        graph.set(id, node);
+      }
+    }
+  }
+
+  if (graph.size === 0) {
     return {
       collisions: [],
       activated: [],
@@ -687,8 +732,21 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     };
   }
 
-  const now = Date.now();
+  return wanderWithGraph(graph, options, start);
+}
+
+/**
+ * Build an in-memory graph from on-disk atom files for a single directory.
+ * Shared by wanderFromFiles() for both the agent store and the shared namespace.
+ */
+function buildGraphFromFiles(
+  dir: string,
+  now: number,
+  options: WanderOptions,
+): Map<string, GraphNode> {
   const graph = new Map<string, GraphNode>();
+  const atoms = listAtoms(dir);
+  if (atoms.length === 0) return graph;
 
   for (const atom of atoms) {
     const fm = atom.frontmatter;
@@ -736,5 +794,5 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     }
   }
 
-  return wanderWithGraph(graph, options, start);
+  return graph;
 }

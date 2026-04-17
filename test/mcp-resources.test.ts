@@ -26,7 +26,7 @@ let ctx: McpContext;
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-mcp-res-'));
   initMemoryDir(testDir);
-  ctx = { memoryDir: testDir, defaultAgentId: 'test-agent', defaultSessionId: 'test-session' };
+  ctx = { memoryDir: testDir, defaultAgentId: 'test-agent', defaultSessionId: 'test-session', isolated: false };
 });
 
 afterEach(() => {

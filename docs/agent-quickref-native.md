@@ -187,7 +187,7 @@ If you're running alongside NanoClaw with drift enabled, add `MEMORY_DIR` to the
 
 ```bash
 # In NanoClaw's .env (not the memory directory)
-MEMORY_DIR=/home/np/mk-memory   # adjust to your path
+MEMORY_DIR=/home/user/mk-memory   # adjust to your path
 ```
 
 When set, NanoClaw runs `mk wander --json` (~30ms) before spawning an expensive drift session. No collisions → drift skipped. Collisions → directed exploration.
@@ -248,6 +248,36 @@ const result = wander({
 // Render
 const md = renderClaudeMd('/path/to/memory', { maxTokens: 8000 });
 ```
+
+## Per-Agent Isolation (Optional)
+
+If multiple agents share the same memory directory, use per-agent isolation:
+
+```bash
+# Initialize in isolated mode
+mk init ~/mk-memory -a my-agent
+
+# All commands accept -a for agent routing
+mk remember "..." -d ~/mk-memory -a my-agent -t fact
+mk recall -d ~/mk-memory -a my-agent --json
+
+# Share an atom with other agents
+mk share FACT-2026-xxx --from my-agent -d ~/mk-memory
+
+# View all agents
+mk status -d ~/mk-memory --all-agents
+```
+
+SDK equivalent:
+
+```typescript
+import { initIsolatedBase, recallIsolated, shareAtom } from 'memory-kernel';
+
+initIsolatedBase('/path/to/memory', 'my-agent');
+const bundle = recallIsolated('/path/to/memory/agents/my-agent', '/path/to/memory');
+```
+
+See the **[isolation guide](isolation.md)** for full details.
 
 ## Troubleshooting
 

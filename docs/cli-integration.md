@@ -9,6 +9,9 @@
 ```bash
 npm install memory-kernel          # installs mk binary
 mk init ~/my-agent/memory          # creates directory structure
+
+# Or, for per-agent isolation (multiple agents sharing one directory):
+mk init ~/shared-memory -a my-agent
 ```
 
 Set `MEMORY_DIR` in your environment for convenience:
@@ -31,12 +34,14 @@ Everything works without embeddings (FTS-only). No behavior change.
 
 ## Session Lifecycle
 
+> **Tip:** All commands accept `-a, --agent <id>` for [per-agent isolation](isolation.md). In shared mode the flag is ignored.
+
 ```
-Session start  →  mk recall -d $DIR --task "current task" --json
+Session start  →  mk recall -d $DIR [-a $AGENT] --task "current task" --json
                   (or load pre-rendered CLAUDE.md)
 
-During session →  mk remember -d $DIR -t fact "body text" --json
-                  mk remember -d $DIR -t decision "body text" --json
+During session →  mk remember -d $DIR [-a $AGENT] -t fact "body text" --json
+                  mk remember -d $DIR [-a $AGENT] -t decision "body text" --json
                   mk relate SRC-ID supports TGT-ID -d $DIR --json
 
 Session end    →  mk episode --session-id $SID --summary "text" -d $DIR --json
@@ -310,9 +315,40 @@ Rebuilds SQLite index from files. `--embed` computes embeddings for all atoms (r
 
 ---
 
-## Separate Memory Per Agent
+## Multi-Agent Memory
 
-Each agent should have its own memory directory. Share knowledge between agents via event log merge, not shared directories:
+**Preferred: per-agent isolation** — multiple agents share one memory directory with private stores and controlled sharing:
+
+```bash
+# Initialize with per-agent isolation
+mk init $MEMORY_DIR -a agent-alpha
+mk init $MEMORY_DIR -a agent-beta   # adds second agent store
+
+# Each agent reads/writes to their own store
+mk remember -d $MEMORY_DIR -a agent-alpha -t fact "Redis for caching" --json
+mk remember -d $MEMORY_DIR -a agent-beta  -t fact "PostgreSQL for storage" --json
+
+# Share specific atoms across agents
+mk share FACT-2026-xxx --from agent-alpha -d $MEMORY_DIR --json
+
+# Agent Beta recalls: sees own atoms + shared ones
+mk recall -d $MEMORY_DIR -a agent-beta --task "data layer" --json
+
+# View all agents at a glance
+mk status -d $MEMORY_DIR --all-agents --json
+```
+
+**Migration from shared to isolated:**
+
+```bash
+mk migrate -d $MEMORY_DIR --strategy partition --json   # route by creating agent_id
+mk migrate -d $MEMORY_DIR --strategy clone-to-shared     # or make everything shared
+mk migrate -d $MEMORY_DIR --strategy fresh                # or just enable mode
+```
+
+See the **[isolation guide](isolation.md)** for full details.
+
+**Alternative: separate directories + merge** — for fully independent agents (different hosts, async sync):
 
 ```bash
 mk merge -d $AGENT_A_MEMORY --from $AGENT_B_MEMORY/events.ndjson

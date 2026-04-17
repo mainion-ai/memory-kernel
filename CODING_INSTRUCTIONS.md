@@ -36,6 +36,15 @@ Tests live in `test/` and run with `npm test` (vitest). There are two layers:
 | `test/recall-scoring.test.ts` | Type-weight multipliers; confidence floor; token reservation two-pass; MCP schema coverage |
 | `test/relations.test.ts` | DDL creation; `indexAtom` edge sync; `getRelationsForAtom`; graph-walk boost in recall |
 | `test/migrate-relations.test.ts` | `links.related` migration; body-text atom ID mining; dry-run; idempotency |
+| `test/isolation.test.ts` | Per-agent isolation: config loading, resolveAgentDir, initAgentStore, listAgents, render config |
+| `test/isolation-recall.test.ts` | Union recall: agent + shared merge, agent-wins dedup, token budget, episodes |
+| `test/isolation-render.test.ts` | Per-agent render: type_weights, include_shared, renderAgentClaudeMd |
+| `test/isolation-wander.test.ts` | Wander graph scoping: agent-only, shared participation, cross-agent invisibility |
+| `test/isolation-migrate.test.ts` | Migration strategies: fresh, partition, clone-to-shared, idempotency guard |
+| `test/share.test.ts` | Share/unshare: copy to shared, unshare removal, listSharedAtoms, error cases |
+| `test/mcp-isolation.test.ts` | MCP isolation: tool routing to agent stores, share/unshare tools, shared-mode rejection |
+| `test/openclaw-plugin.test.ts` | OpenClaw plugin: tools (remember/recall/reflect/bundle/status), hooks (bootstrap/compact/session-end), config parsing, SecretRef resolution |
+| `test/openclaw-plugin-isolation.test.ts` | OpenClaw plugin isolation: config parsing, effective context resolution, tool routing to agent stores, hook routing, cross-agent isolation, backward compatibility |
 
 ### Standard test boilerplate
 
@@ -456,3 +465,17 @@ All major Milestone D stubs have been implemented. Remaining stubs for future mi
 - README Performance + Troubleshooting sections ✅
 - `package.json` version → `1.0.0` ✅
 - Total test count: **551 passing** across 21 test files
+
+### Milestone H: Per-Agent Isolation → v2.0.0 ✅ COMPLETE
+- Two isolation modes: `shared` (default, backward compatible) and `per-agent` (config.yaml or `MK_ISOLATION` env) ✅
+- Core modules: `src/isolation.ts` (config, routing, agent store init, render config), `src/isolation-recall.ts` (union recall with agent-wins dedup), `src/share.ts` (copy-based share/unshare), `src/migrate.ts` (3 strategies: fresh, partition, clone-to-shared) ✅
+- Per-agent `render.yaml`: mode (operational/constitutive/balanced), max_tokens, include_shared, type_weights ✅
+- `renderAgentClaudeMd()` in `src/render.ts` — agent-specific CLAUDE.md rendering with union recall ✅
+- Wander scoping: graph walks restricted to agent + shared namespace ✅
+- CLI: global `-a, --agent <id>` option, `mk share`, `mk unshare`, `mk migrate`, `mk status --all-agents` ✅
+- MCP: `mk_share_atom`, `mk_unshare_atom` tools, `MCP_AGENT_ID` env var routing, all tools agent-aware ✅
+- Security: `assertValidAgentId()` (alphanumeric + dash + underscore only), `assertWithinDir()` path traversal guard ✅
+- Migration backup with crash-safe ordering (config written first → idempotent on re-run) ✅
+- 7 test files: `test/isolation.test.ts`, `test/isolation-recall.test.ts`, `test/isolation-render.test.ts`, `test/isolation-wander.test.ts`, `test/isolation-migrate.test.ts`, `test/share.test.ts`, `test/mcp-isolation.test.ts` ✅
+- Documentation: `docs/isolation.md` canonical guide, CHANGELOG, README, SDK reference, migration guide, CLI integration, MCP docs, STORY.md Chapter 26, agent quickrefs, host doctrine ✅
+- Total test count: **805+ passing** across 35+ test files

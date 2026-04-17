@@ -6,7 +6,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { readView } from '../store.js';
-import type { McpContext } from './context.js';
+import { resolveMemoryDir, type McpContext } from './context.js';
 
 const PLACEHOLDER = '# (not yet generated — run reflect first)\n';
 
@@ -27,7 +27,7 @@ export async function handleDecisionsResource(
     contents: [{
       uri: 'memory://decisions',
       mimeType: 'text/markdown',
-      text: safeReadView(ctx.memoryDir, 'DECISIONS.md'),
+      text: safeReadView(resolveMemoryDir(ctx, ctx.defaultAgentId), 'DECISIONS.md'),
     }],
   };
 }
@@ -39,7 +39,7 @@ export async function handleConstraintsResource(
     contents: [{
       uri: 'memory://constraints',
       mimeType: 'text/markdown',
-      text: safeReadView(ctx.memoryDir, 'CONSTRAINTS.md'),
+      text: safeReadView(resolveMemoryDir(ctx, ctx.defaultAgentId), 'CONSTRAINTS.md'),
     }],
   };
 }
@@ -51,7 +51,7 @@ export async function handleHandoffResource(
     contents: [{
       uri: 'memory://handoff',
       mimeType: 'text/markdown',
-      text: safeReadView(ctx.memoryDir, 'HANDOFF.md'),
+      text: safeReadView(resolveMemoryDir(ctx, ctx.defaultAgentId), 'HANDOFF.md'),
     }],
   };
 }
@@ -63,7 +63,7 @@ export async function handleOpenQuestionsResource(
     contents: [{
       uri: 'memory://open-questions',
       mimeType: 'text/markdown',
-      text: safeReadView(ctx.memoryDir, 'OPEN_QUESTIONS.md'),
+      text: safeReadView(resolveMemoryDir(ctx, ctx.defaultAgentId), 'OPEN_QUESTIONS.md'),
     }],
   };
 }
