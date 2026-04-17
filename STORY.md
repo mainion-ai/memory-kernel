@@ -68,7 +68,7 @@ classification: TEAM
 ---
 
 The production server runs Debian 13 on a Raspberry Pi 5.
-Hostname: nanoAL. IP: 192.168.1.42.
+Hostname: prod-01. IP: 10.0.1.42.
 ```
 
 Let's break that down:

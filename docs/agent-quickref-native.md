@@ -187,7 +187,7 @@ If you're running alongside NanoClaw with drift enabled, add `MEMORY_DIR` to the
 
 ```bash
 # In NanoClaw's .env (not the memory directory)
-MEMORY_DIR=/home/np/mk-memory   # adjust to your path
+MEMORY_DIR=/home/user/mk-memory   # adjust to your path
 ```
 
 When set, NanoClaw runs `mk wander --json` (~30ms) before spawning an expensive drift session. No collisions → drift skipped. Collisions → directed exploration.

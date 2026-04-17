@@ -93,7 +93,7 @@ export function deriveConceptNames(atomId: string): string[] {
   const fullSlug = slugParts.join('-').toLowerCase();
 
   // Minimum 2 words and 8 chars to avoid false positives
-  // (single words like "nenad" or short phrases like "two-tier" match too broadly)
+  // (single words like "deploy" or short phrases like "two-tier" match too broadly)
   if (slugParts.length >= 2 && fullSlug.length >= 8) {
     names.push(fullSlug);
   }

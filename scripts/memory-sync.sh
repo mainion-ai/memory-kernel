@@ -4,10 +4,10 @@
 
 set -euo pipefail
 
-MEMORY_DIR="${HOME}/repos/memory/kernel"
-MEMORY_REPO="${HOME}/repos/memory"
-KERNEL_REPO="${HOME}/repos/memory-kernel"
-CLAUDE_MD="${HOME}/Documents/nanoclaw/groups/telegram_main/CLAUDE.md"
+MEMORY_DIR="${MEMORY_DIR:-${HOME}/mk-memory}"
+MEMORY_REPO="${MEMORY_REPO:-$(dirname "$MEMORY_DIR")}"
+KERNEL_REPO="${KERNEL_REPO:-${HOME}/repos/memory-kernel}"
+CLAUDE_MD="${CLAUDE_MD:-${HOME}/nanoclaw/groups/telegram_main/CLAUDE.md}"
 
 echo "[$(date -Iseconds)] Memory sync starting..."
 
