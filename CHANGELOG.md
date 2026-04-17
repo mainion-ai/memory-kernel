@@ -7,6 +7,128 @@ All notable changes to this project will be documented in this file.
 > Effective v1.1.2, memory-kernel is distributed under the [Apache License 2.0](LICENSE) instead of the MIT License.
 > See [NOTICE](NOTICE) for full attribution. Apache-2.0 adds patent termination clauses not present in MIT — review the license if this affects your use case.
 
+## [Unreleased]
+
+### Changed — OpenClaw Plugin Isolation Hardening
+
+- **BREAKING: Missing agent store now throws by default** — Previously, when an agent store was missing and `autoInitAgentStore` was off, the plugin silently fell back to shared mode. Now it throws with an actionable error message. Set `allowSharedFallback: true` to restore the old behavior.
+
+- **`allowSharedFallback` config field** — New opt-in field (default: false) that restores the pre-hardening fallback behavior for migration/development scenarios.
+
+- **`failIfMissingAgentStore` deprecated** — `true` is now redundant (throwing is the default). Retained for backward compatibility; `failIfMissingAgentStore: false` maps to `allowSharedFallback: true`.
+
+- **Isolation-aware checkpoint** — `mk_context_bundle` and the pre-compaction hook now include shared namespace atoms in isolated mode, matching `mk_recall` and bootstrap behavior. `CheckpointOptions` extended with `baseDir`, `isolated`, `sharedRecall` params.
+
+- **Runtime agent identity wiring** — Bootstrap hook extracts agent identity from `event.context.agentIdentity.id` (or `event.context.agent.id`) when available. Prepares for OpenClaw runtime identity support. Falls back to static `cfg.agentId` when absent.
+
+### Added — OpenClaw Plugin Per-Agent Isolation
+
+- **OpenClaw plugin isolation routing** — All 5 tools (`mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`) and 3 hooks (`agent:bootstrap`, `session:compact:before`, `command:new/reset`) now route through `resolveEffectiveMemoryContext()`. In isolated mode, writes go to `agents/{agentId}/`, reads use union recall (agent + shared). Shared mode is fully backward compatible.
+
+- **Plugin config: isolation fields** — 4 new config fields: `isolationMode` (`auto` | `shared-only` | `per-agent-required`), `autoInitAgentStore` (default: false), `sharedRecall` (default: true), `failIfMissingAgentStore` (default: false). Config schema updated in both plugin source and `openclaw.plugin.json` manifest.
+
+- **`recallIsolatedWithEmbeddings()`** (`src/isolation-recall.ts`) — Async variant of `recallIsolated()` with optional embedding-backed recall. When `useEmbeddings: true`, uses `recallWithEmbeddings()` per store instead of FTS-only `recall()`. Same agent-wins-on-collision merge and token budget logic.
+
+- **Enhanced `mk_status`** — In isolated mode, reports: isolation mode, effective agent ID, base dir, shared namespace status, shared atom count, and shared recall enabled/disabled.
+
+- **Enhanced bootstrap observability** — In isolated mode, bootstrap message includes agent routing info: `mk: bootstrap agent=<id> isolated=true shared=<bool> atoms=<n>`.
+
+- **Actionable errors** — Missing agent stores produce clear error messages with `mk init -a <id> <baseDir>` suggestions.
+
+- **Test coverage** — `test/openclaw-plugin-isolation.test.ts` (24 tests): config parsing, effective context resolution, tool routing, hook routing, cross-agent isolation, backward compatibility.
+
+### Added — Per-Agent Memory Isolation
+
+- **Two isolation modes: `shared` (default) and `per-agent`** — backward-compatible by design. In shared mode, everything works unchanged. In per-agent mode, each agent gets `agents/{agentId}/` with its own atoms, index, events, and render config; a `shared/` namespace holds explicitly shared atoms. Mode is set via `config.yaml` or `MK_ISOLATION` env var.
+
+- **Isolation core** (`src/isolation.ts`) — `loadConfig()` / `writeConfig()` for config.yaml management, `isIsolated()` mode check, `resolveAgentDir()` routing (identity in shared mode, `agents/{id}/` in isolated mode), `getSharedDir()`, `listAgents()`, `initAgentStore()`, `initSharedStore()`, `initIsolatedBase()`. Agent ID validation (`assertValidAgentId()`) enforces alphanumeric + dash + underscore only — blocks path traversal via `assertWithinDir()`.
+
+- **Union recall** (`src/isolation-recall.ts`) — `recallIsolated()` searches agent store + shared namespace, merges results with agent-wins-on-collision dedup, applies token budget once at the merge step (not per-source) so shared atoms aren't starved. Episodes merged with dedup.
+
+- **Share/unshare** (`src/share.ts`) — `shareAtom()` copies an atom snapshot from an agent store to the shared namespace (not symlink — re-share to update). `unshareAtom()` removes from shared. `listSharedAtoms()` lists the shared namespace. Events: `atom_shared`, `atom_unshared`.
+
+- **Migration** (`src/migrate.ts`) — `migrate()` converts a shared-mode store to per-agent isolation with three strategies:
+  - `fresh` — Write config.yaml + create shared dir, leave existing atoms as-is
+  - `partition` — Route atoms to agent subdirs by their creating `agent_id` from the event log
+  - `clone-to-shared` — Copy all existing atoms into the shared namespace
+  - Backup: timestamped `.mk-backup-*` directory created before destructive operations. Config written first so crash leaves store in "already isolated" state (idempotent on re-run).
+
+- **Per-agent render config** — `render.yaml` per agent directory with fields: `mode` (operational | constitutive | balanced), `max_tokens`, `include_shared`, `type_weights` (per-atom-type recall weight overrides). `loadRenderConfig()` / `writeRenderConfig()` with validation and defaults.
+
+- **`renderAgentClaudeMd()`** (`src/render.ts`) — Render CLAUDE.md for a specific agent in isolated mode. Loads per-agent render.yaml, uses `recallIsolated()` for agent + shared union when `include_shared: true`.
+
+- **Wander scoping** (`src/wander.ts`) — In isolated mode, graph walks are scoped to the agent's own store + shared namespace. Agents cannot traverse into other agents' private stores.
+
+- **CLI additions:**
+  - Global `-a, --agent <id>` option threads agent isolation through all commands
+  - `mk init -a <agent>` — Initialize in per-agent isolation mode (creates config.yaml, `agents/{agent}/`, `shared/`)
+  - `mk status --all-agents` — Per-agent summary showing atom/event counts per agent + shared namespace
+  - `mk share <atom-id> --from <agent>` — Share atom snapshot to shared namespace
+  - `mk unshare <atom-id>` — Remove atom from shared namespace
+  - `mk migrate --strategy <fresh|partition|clone-to-shared>` — Convert shared store to isolated mode
+
+- **MCP additions** (`src/mcp/`):
+  - `mk_share_atom` tool — Share atom from agent to shared namespace (isolated mode only)
+  - `mk_unshare_atom` tool — Remove atom from shared namespace (isolated mode only)
+  - `MCP_AGENT_ID` env var — Determines which agent store the MCP server routes to (defaults to `mcp-server`)
+  - All existing tools automatically route to the correct agent store via `resolveMemoryDir()`
+
+- **New types** (`src/types.ts`): `IsolationConfig`, `RenderConfig`, `RenderMode`, event actions `atom_shared` and `atom_unshared`.
+
+- **[Isolation guide →](docs/isolation.md)** — Dedicated documentation covering concepts, quick start, sharing, union recall, migration, CLI/SDK/MCP reference, and troubleshooting.
+
+### Tests — Per-Agent Isolation
+
+- 7 new test modules, ~1,450 lines:
+  - `test/isolation.test.ts` — Config loading, agent store init, render config, path validation
+  - `test/isolation-recall.test.ts` — Union recall, agent-wins dedup, token budget, episodes
+  - `test/isolation-render.test.ts` — Per-agent render with type_weights, include_shared
+  - `test/isolation-wander.test.ts` — Graph scoping, shared accessibility, cross-agent invisibility
+  - `test/isolation-migrate.test.ts` — All 3 migration strategies, backup, idempotency
+  - `test/share.test.ts` — Share/unshare operations, snapshots, re-share, events
+  - `test/mcp-isolation.test.ts` — Tool routing, share/unshare tools, shared-mode rejection
+
+### Changed — OpenClaw plugin (SecretRef support for sensitive config)
+
+- **`embeddingApiKey` and `encryptionKey` now accept file SecretRefs** in addition to plain strings. Users can write `{ "source": "file", "provider": "vault", "id": "/openai-api-key" }` and the plugin resolves it locally at init via a `secretProviders` map. Lets users keep sensitive values out of both `openclaw.json` and `~/.openclaw/.env` (which `openclaw gateway install` otherwise inlines into the launchd/systemd service file).
+- Resolution is plugin-local because OpenClaw's central SecretRef surface (`openclaw secrets configure` / `secrets apply`) is a hardcoded list that doesn't include third-party plugin config fields. Framed as a short-term workaround in `INSTALL.md`; when upstream adds memory-kernel fields to the central surface, the shadow resolver can be removed and users can rewrite refs in OpenClaw's native form.
+- Pointer format is a deliberate subset of RFC 6901: slash-delimited navigation through nested plain-object keys. Array indices and escape sequences (`~0`, `~1`) are explicitly rejected at parse time with clear error messages.
+- File-permission hygiene: the plugin `fs.stat`s the vault file and emits `console.warn` if the mode is group/world readable (non-fatal — documented as hygiene advisory, not blocker).
+- Schema (both `src/index.ts` `jsonSchema` and `openclaw.plugin.json` `configSchema`) updated to use `oneOf: [string, SecretRef]` for the two fields, plus a new top-level `secretProviders` map.
+- 9 new tests in `test/openclaw-plugin.test.ts` covering: string pass-through (regression), flat-key resolution, nested-key resolution, unknown-provider error, missing-file error, pointer-miss error, array-rejection, RFC 6901 escape rejection, loose-mode warning.
+
+### Added — Docs
+
+- **`docs/host-integration-doctrine.md`** — host-agnostic doctrine guide distilled from the OpenClaw memory-kernel-first transition. Covers the three-layer model (kernel primary / transcript search secondary / files support), `AGENTS.md` + `MEMORY.md` templates, a working compaction-prompt template, retrieval order, what belongs (and what doesn't) in memory-kernel, promotion workflow from files → atoms, and health-check criteria.
+- README and plugin INSTALL.md now link the doctrine guide so integrators find it before hitting the same "machinery ready, behavior still file-first" trap.
+
+### Changed — OpenClaw plugin (Tier-1 memory-kernel-first polish)
+
+- **Tool descriptions now encode the routing doctrine.** `mk_remember`, `mk_recall`, and `mk_context_bundle` describe themselves as the primary durable-memory surface, with `memory_search` positioned as secondary (transcript / legacy recall) and `memory/*.md` as the support layer (daily logs, raw notes, imports). Agents pick up the routing rule through the tool list even if the host doctrine lags.
+- **Bootstrap hook now emits observable signals.** The `agent:bootstrap` handler pushes one of `mk: bootstrap injected N atoms` / `mk: bootstrap — no atoms yet` / `mk: bootstrap failed — <err>` / `mk: no memory dir — file-first fallback` via `event.messages` instead of silently no-opping. Lets host doctrine fall back reliably when recall is unavailable.
+- **Pre-compaction hook reports checkpoint summary.** The `session:compact:before` handler now captures `checkpoint()` output and pushes `mk: pre-compact checkpoint saved (N atoms, ~T tokens)` via `event.messages` — gives host compaction prompts a signal to route scratch-vs-durable content instead of re-dumping.
+- **Session id now flows from lifecycle events into tool audit trail.** An internal `currentSessionId` tracker is updated by `agent:bootstrap`, `command:new`, `command:reset`, and `session:compact:before` hooks. `mk_remember`, `mk_recall`, `mk_reflect`, and `mk_context_bundle` use it instead of the previous hardcoded `'unknown'`, restoring meaningful audit trails in `events.ndjson`.
+
+### Added — OpenClaw plugin
+
+- **`packages/openclaw-memory-kernel`** — native OpenClaw plugin surfacing memory-kernel through structured tools and lifecycle hooks (runs in-process, no MCP subprocess).
+  - Tools: `mk_remember`, `mk_recall`, `mk_reflect`, `mk_context_bundle`, `mk_status`.
+  - Named lifecycle hooks registered via `api.registerHook(..., { name, description })`:
+    - `mk_bootstrap_recall` (`agent:bootstrap`) — injects recalled atoms into agent bootstrap context.
+    - `mk_precompact_checkpoint` (`session:compact:before`) — writes checkpoint before compaction.
+    - `mk_session_end` (`command:new`, `command:reset`) — runs `reflect()` and writes an episode.
+  - Config fields: `memoryDir`, `encryptionKey`, `agentId`, `embeddingProvider`, `embeddingApiKey`, `embeddingModel`.
+  - Auto-reindex on plugin init when no index exists; failures now logged via `console.warn` instead of silently swallowed.
+  - Embedding integration: when `embeddingProvider` is set, `mk_recall` and the bootstrap hook use `recallWithEmbeddings` (hybrid FTS5 + vector). If `embeddingApiKey` is not provided and provider is `openai`, the plugin falls back to `OPENAI_API_KEY` from the environment.
+  - Bootstrap recall now attributes startup events with `agent_id` and `session_id: "bootstrap"` for audit traceability.
+- Plugin manifest at `packages/openclaw-memory-kernel/openclaw.plugin.json` with `configSchema` covering all six config fields.
+
+### Tests
+
+- 16 integration tests in `test/openclaw-plugin.test.ts` exercising every tool + lifecycle hook against a real temp memory directory, covering: atom creation with frontmatter, scope_tags → scope.tags mapping, recall with results and on empty memory, sync reflect, context bundle, status with atoms and with null index, bootstrap injection and skip-on-empty, checkpoint event creation, session-end reflect + episode write, and init reindex.
+
+---
+
 ## [1.9.0] — 2026-04-09
 
 ### Added

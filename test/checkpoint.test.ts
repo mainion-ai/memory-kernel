@@ -11,6 +11,8 @@ import {
   initMemoryDir,
   createAtom,
   readEvents,
+  initIsolatedBase,
+  closeAllIndexes,
 } from '../src/index.js';
 import { checkpoint } from '../src/checkpoint.js';
 
@@ -21,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeAllIndexes();
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -132,5 +135,77 @@ describe('checkpoint', () => {
     // Views should contain the decision we just created
     expect(result.bundle.index).toContain('Decisions (1)');
     expect(result.bundle.handoff).toContain('Handoff');
+  });
+});
+
+describe('isolation-aware checkpoint', () => {
+  it('includes shared atoms when isolated + sharedRecall', () => {
+    initIsolatedBase(testDir, 'test-agent');
+    const agentDir = path.join(testDir, 'agents', 'test-agent');
+    const sharedDir = path.join(testDir, 'shared');
+
+    createAtom({ memoryDir: agentDir, ...BASE_OPTS, type: 'fact', slug: 'agent-f', body: 'Agent fact for checkpoint' });
+    createAtom({ memoryDir: sharedDir, ...BASE_OPTS, type: 'decision', slug: 'shared-d', body: 'Shared decision for checkpoint' });
+
+    const result = checkpoint({
+      memoryDir: agentDir,
+      ...BASE_OPTS,
+      baseDir: testDir,
+      isolated: true,
+      sharedRecall: true,
+    });
+
+    expect(result.bundle.atoms.length).toBe(2);
+    expect(result.markdown).toContain('Agent fact for checkpoint');
+    expect(result.markdown).toContain('Shared decision for checkpoint');
+  });
+
+  it('excludes shared atoms when sharedRecall is false', () => {
+    initIsolatedBase(testDir, 'test-agent');
+    const agentDir = path.join(testDir, 'agents', 'test-agent');
+    const sharedDir = path.join(testDir, 'shared');
+
+    createAtom({ memoryDir: agentDir, ...BASE_OPTS, type: 'fact', slug: 'agent-f', body: 'Agent fact only' });
+    createAtom({ memoryDir: sharedDir, ...BASE_OPTS, type: 'decision', slug: 'shared-d', body: 'Shared decision excluded' });
+
+    const result = checkpoint({
+      memoryDir: agentDir,
+      ...BASE_OPTS,
+      baseDir: testDir,
+      isolated: true,
+      sharedRecall: false,
+    });
+
+    expect(result.bundle.atoms.length).toBe(1);
+    expect(result.markdown).toContain('Agent fact only');
+    expect(result.markdown).not.toContain('Shared decision excluded');
+  });
+
+  it('isolation params absent means single-dir recall (backward compat)', () => {
+    initMemoryDir(testDir);
+    createAtom({ memoryDir: testDir, ...BASE_OPTS, type: 'fact', slug: 'compat', body: 'Backward compat fact' });
+
+    const result = checkpoint({ memoryDir: testDir, ...BASE_OPTS });
+    expect(result.bundle.atoms.length).toBe(1);
+    expect(result.markdown).toContain('Backward compat fact');
+  });
+
+  it('checkpoint event includes isolation metadata', () => {
+    initIsolatedBase(testDir, 'test-agent');
+    const agentDir = path.join(testDir, 'agents', 'test-agent');
+    createAtom({ memoryDir: agentDir, ...BASE_OPTS, type: 'fact', slug: 'meta-test', body: 'Metadata test' });
+
+    checkpoint({
+      memoryDir: agentDir,
+      ...BASE_OPTS,
+      baseDir: testDir,
+      isolated: true,
+      sharedRecall: true,
+    });
+
+    const events = readEvents(agentDir);
+    const ckpt = events.find((e) => e.action === 'checkpoint_created');
+    expect(ckpt?.meta?.isolated).toBe(true);
+    expect(ckpt?.meta?.shared_recall).toBe(true);
   });
 });

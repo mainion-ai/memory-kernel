@@ -11,6 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
+import { resolveDir } from './resolve-dir.js';
 import { enrichRelations } from '../enrich-relations.js';
 
 function exitWithError(message: string, json?: boolean): never {
@@ -55,7 +56,7 @@ export function registerEnrichRelationsCommand(program: Command): void {
         exitWithError('Specify --dry-run to preview or --apply to write changes.', opts.json);
       }
 
-      const memoryDir = path.resolve(opts.dir);
+      const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
         exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }

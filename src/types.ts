@@ -108,6 +108,8 @@ export const EVENT_ACTIONS = [
   'atom_promoted',
   'atom_expired',
   'atom_imported',
+  'atom_shared',
+  'atom_unshared',
   'atom_read',
   'checkpoint_created',
   'conflict_detected',
@@ -254,3 +256,23 @@ export interface KernelConfig {
   index_budget_lines: number; // Max lines for INDEX.md (default 200)
   handoff_budget_lines: number; // Max lines for HANDOFF.md
 }
+
+// --- Per-agent isolation ---
+
+export interface IsolationConfig {
+  isolation: 'shared' | 'per-agent';
+}
+
+export type RenderMode = 'operational' | 'constitutive' | 'balanced';
+
+export interface RenderConfig {
+  /** Render mode: operational (fact-heavy), constitutive (belief-heavy), balanced (default). */
+  mode: RenderMode;
+  /** Token budget for recall during render. */
+  max_tokens: number;
+  /** Whether to include shared namespace atoms in render. */
+  include_shared: boolean;
+  /** Per-type score multipliers for recall ranking. */
+  type_weights: Partial<Record<AtomType, number>>;
+}
+

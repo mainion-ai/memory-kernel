@@ -10,7 +10,7 @@
 │                                                         │
 │  CLAUDE.md loaded automatically (NanoClaw)              │
 │  — OR —                                                 │
-│  mk recall -d {dir} --task "current task"               │
+│  mk recall -d {dir} [-a {agent}] --task "current task"   │
 │                                                         │
 │  You now have: facts, decisions, beliefs, preferences,  │
 │  open questions, constraints from previous sessions.    │
@@ -22,10 +22,10 @@
 │                                                         │
 │  As you work, retain what matters:                      │
 │                                                         │
-│  mk remember "..." -d {dir} -t fact    ← verified      │
-│  mk remember "..." -d {dir} -t decision ← choices      │
-│  mk remember "..." -d {dir} -t belief   ← hypotheses   │
-│  mk remember "..." -d {dir} -t preference ← user prefs │
+│  mk remember "..." -d {dir} [-a {agent}] -t fact    ← verified │
+│  mk remember "..." -d {dir} [-a {agent}] -t decision ← choices │
+│  mk remember "..." -d {dir} [-a {agent}] -t belief  ← hypotheses│
+│  mk remember "..." -d {dir} [-a {agent}] -t preference ← prefs │
 │                                                         │
 │  Optional — explore connections:                        │
 │  mk wander -d {dir} --tags tag1,tag2 --json             │
@@ -149,3 +149,19 @@ mk wander -d {dir} --seed BELI-2026-03-14-NOTATION-AS-ERASURE --steps 3 --json
 | File access | Limited to mounts | Full filesystem |
 
 See [container quickref](agent-quickref-container.md) or [native quickref](agent-quickref-native.md) for environment-specific details.
+
+## Running in Per-Agent Mode
+
+If your memory directory uses [per-agent isolation](isolation.md), the session loop is the same — just add `-a {agent-id}` to every command:
+
+```
+Session start  →  mk recall -d {dir} -a my-agent --task "current task"
+During session →  mk remember "..." -d {dir} -a my-agent -t fact
+Session end    →  mk render {dir}/agents/my-agent {path/to/CLAUDE.md}
+```
+
+Key differences in isolated mode:
+- **Recall is union:** your atoms + shared namespace atoms, with your version winning on collision
+- **Sharing is explicit:** use `mk share <atom-id> --from my-agent` to make knowledge available to other agents
+- **Wander is scoped:** graph walks only traverse your atoms and shared atoms, not other agents' private stores
+- **Render config:** each agent has a `render.yaml` controlling token budget, render mode, and type weights
