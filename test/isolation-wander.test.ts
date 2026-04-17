@@ -13,6 +13,7 @@ import {
   closeAllIndexes,
   openIndex,
   wander,
+  wanderFromFiles,
 } from '../src/index.js';
 
 const AGENT = 'test-agent';
@@ -117,6 +118,47 @@ describe('wander isolation', () => {
 
     // Should still work with agent's atoms only
     expect(result.activated.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('wanderFromFiles merges shared namespace atoms when sharedMemoryDir is set', () => {
+    const hustonDir = agentDir('huston');
+    const shared = sharedDir();
+    // Deliberately do NOT open an index — exercise the file-scan fallback path.
+    openIndex(hustonDir);
+    openIndex(shared);
+
+    const h1 = createAtom({ ...base(hustonDir), type: 'fact', slug: 'agent-files', body: 'Agent file.', scope: { tags: ['infra'] } });
+    const s1 = createAtom({ ...base(shared), type: 'fact', slug: 'shared-files', body: 'Shared file.', scope: { tags: ['infra'] } });
+    closeAllIndexes();
+
+    const result = wanderFromFiles({
+      memoryDir: hustonDir,
+      sharedMemoryDir: shared,
+      baseDir: testDir,
+      seedTags: ['infra'],
+      steps: 1,
+    });
+
+    const ids = result.activated.map((a) => a.atom_id);
+    expect(ids).toContain(h1.frontmatter.id);
+    expect(ids).toContain(s1.frontmatter.id);
+  });
+
+  it('wanderFromFiles rejects sharedMemoryDir outside base directory', () => {
+    const hustonDir = agentDir('huston');
+    openIndex(hustonDir);
+    createAtom({ ...base(hustonDir), type: 'fact', slug: 'safe-files', body: 'Safe.', scope: { tags: ['safe'] } });
+    closeAllIndexes();
+
+    expect(() =>
+      wanderFromFiles({
+        memoryDir: hustonDir,
+        sharedMemoryDir: '/tmp/evil-shared-files',
+        baseDir: testDir,
+        seedTags: ['safe'],
+        steps: 1,
+      }),
+    ).toThrow(/Path traversal denied/);
   });
 
   it('rejects sharedMemoryDir outside base directory', () => {

@@ -17,7 +17,9 @@ All notable changes to this project will be documented in this file.
 
 - **`failIfMissingAgentStore` deprecated** — `true` is now redundant (throwing is the default). Retained for backward compatibility; `failIfMissingAgentStore: false` maps to `allowSharedFallback: true`.
 
-- **Isolation-aware checkpoint** — `mk_context_bundle` and the pre-compaction hook now include shared namespace atoms in isolated mode, matching `mk_recall` and bootstrap behavior. `CheckpointOptions` extended with `baseDir`, `isolated`, `sharedRecall` params.
+- **Isolation-aware checkpoint** — `mk_context_bundle` and the pre-compaction hook now include shared namespace atoms in isolated mode, matching `mk_recall` and bootstrap behavior. `CheckpointOptions` extended with `baseDir`, `isolated`, `sharedRecall` params. `handleGetContextBundle` in the MCP server now forwards `isolated` and `baseDir` to `checkpoint()` so the tool actually takes the isolated-recall branch when the MCP context is in per-agent mode.
+
+- **`wanderFromFiles` shared-namespace support** — The index-free wander fallback now merges atoms from `sharedMemoryDir` (with `assertWithinDir` path validation), matching the index-backed `wander()` path. Previously the CLI passed `sharedMemoryDir` to both branches but `wanderFromFiles` silently ignored it, so agents without a built index saw zero shared atoms in collision detection.
 
 - **Runtime agent identity wiring** — Bootstrap hook extracts agent identity from `event.context.agentIdentity.id` (or `event.context.agent.id`) when available. Prepares for OpenClaw runtime identity support. Falls back to static `cfg.agentId` when absent.
 

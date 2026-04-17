@@ -460,6 +460,8 @@ export async function handleGetContextBundle(
       task: input.task,
       max_tokens: input.max_tokens,
       skipReflect: input.skip_reflect,
+      baseDir: ctx.isolated ? ctx.memoryDir : undefined,
+      isolated: ctx.isolated,
     });
     appendEvent(memDir, 'atom_read', {
       agent_id: agentId,

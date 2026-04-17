@@ -20,7 +20,9 @@ import {
   handleListConflicts,
   handleShareAtom,
   handleUnshareAtom,
+  handleGetContextBundle,
 } from '../src/mcp/tools.js';
+import { shareAtom } from '../src/share.js';
 import type { McpContext } from '../src/mcp/context.js';
 
 let testDir: string;
@@ -114,6 +116,44 @@ describe('MCP isolation — recall scoped to agent', () => {
     const bodies = data.atoms.map((a: { body: string }) => a.body);
     expect(bodies.some((b: string) => b.includes('Alpha'))).toBe(true);
     expect(bodies.some((b: string) => b.includes('Beta'))).toBe(false);
+  });
+});
+
+describe('MCP isolation — get_context_bundle merges shared atoms', () => {
+  it('get_context_bundle returns agent + shared atoms in isolated mode', async () => {
+    const alphaDir = path.join(testDir, 'agents', 'alpha');
+    const sharedDir = path.join(testDir, 'shared');
+    openIndex(alphaDir);
+    openIndex(sharedDir);
+
+    const alphaAtom = createAtom({
+      memoryDir: alphaDir,
+      agent_id: 'alpha',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'alpha-only',
+      body: 'Alpha private knowledge.',
+      scope: { tags: ['deployment'] },
+    });
+    // Seed shared namespace via the supported share flow so indices stay consistent
+    const sharedSrc = createAtom({
+      memoryDir: alphaDir,
+      agent_id: 'alpha',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'team-shared',
+      body: 'Team-shared knowledge.',
+      scope: { tags: ['deployment'] },
+    });
+    shareAtom(testDir, sharedSrc.frontmatter.id, 'alpha', { agent_id: 'alpha', session_id: 'test' });
+
+    const ctx = isoCtx('alpha');
+    const result = await handleGetContextBundle(ctx, { task: 'deployment', skip_reflect: true });
+    const data = parseResult(result);
+
+    expect(data.atom_count).toBeGreaterThanOrEqual(2);
+    expect(data.markdown).toContain(alphaAtom.frontmatter.id);
+    expect(data.markdown).toContain(sharedSrc.frontmatter.id);
   });
 });
 
