@@ -553,6 +553,33 @@ describe('hook routing in isolated mode', () => {
     expect(event.messages[0]).toContain('agent=runtime-huston');
   });
 
+  it('bootstrap reads context.agentId (OpenClaw documented path)', async () => {
+    initIsolatedBase(testDir, 'huston');
+    initAgentStore(testDir, 'oc-huston');
+    const ocHustonDir = path.join(testDir, 'agents', 'oc-huston');
+
+    createAtom({
+      memoryDir: ocHustonDir, ...BASE_OPTS,
+      type: 'fact', slug: 'oc-id-test', body: 'OpenClaw agentId path test',
+    });
+
+    const { api, hooks } = createMockApi({ memoryDir: testDir, agentId: 'huston' });
+    plugin.register(api);
+
+    const bootstrapHook = findHook(hooks, 'agent:bootstrap');
+    const event = {
+      context: {
+        bootstrapFiles: [] as any[],
+        agentId: 'oc-huston',  // OpenClaw documented path — context.agentId
+      },
+      messages: [] as string[],
+    };
+    await bootstrapHook!.handler(event);
+
+    // context.agentId should take priority over config agentId
+    expect(event.messages[0]).toContain('agent=oc-huston');
+  });
+
   it('bootstrap uses config agentId when runtime identity is absent', async () => {
     initIsolatedBase(testDir, 'huston');
     const hustonDir = path.join(testDir, 'agents', 'huston');

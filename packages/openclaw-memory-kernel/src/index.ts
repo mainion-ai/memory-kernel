@@ -932,8 +932,11 @@ const memoryKernelPlugin = {
         activeSessionKey = sessionKey
 
         // Runtime agent identity: capture from OpenClaw event context.
-        const runtimeAgentId = event.context?.agentIdentity?.id
-          ?? event.context?.agent?.id   // alternate path OpenClaw may use
+        // OpenClaw provides agent identity via context.agentId (documented),
+        // context.agentIdentity.id, or context.agent.id (alternate paths).
+        const runtimeAgentId = event.context?.agentId              // OpenClaw documented path
+          ?? event.context?.agentIdentity?.id                      // structured identity object
+          ?? event.context?.agent?.id                              // alternate nested path
         let agentId: string | undefined
         if (typeof runtimeAgentId === 'string' && runtimeAgentId.length > 0) {
           assertValidAgentId(runtimeAgentId)
