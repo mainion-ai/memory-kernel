@@ -131,21 +131,31 @@ mk reindex -d ~/mk-memory --embed      # optional: add semantic search
 
 ## Session Loop
 
-The recommended pattern for a native agent session:
+> For the full operational loop with cadence, cron setup, A2A handoff, and diagnostics, see **[agent-session-loop.md](agent-session-loop.md)**.
+
+Quick reference pattern:
 
 ```
 Session starts
-  ├── CLAUDE.md already loaded (if NanoClaw)
-  ├── OR: mk recall -d {dir} --task "what I'm working on"
+  ├── CLAUDE.md already loaded (if NanoClaw + nightly render is current)
+  ├── OR — if significant work done since last nightly render:
+  │       mk recall -d {dir} --task "what I'm working on" \
+  │                          --include-episodes \
+  │                          --decay-weight 0.3 \
+  │                          --decay-half-life 60
   │
   ├── During session:
   │   ├── mk remember (when you learn something worth keeping)
+  │   ├── mk relate <src> <type> <tgt> -d {dir}  ← wire connections as you see them
   │   └── mk wander --tags ... (when exploring connections)
   │
   └── Session ends:
-      ├── mk render (update CLAUDE.md for next session)
-      └── mk reflect (optional — nightly cron usually handles this)
+      └── mk episode -d {dir} --session-id "YYYY-MM-DD-N" \
+                    --summary "[TOPIC]...[DECISIONS]...[NEXT]..."
+          (not mk render — render runs nightly via cron)
 ```
+
+Every 5 sessions: `mk reflect -d {dir} && mk gc -d {dir}`
 
 ### When to remember vs. when not to
 
@@ -202,14 +212,20 @@ readlink -f $(which mk)     # → .../memory-kernel/dist/cli/mk.js
 node -e "console.log(require.resolve('memory-kernel/dist/cli/mk.js'))"
 ```
 
-## Nightly Maintenance
+## Maintenance Cadence
 
-If you have cron access, set up nightly reflect + render:
+> Full cron setup with copy-paste blocks is in **[agent-session-loop.md](agent-session-loop.md)**.
+
+| Frequency | Commands |
+|---|---|
+| Nightly 02:00 | `mk render {dir} {CLAUDE.md}` |
+| Weekly Sun 03:00 | `mk doctor` → `mk closure --trajectory` → `mk citations` → `mk relink --apply` → `mk reflect` → `mk gc` → `mk render` |
+| Weekly Sun 04:00 | `mk enrich-relations --apply` (Ollama only) |
+| Monthly 1st 04:00 | `mk compact` |
 
 ```bash
-# Add to crontab
-crontab -e
-# Add: 0 23 * * * mk reflect -d ~/mk-memory --agent-id my-agent --session-id nightly-$(date +\%Y\%m\%d) && mk render ~/mk-memory ~/path/to/CLAUDE.md
+# Minimal nightly crontab entry:
+0 2 * * * mk render ~/mk-memory ~/path/to/CLAUDE.md
 ```
 
 ## SDK Usage (TypeScript)
