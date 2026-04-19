@@ -26,7 +26,7 @@ mk recall -d {dir} --task "description of what you're working on today" \
 - `--decay-weight 0.3` — weights recency at 30% of the score (default is 0.2); slightly favors recent atoms for most work
 - `--decay-half-life 60` — atoms 60 days old score ~50% of fresh atoms; prevents old atoms from dominating recent work
 
-If you are operating from a CLAUDE.md rendered nightly (NanoClaw default), the recall is already loaded — skip this step and proceed.
+If you are operating from a CLAUDE.md rendered nightly (NanoClaw default), the recall is already loaded for atoms written before the last render. **Still run `mk recall` manually if you did significant work after the last nightly render** — atoms written in the same day won't be in CLAUDE.md until the next cron run.
 
 ---
 
@@ -83,6 +83,18 @@ mk wander -d {dir} --tags philosophy,architecture --steps 5 --json
 ```
 
 Run wander when exploring a new topic, when stuck, or during free time. Collisions in the output are atoms from different domains that activated together — these are worth investigating. No collisions means no unexpected connections found; move on.
+
+**Which tags to wander on:** Use the tags of the domain you're entering, or seed from a specific atom you just wrote. If you want to audit an atom's neighborhood rather than a domain, use `--seed` instead of `--tags`:
+
+```bash
+# Domain entry
+mk wander -d {dir} --tags infrastructure,performance --steps 5 --json
+
+# Specific atom neighborhood
+mk wander -d {dir} --seed BELI-2026-04-01-CACHE-HYPOTHESIS --steps 3 --json
+```
+
+**Session counting for every-5-sessions rule:** One episode = one session. Check your episode count with `mk episodes -d {dir} --limit 1 --json` and track the cadence yourself, or keep a `preference` atom like `"Last reflect: 2026-04-19, next at session 5"` and update it after each reflect run.
 
 ---
 
@@ -157,8 +169,8 @@ mk render {memory-dir} {path/to/CLAUDE.md}
 | Command | Why |
 |---|---|
 | `mk doctor` | Catches schema errors, broken links, and conflicts before they compound |
-| `mk closure --trajectory` | Measures entanglement% and belief%; entanglement > 5% = constitutive drift risk; belief% > 80% = diversify atom types |
-| `mk citations` | Indexes concept-name references across atoms; feeds wander's activation scoring |
+| `mk closure --trajectory` | Measures entanglement% and belief%; entanglement > 5% = constitutive drift risk; belief% > 80% = diversify atom types. **What drift looks like from the outside:** the agent starts reasoning in circles, over-references its own prior conclusions, and resists updating on new evidence. The closure metric catches this structurally before it becomes behaviorally obvious. |
+| `mk citations` | Indexes concept-name references across atoms; feeds wander's activation scoring. Run this **before** `mk relink` — citations builds the concept index (used by wander), relink creates explicit graph edges (used by recall). They are separate commands because you may want to update the wander scoring without modifying the relation graph, or vice versa. |
 | `mk relink --apply` | Finds atom ID references in body text and creates explicit relation edges; builds the graph that `mk recall --graph` traverses |
 | `mk reflect` | Dedup, expire, promote — weekly catch for anything the every-5-session run missed |
 | `mk gc` | Archive the atoms reflect marked expired |
@@ -170,7 +182,7 @@ mk render {memory-dir} {path/to/CLAUDE.md}
 mk enrich-relations -d {dir} --apply
 ```
 
-Reclassifies generic `related` edges into specific typed relations using LLM inference. Only run if a local model is available — this is an optional quality improvement, not required for correct operation.
+Reclassifies generic `related` edges into specific typed relations using LLM inference. Ollama-only because this runs weekly and making API calls for every edge would have ongoing cost; a local model makes it free to run on cadence. The task suits smaller models well — edge classification is constrained-vocabulary, not open-ended generation. This is an optional quality improvement, not required for correct operation.
 
 ### Monthly — 1st of month, 04:00
 
