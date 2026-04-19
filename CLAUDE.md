@@ -17,6 +17,21 @@ npm test        # run all tests (vitest, 805+ tests)
 npm run build   # compile TypeScript
 ```
 
+## Versioning
+
+- Whenever code changes (not docs-only), propose a version bump for user approval **before** committing.
+  - Bug fix, no public API change → PATCH (e.g. 1.12.0 → 1.12.1)
+  - New public API (CLI flag, exported field/function, new command) → MINOR (e.g. 1.12.0 → 1.13.0)
+  - Breaking change → MAJOR
+- Wait for explicit approval of the proposed version before touching version fields.
+- Bump these five places together in a single commit:
+  1. `package.json` — `"version"`
+  2. `package-lock.json` — both top-level `"version"` and the self-entry under `"packages": { "": { "version": ... } }` (regenerate via `npm install --package-lock-only` if easier)
+  3. `packages/openclaw-memory-kernel/package.json` — the `"memory-kernel": "^X.Y.Z"` dependency pin (project convention: sync the caret on every release, even when semver would already satisfy)
+  4. `CHANGELOG.md` — add `## [X.Y.Z] — YYYY-MM-DD` section; move any applicable `[Unreleased]` items into it
+  5. Git tag `vX.Y.Z` on the release commit
+- `src/mcp/server.ts` MCP-server `version` is intentionally independent — do not bump with package version.
+
 ## Key conventions
 
 - Tests in `test/`, source in `src/`, CLI in `src/cli/`
