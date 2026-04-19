@@ -70,6 +70,20 @@ function getTypeWeights(query: RecallQueryInternal): Record<AtomType, number> {
 }
 
 function getTypeReservations(query: RecallQueryInternal): Partial<Record<AtomType, number>> {
+  // Fix 1: When task is provided, skip reservations by default — task recall should
+  // be relevance-driven, not type-guaranteed. Reservations are designed for the
+  // no-task constitution pipeline (CLAUDE.md render), not for task-focused recall.
+  // Fix 2: Explicit --no-reservations / --reservations flag overrides auto-behavior.
+  //   no_reservations === true  → force off (--no-reservations)
+  //   no_reservations === false → force on  (--reservations, overrides task auto-disable)
+  //   no_reservations === undefined → auto (off for task, on for no-task)
+  // Explicit force-off disables reservations entirely, including any caller-supplied overrides.
+  if (query.no_reservations === true) return {};
+  // Task auto-disable: caller-supplied type_reservations still act as an opt-in override.
+  if (query.no_reservations !== false && query.task && query.task.trim().length > 0) {
+    if (query.type_reservations) return { ...query.type_reservations };
+    return {};
+  }
   const base = { ...DEFAULT_TYPE_RESERVATIONS };
   const envRaw = process.env.RECALL_TYPE_RESERVATIONS;
   if (envRaw) {
@@ -419,12 +433,19 @@ function getStatusPriority(status: string): number {
   return priorities[status] ?? 99;
 }
 
+/** Maximum fraction of total token budget that reservations may consume. */
+const MAX_RESERVATION_RATIO = 0.3;
+
 /**
  * Trim atom list to fit within token budget.
  *
  * Two-pass reservation-aware algorithm (Phase 2):
  * Pass 1: fill reserved type quotas from atoms of that type (sorted by score).
  * Pass 2: merge remaining atoms, greedy fill with remaining budget, re-sort by score.
+ *
+ * Fixes (v1.9):
+ * - Fix 3: Atoms with high relevance scores bypass reservation priority.
+ * - Fix 4: Total reservation budget capped at MAX_RESERVATION_RATIO (30%) of maxTokens.
  *
  * When finalScoreMap is empty (no-task path), reservation logic degrades to
  * insertion-order greedy fill (scores all 0 → stable sort).
@@ -442,14 +463,49 @@ function applyTokenBudget(
     return greedyFill(atoms, maxTokens);
   }
 
-  // Pass 1: fill reserved slots per type
+  // Fix 4: Cap total reservation budget at 30% of maxTokens to prevent
+  // reservations from consuming the majority of a small budget.
+  const maxReservationBudget = Math.floor(maxTokens * MAX_RESERVATION_RATIO);
+  const rawReservationTotal = reservedTypes.reduce(
+    (sum, t) => sum + (reservations[t as AtomType] ?? 0), 0,
+  );
+  const scaleFactor = rawReservationTotal > maxReservationBudget
+    ? maxReservationBudget / rawReservationTotal
+    : 1.0;
+  const scaledReservations: Partial<Record<AtomType, number>> = {};
+  for (const t of reservedTypes) {
+    scaledReservations[t as AtomType] = Math.floor((reservations[t as AtomType] ?? 0) * scaleFactor);
+  }
+
+  // Fix 3: Compute high-relevance threshold. Atoms scoring above this bypass
+  // reservation priority and compete purely by score in Pass 2.
+  // Threshold = 70th percentile of non-zero scores (top 30% are "high relevance").
+  let highRelevanceThreshold = Infinity;
+  if (finalScoreMap.size > 0) {
+    const scores = [...finalScoreMap.values()].filter(s => s > 0).sort((a, b) => a - b);
+    if (scores.length > 0) {
+      const p70Index = Math.floor(scores.length * 0.7);
+      highRelevanceThreshold = scores[Math.min(p70Index, scores.length - 1)];
+    }
+  }
+
+  // Pass 1: fill reserved slots per type, but let high-scoring atoms bypass
   const reserved: Atom[] = [];
   const unreserved: Atom[] = [];
   const reservedUsed: Partial<Record<AtomType, number>> = {};
 
   for (const atom of atoms) {
-    const quota = reservations[atom.frontmatter.type];
-    if (quota !== undefined) {
+    const id = atom.frontmatter.id;
+    const score = finalScoreMap.get(id) ?? 0;
+
+    // Fix 3: High-relevance atoms go straight to unreserved pool regardless of type
+    if (score >= highRelevanceThreshold && highRelevanceThreshold < Infinity) {
+      unreserved.push(atom);
+      continue;
+    }
+
+    const quota = scaledReservations[atom.frontmatter.type];
+    if (quota !== undefined && quota > 0) {
       const used = reservedUsed[atom.frontmatter.type] ?? 0;
       const tokens = estimateTokens(atom.body + JSON.stringify(atom.frontmatter));
       if (used + tokens <= quota) {

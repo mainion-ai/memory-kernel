@@ -152,18 +152,22 @@ recall(dir, { task: 'pagination' });
 // signature: recall(memoryDir: string, query: RecallQuery = {})
 ```
 
-### `searchFts()` — FTS5 phrase queries require adjacency
+### `searchFts()` — implicit-AND over tokens with stemming
 
-`searchFts()` wraps the query in a quoted phrase (`"..."`) which requires all tokens to appear in
-exact sequence in the document. For multi-word queries, prefer single distinctive keywords:
+`searchFts()` sanitises FTS5 operators (`" * ( ) ^ : -` and the `NEAR` keyword) out of the input
+and issues an implicit-AND query over the remaining tokens. Each token must appear in the document
+in any order, and FTS5 stemming still applies (so `paginat*` matches `pagination`/`paginate`):
 
 ```typescript
-// Multi-word phrase "pagination api" fails if words aren't adjacent in body text
-searchFts(dir, 'pagination api');  // may return [] if not adjacent
+// Multi-word query — both tokens must appear (any order), stemming still works
+searchFts(dir, 'pagination api');  // matches atoms containing both words
 
-// Single keyword is safer and uses stemming (paginat* matches pagination/paginate)
-searchFts(dir, 'pagination');  // returns all atoms containing any form of "pagination"
+// Single keyword — same semantics, just one token
+searchFts(dir, 'pagination');  // matches any form of "pagination"
 ```
+
+Callers should still pass parameterised input; the sanitiser prevents FTS5 syntax errors, not SQL
+injection (the SQLite prepared statement is the injection guard).
 
 ### `writeEpisode()` — session ID is sanitised to kebab-case; accepts opts
 
