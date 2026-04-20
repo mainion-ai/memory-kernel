@@ -577,18 +577,22 @@ export function searchFts(
   try {
     const db = openIndex(memoryDir);
 
-    // Strip FTS5 special characters to treat the input as a plain phrase.
-    // We wrap in double-quotes for a quoted phrase query (exact token sequence or stemmed match).
+    // Strip FTS5 special characters and build an implicit-AND token query.
+    // Each word becomes a separate token — FTS5 default is implicit AND,
+    // so "notation erasure" matches documents containing both words (in any order).
+    // Previously used a quoted phrase query which required exact token sequence,
+    // causing most multi-word task queries to return 0 results.
     const sanitised = queryText
-      .replace(/["*()]/g, ' ')  // remove FTS5 operators/syntax chars
-      .replace(/\b(AND|OR|NOT)\b/g, ' ') // remove boolean operators
+      .replace(/["*()^:\-]/g, ' ')  // remove FTS5 operators/syntax chars (- = NOT, ^ = boost, : = column)
+      .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ') // remove boolean operators
       .replace(/\s+/g, ' ')
       .trim();
 
     if (!sanitised) return [];
 
-    // Quoted phrase query: FTS5 matches documents containing all tokens in order (with stemming).
-    const ftsQuery = `"${sanitised}"`;
+    // Implicit-AND token query: each token must appear somewhere in the document.
+    // BM25 scoring naturally ranks documents with more matching tokens higher.
+    const ftsQuery = sanitised;
 
     const rows = db.prepare(
       `SELECT atom_id, rank FROM atom_fts WHERE atom_fts MATCH ? ORDER BY rank LIMIT ?`,

@@ -270,6 +270,45 @@ describe('token reservation', () => {
     expect(ids).toContain(dec.frontmatter.id);
   });
 
+  it('no_reservations: true overrides caller-supplied type_reservations', () => {
+    // Force-off must yield the same bundle regardless of whether the caller also
+    // passes type_reservations — previously those were silently re-applied.
+    // Setup: an unrelated decision (no FTS match against the task) and enough
+    // matching beliefs that, under a tight budget, reservation membership matters.
+    const dec = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'decision', slug: 'unrelated-dec',
+      body: 'A'.repeat(200),
+      confidence: 0.9,
+    });
+    for (let i = 0; i < 20; i++) {
+      createAtom({
+        memoryDir: testDir,
+        agent_id: 'a', session_id: 's',
+        type: 'belief', slug: `topic-belief-${i}`,
+        body: `Pagination API belief ${i} ` + 'cursor-based paging details. '.repeat(10),
+        confidence: 0.8,
+      });
+    }
+    closeAllIndexes();
+
+    const forceOff = recall(testDir, {
+      task: 'pagination API',
+      max_tokens: 800,
+      no_reservations: true,
+      type_reservations: { decision: 500 },
+    });
+    const forceOffBaseline = recall(testDir, {
+      task: 'pagination API',
+      max_tokens: 800,
+      no_reservations: true,
+    });
+    expect(forceOff.atoms.map((a) => a.frontmatter.id))
+      .toEqual(forceOffBaseline.atoms.map((a) => a.frontmatter.id));
+    expect(forceOff.atoms.map((a) => a.frontmatter.id)).not.toContain(dec.frontmatter.id);
+  });
+
   it('type_reservations={} env disables reservations', () => {
     const prevEnv = process.env.RECALL_TYPE_RESERVATIONS;
     process.env.RECALL_TYPE_RESERVATIONS = '{}';

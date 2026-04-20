@@ -9,6 +9,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.12.0] — 2026-04-19
+
+### Fixed — Task-focused recall returns relevant atoms
+
+- **FTS multi-word queries now match** (`src/index-db.ts`) — `searchFts()` sanitises FTS5 operators (`" * ( ) ^ : -` and the `NEAR` keyword) and issues an implicit-AND over tokens instead of a quoted phrase. Multi-word queries like `"pagination api"` match documents containing both words in any order (with stemming), rather than requiring exact adjacency and returning `[]`.
+- **Task recall no longer pinned to a fixed type set** (`src/recall.ts`) — When `task` is provided, type reservations auto-disable so recall is driven by relevance rather than type quotas. High-relevance atoms (top 30% by score) bypass reservation priority. Total reservation budget is capped at 30% of `maxTokens` with proportional scaling, preventing small budgets from being monopolised.
+- **Explicit `no_reservations: true` is now honoured unconditionally** (`src/recall.ts`) — Force-off disables reservations entirely, including any caller-supplied `type_reservations` map. Previously the caller map silently re-enabled reservations despite the explicit disable.
+
+### Added
+
+- **CLI: `--reservations` / `--no-reservations` flags** (`src/cli/mk.ts`) — Override the task-auto-disable behaviour. `--no-reservations` forces reservations off; `--reservations` forces them on even with a task.
+- **`RecallQuery.no_reservations`** (`src/types.ts`) — New public field (`true`/`false`/`undefined`) wired through `recall()`.
+
+### Docs
+
+- `CODING_INSTRUCTIONS.md` FTS gotcha rewritten to describe implicit-AND-over-tokens semantics (prior note still documented the removed quoted-phrase behaviour).
+
+### Tests
+
+- `test/recall-scoring.test.ts` — regression test for `no_reservations: true` + `type_reservations` force-off contract.
+- Full suite: 983/983 passing.
+
+---
+
 ### Changed — OpenClaw Plugin Isolation Hardening
 
 - **BREAKING: Missing agent store now throws by default** — Previously, when an agent store was missing and `autoInitAgentStore` was off, the plugin silently fell back to shared mode. Now it throws with an actionable error message. Set `allowSharedFallback: true` to restore the old behavior.

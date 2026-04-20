@@ -161,6 +161,8 @@ export interface RecallQuery {
   type_reservations?: Partial<Record<AtomType, number>>; // Min token slots per type
   // Phase 3: Graph-walk boost
   graph_boost?: boolean; // Enable/disable neighbor boost (default true)
+  // Phase 4: Reservation override
+  no_reservations?: boolean; // Disable type reservations entirely (useful for task-focused recall)
 }
 
 // --- Episode types ---
