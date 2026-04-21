@@ -9,6 +9,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-04-21
+
+### Changed — Episode recall scores against task and respects token budget
+
+- **Episodes now rank by term-overlap + temporal decay** (`src/recall.ts`) — `recall({ include_episodes: true, task })` now scores candidate episodes with a lightweight TF relevance (fraction of query terms appearing in the summary) combined with exponential decay, using the same `relevance * (1 - decayWeight) + recency * decayWeight` composite as atoms. Zero-relevance episodes are dropped when a task is provided. Previously all candidate episodes were bulk-included unranked (~800 tokens each), crowding out atoms in tight budgets.
+- **Episode token slice is reserved from the atom budget** (`src/recall.ts`) — When `include_episodes` and `max_tokens` are both set, episodes get up to `MAX_EPISODE_BUDGET_RATIO` (20%) of `max_tokens` and that slice is subtracted from the atom budget up-front so `bundle.token_estimate` stays within `max_tokens`. Previously episodes were added on top of the full atom budget, allowing the bundle to exceed the requested cap.
+- **Episode candidate pool raised from 10 to 20** (`src/recall.ts`) — Gives the new scoring pass more candidates to rank against; the 20% budget cap prevents this from bloating output.
+
+### Tests
+
+- `test/episodes.test.ts` — new coverage for score-based ordering, budget-capped selection, zero-relevance filtering, backward-compatible no-task recency sort, and `token_estimate <= max_tokens` invariant for both task and no-task paths with `include_episodes: true`.
+- Full suite: 921/921 passing (two unrelated `openclaw-plugin*.test.ts` files fail to import `@sinclair/typebox` in this environment — not touched by this release).
+
 ## [1.12.0] — 2026-04-19
 
 ### Fixed — Task-focused recall returns relevant atoms

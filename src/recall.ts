@@ -14,7 +14,7 @@ import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import { DEFAULT_TYPE_WEIGHTS, DEFAULT_CONFIDENCE_FLOOR, DEFAULT_TYPE_RESERVATIONS } from './schema.js';
-import type { Atom, ContextBundle, RecallQuery, AtomType } from './types.js';
+import type { Atom, ContextBundle, Episode, RecallQuery, AtomType } from './types.js';
 
 // --- Configurable hybrid ranking parameters ---
 
@@ -28,6 +28,8 @@ const DEFAULT_DECAY_HALF_LIFE = 30;
 const DEFAULT_DECAY_WEIGHT = 0.2;
 /** Default neighbor boost factor for graph-walk spreading activation. */
 const DEFAULT_NEIGHBOR_BOOST = 0.15;
+/** Maximum fraction of total token budget that episodes may consume. */
+const MAX_EPISODE_BUDGET_RATIO = 0.2;
 
 function getSemanticWeight(): number {
   const v = parseFloat(process.env.SEMANTIC_WEIGHT || '');
@@ -116,6 +118,78 @@ export function temporalDecay(createdAt: string, halfLifeDays: number): number {
   const ageMs = Date.now() - new Date(createdAt).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
+}
+
+/**
+ * Score an episode against a task query using term-overlap relevance + temporal decay.
+ *
+ * Episodes are not in the FTS index, so we compute a lightweight TF-based relevance
+ * score: fraction of query terms that appear in the episode summary. Combined with
+ * temporal decay so recent episodes rank higher when relevance is similar.
+ */
+interface ScoredEpisode {
+  episode: Episode;
+  formatted: string;
+  score: number;
+  relevance: number; // term-overlap component (0 = no query terms matched)
+  tokens: number;
+}
+
+function scoreEpisodes(
+  episodes: Episode[],
+  task: string | undefined,
+  halfLifeDays: number,
+  decayWeight: number,
+): ScoredEpisode[] {
+  const scored: ScoredEpisode[] = [];
+
+  // Tokenize query once
+  const queryTerms = task
+    ? task.toLowerCase().split(/\s+/).filter(t => t.length > 1)
+    : [];
+
+  for (const ep of episodes) {
+    const formatted = `## Episode: ${ep.id}\n\n${ep.summary}`;
+    const tokens = estimateTokens(formatted);
+
+    if (queryTerms.length === 0) {
+      // No task — score by recency only
+      const recency = ep.metadata.started_at
+        ? temporalDecay(ep.metadata.started_at, halfLifeDays)
+        : 0.5;
+      scored.push({ episode: ep, formatted, score: recency, relevance: 1, tokens });
+      continue;
+    }
+
+    // Term-overlap relevance: fraction of query terms found in the summary.
+    // Case-insensitive substring match (same behaviour as before, but normalized).
+    const summaryLower = ep.summary.toLowerCase();
+    let hits = 0;
+    for (const term of queryTerms) {
+      if (summaryLower.includes(term)) hits++;
+    }
+    const relevance = hits / queryTerms.length;
+
+    // Temporal decay
+    const recency = ep.metadata.started_at
+      ? temporalDecay(ep.metadata.started_at, halfLifeDays)
+      : 0.5;
+
+    // Composite: same formula as atoms (relevance * (1 - decayWeight) + recency * decayWeight)
+    const score = relevance * (1 - decayWeight) + recency * decayWeight;
+
+    scored.push({ episode: ep, formatted, score, relevance, tokens });
+  }
+
+  // Sort descending by score, then by recency (started_at) as tiebreaker
+  scored.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return (b.episode.metadata.started_at ?? '').localeCompare(
+      a.episode.metadata.started_at ?? '',
+    );
+  });
+
+  return scored;
 }
 
 /** @internal Extended query with pre-computed embedding vector — not part of the public API. */
@@ -262,7 +336,11 @@ export function recall(
     // When finalScoreMap is empty, applyTokenBudget degrades to greedy insertion-order fill.
     if (query.max_tokens) {
       const baseTokens = estimateTokens(index + handoff + constraints);
-      const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+      // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
+      const episodeReservation = query.include_episodes
+        ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+        : 0;
+      const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
       filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
     }
   } else {
@@ -284,7 +362,11 @@ export function recall(
 
   // Apply token budget for no-task path (task path applies budget inside its scoring block)
   if (query.max_tokens && !(query.task && query.task.trim().length > 0)) {
-    const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+    // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
+    const episodeReservation = query.include_episodes
+      ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+      : 0;
+    const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
     filtered = applyTokenBudget(filtered, atomBudget, query, new Map());
   }
   const atomTokens = filtered.reduce(
@@ -292,23 +374,37 @@ export function recall(
     0,
   );
 
-  // Episodes — load on demand only (never included in startup context by default)
+  // Episodes — scored and budget-capped (never included in startup context by default).
+  // Previously episodes were bulk-included with only a crude keyword filter, dumping
+  // ~800 tokens per episode unranked. Now they go through term-overlap scoring +
+  // temporal decay and compete for a capped fraction of the token budget.
   let episodeStrings: string[] | undefined;
   let episodeTokens = 0;
   if (query.include_episodes) {
-    const episodes = listEpisodes(memoryDir, { limit: 10 });
-    // If a task is specified, prefer episodes whose summary contains matching keywords
-    const relevant = query.task
-      ? episodes.filter((ep) =>
-          query.task!.toLowerCase().split(/\s+/).some((word) =>
-            ep.summary.toLowerCase().includes(word),
-          ),
-        )
-      : episodes;
-    episodeStrings = relevant.map(
-      (ep) => `## Episode: ${ep.id}\n\n${ep.summary}`,
-    );
-    episodeTokens = episodeStrings.reduce((s, e) => s + estimateTokens(e), 0);
+    const episodes = listEpisodes(memoryDir, { limit: 20 });
+    const halfLife = getDecayHalfLife(query);
+    const dw = getDecayWeight(query);
+    const scored = scoreEpisodes(episodes, query.task, halfLife, dw);
+
+    // Budget-aware greedy fill: episodes get at most MAX_EPISODE_BUDGET_RATIO of total budget.
+    // When no max_tokens is set, include all scored episodes (backward-compatible).
+    if (query.max_tokens) {
+      const episodeBudget = Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO);
+      const selected: ScoredEpisode[] = [];
+      let used = 0;
+      for (const ep of scored) {
+        if (ep.relevance <= 0 && query.task) continue; // Skip zero-relevance when task is set
+        if (used + ep.tokens > episodeBudget) continue; // Skip if over budget (try next smaller one)
+        selected.push(ep);
+        used += ep.tokens;
+      }
+      episodeStrings = selected.map((s) => s.formatted);
+      episodeTokens = used;
+    } else {
+      // No budget constraint — include all (sorted by score)
+      episodeStrings = scored.map((s) => s.formatted);
+      episodeTokens = scored.reduce((s, e) => s + e.tokens, 0);
+    }
   }
 
   const bundle: ContextBundle = {
