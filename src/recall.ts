@@ -200,10 +200,22 @@ function getMMRLambda(query: RecallQueryInternal): number {
 /**
  * Compute Jaccard similarity on word trigrams between two text bodies.
  * Returns 0.0 (no overlap) to 1.0 (identical trigram sets).
+ *
+ * Edge case: texts shorter than 3 words produce no trigrams; two empty
+ * trigram sets are treated as identical (returns 1.0). In practice atom
+ * bodies are always longer than 3 words.
+ *
+ * Accepts optional pre-computed trigram sets to avoid redundant extraction
+ * in the MMR loop (O(n) instead of O(n²) extractions).
  */
-export function computeTextSimilarity(bodyA: string, bodyB: string): number {
-  const trigramsA = extractTrigrams(bodyA);
-  const trigramsB = extractTrigrams(bodyB);
+export function computeTextSimilarity(
+  bodyA: string,
+  bodyB: string,
+  precomputedA?: Set<string>,
+  precomputedB?: Set<string>,
+): number {
+  const trigramsA = precomputedA ?? extractTrigrams(bodyA);
+  const trigramsB = precomputedB ?? extractTrigrams(bodyB);
 
   if (trigramsA.size === 0 && trigramsB.size === 0) return 1.0;
   if (trigramsA.size === 0 || trigramsB.size === 0) return 0.0;
@@ -243,8 +255,11 @@ function extractTrigrams(text: string): Set<string> {
  *
  * Scores are normalized to [0, 1] before MMR computation. The returned scores
  * are the MMR scores (for debugging/audit), not the original relevance scores.
+ * Note: returned scores can be negative when diversity penalty exceeds relevance
+ * (e.g., low-relevance atom highly similar to already-selected atoms).
  *
- * O(n²) complexity but n is small (typically <200 atoms after filtering).
+ * O(n²) similarity comparisons but n is small (typically <200 atoms after
+ * filtering). Trigrams are precomputed once per atom to avoid O(n²) extraction.
  */
 export function applyMMR(
   scored: Array<{ atom: Atom; score: number }>,
@@ -261,15 +276,17 @@ export function applyMMR(
   }
   const scoreRange = maxScore - minScore || 1;
 
+  // Precompute trigrams once per atom (avoids O(n²) extraction in the loop)
   const candidates = scored.map(s => ({
     atom: s.atom,
     originalScore: s.score,
     normalizedScore: (s.score - minScore) / scoreRange,
     body: s.atom.body,
+    trigrams: extractTrigrams(s.atom.body),
   }));
 
   const selected: Array<{ atom: Atom; score: number }> = [];
-  const selectedBodies: string[] = [];
+  const selectedTrigrams: Set<string>[] = [];
   const remaining = new Set(candidates.map((_, i) => i));
 
   // First pick: highest normalized score
@@ -282,7 +299,7 @@ export function applyMMR(
     }
   }
   selected.push({ atom: candidates[bestIdx].atom, score: candidates[bestIdx].normalizedScore });
-  selectedBodies.push(candidates[bestIdx].body);
+  selectedTrigrams.push(candidates[bestIdx].trigrams);
   remaining.delete(bestIdx);
 
   // Greedy MMR loop
@@ -295,8 +312,8 @@ export function applyMMR(
 
       // max similarity to any already-selected atom
       let maxSim = 0;
-      for (const selBody of selectedBodies) {
-        const sim = computeTextSimilarity(candidates[i].body, selBody);
+      for (const selTri of selectedTrigrams) {
+        const sim = computeTextSimilarity('', '', candidates[i].trigrams, selTri);
         if (sim > maxSim) maxSim = sim;
       }
 
@@ -310,7 +327,7 @@ export function applyMMR(
     if (bestCandIdx === -1) break;
 
     selected.push({ atom: candidates[bestCandIdx].atom, score: bestMMR });
-    selectedBodies.push(candidates[bestCandIdx].body);
+    selectedTrigrams.push(candidates[bestCandIdx].trigrams);
     remaining.delete(bestCandIdx);
   }
 
@@ -737,6 +754,19 @@ export function recall(
       const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
       return decayB - decayA;
     });
+
+    // Phase 8 (no-task path): MMR diversity for constitution/render pipeline.
+    // Uses sort-position as synthetic score so the MMR formula can balance
+    // ordering (relevance) against redundancy (similarity).
+    const mmrLambda = getMMRLambda(query);
+    if (mmrLambda < 1.0 && filtered.length > 1) {
+      const scoredForMMR = filtered.map((a, i) => ({
+        atom: a,
+        score: filtered.length - i, // descending synthetic score from sort order
+      }));
+      const reranked = applyMMR(scoredForMMR, mmrLambda);
+      filtered = reranked.map(r => r.atom);
+    }
   }
 
   // Estimate base view tokens (rough: 4 chars per token)
