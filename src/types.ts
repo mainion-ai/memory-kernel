@@ -163,6 +163,8 @@ export interface RecallQuery {
   graph_boost?: boolean; // Enable/disable neighbor boost (default true)
   // Phase 4: Reservation override
   no_reservations?: boolean; // Disable type reservations entirely (useful for task-focused recall)
+  // Phase 5: IDF hub damping — penalizes atoms matching only ubiquitous query terms
+  idf_damping?: number; // 0 = disabled, 1 = full damping (default from RECALL_IDF_DAMPING env or 1.0)
 }
 
 // --- Episode types ---

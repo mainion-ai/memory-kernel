@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-04-21
+
+### Fixed — IDF hub-damping specificity scoring
+
+- **Stemmer-consistent specificity check** (`src/recall.ts`, `src/index-db.ts`) — `computeSpecificityScores` now uses per-term FTS queries (`getAtomsMatchingTerm`) instead of raw substring matching on body text. Previously, porter-stemmed FTS matches (e.g. "running" → "run") would fail the substring check and receive a false specificity penalty. Title-only FTS matches were also missed since the old check only examined `atom.body`.
+- **New helper `getAtomsMatchingTerm`** (`src/index-db.ts`) — Returns the set of atom_ids matching a single term via FTS (porter-stemmed, same sanitisation as `searchFts`).
+- **Clamped `idf_damping` from caller** (`src/recall.ts`) — `query.idf_damping` is now clamped to [0, 1] on the query path, matching the env-var path. Previously a caller passing a value >1 or <0 would break the 0–1 contract.
+
 ## [1.13.0] — 2026-04-21
 
 ### Changed — Episode recall scores against task and respects token budget

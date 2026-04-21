@@ -96,6 +96,9 @@ export {
   addRelation,
   getAllRelations,
   getAllAtomIds,
+  getTermDocumentFrequencies,
+  getCorpusSize,
+  getAtomsMatchingTerm,
 } from './index-db.js';
 export type { IndexQueryResult, AtomRelation } from './index-db.js';
 

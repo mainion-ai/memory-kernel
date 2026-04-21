@@ -9,7 +9,7 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex, searchFts, getAllEmbeddings, getAllRelations } from './index-db.js';
+import { queryIndex, searchFts, getAllEmbeddings, getAllRelations, getTermDocumentFrequencies, getCorpusSize, getAtomsMatchingTerm } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
@@ -107,6 +107,92 @@ function getConfidenceFloor(): number {
 function getNeighborBoost(): number {
   const v = parseFloat(process.env.RECALL_NEIGHBOR_BOOST || '');
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_NEIGHBOR_BOOST;
+}
+
+/** Default IDF damping strength (1.0 = full damping). */
+const DEFAULT_IDF_DAMPING = 1.0;
+
+function getIdfDamping(query: RecallQueryInternal): number {
+  if (query.idf_damping !== undefined) return Math.max(0, Math.min(1, query.idf_damping));
+  const v = parseFloat(process.env.RECALL_IDF_DAMPING || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_IDF_DAMPING;
+}
+
+/**
+ * Compute per-atom specificity scores based on IDF of matched query terms.
+ *
+ * Atoms matching only ubiquitous terms (low IDF) get penalized; atoms matching
+ * rare terms get scores closer to 1.0. Returns atom_id → specificity (0-1).
+ * Atoms not in FTS results default to 1.0 (no penalty).
+ *
+ * For single-term queries, all matches get 1.0 (IDF ratio is always 1).
+ */
+function computeSpecificityScores(
+  memoryDir: string,
+  queryTerms: string[],
+  ftsResults: { atom_id: string; rank: number }[],
+  filtered: Atom[],
+  damping: number,
+): Map<string, number> {
+  const scores = new Map<string, number>();
+
+  // No penalty when damping disabled, single term, or no FTS results
+  if (damping === 0 || queryTerms.length <= 1 || ftsResults.length === 0) {
+    return scores; // empty map — callers use ?? 1.0
+  }
+
+  // Get document frequencies and corpus size
+  const dfMap = getTermDocumentFrequencies(memoryDir, queryTerms);
+  const corpusSize = getCorpusSize(memoryDir);
+  if (!dfMap || corpusSize === 0) {
+    return scores; // graceful degradation
+  }
+
+  // Compute IDF per query term: idf(term) = log(1 + N / df(term))
+  const idfMap = new Map<string, number>();
+  let totalIdf = 0;
+  for (const term of queryTerms) {
+    const df = dfMap.get(term) ?? 0;
+    const idf = df > 0 ? Math.log(1 + corpusSize / df) : Math.log(1 + corpusSize);
+    idfMap.set(term, idf);
+    totalIdf += idf;
+  }
+
+  if (totalIdf === 0) return scores;
+
+  // Build a set of FTS-matched atom IDs for quick lookup
+  const ftsAtomIds = new Set(ftsResults.map(r => r.atom_id));
+
+  // Build per-term FTS match sets (porter-stemmed, matches title+body)
+  // This avoids the stemmer mismatch: FTS stems "running" → "run" and matches
+  // atoms containing "run", but a raw substring check for "running" would miss them.
+  const termAtomSets = new Map<string, Set<string>>();
+  for (const term of queryTerms) {
+    termAtomSets.set(term, getAtomsMatchingTerm(memoryDir, term));
+  }
+
+  // Build set of filtered atom IDs for intersection check
+  const filteredIds = new Set(filtered.map(a => a.frontmatter.id));
+
+  // Score each FTS-matched atom
+  for (const atomId of ftsAtomIds) {
+    if (!filteredIds.has(atomId)) continue; // atom not in filtered set
+
+    let matchedIdf = 0;
+    for (const term of queryTerms) {
+      // Use per-term FTS results: porter-stemmed, covers both title and body
+      if (termAtomSets.get(term)?.has(atomId)) {
+        matchedIdf += idfMap.get(term) ?? 0;
+      }
+    }
+
+    const rawSpecificity = matchedIdf / totalIdf;
+    // Apply damping: blend between 1.0 (no penalty) and rawSpecificity (full penalty)
+    const specificity = 1.0 - damping * (1.0 - rawSpecificity);
+    scores.set(atomId, specificity);
+  }
+
+  return scores;
 }
 
 /**
@@ -262,6 +348,14 @@ export function recall(
       }
     }
 
+    // IDF hub damping: compute specificity scores to penalize promiscuous-vocabulary atoms.
+    // Tokenize query for specificity computation (same as episode scoring).
+    const idfDamping = getIdfDamping(query);
+    const queryTerms = query.task!.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const specificityScores = idfDamping > 0 && queryTerms.length > 1
+      ? computeSpecificityScores(memoryDir, queryTerms, ftsResults ?? [], filtered, idfDamping)
+      : new Map<string, number>();
+
     // Build semantic score map (if query vector provided or embeddings available)
     const semanticScoreMap = new Map<string, number>();
     if (query.queryVector) {
@@ -295,7 +389,8 @@ export function recall(
       // decay + type_weight + conf_factor inside the comparator (O(n log n) otherwise).
       for (const atom of filtered) {
         const id = atom.frontmatter.id;
-        const fts = ftsScoreMap.get(id) ?? 0;
+        const ftsRaw = ftsScoreMap.get(id) ?? 0;
+        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0);
         const sem = semanticScoreMap.get(id) ?? 0;
         const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
         const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
