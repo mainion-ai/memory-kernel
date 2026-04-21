@@ -121,6 +121,71 @@ function getIdfDamping(query: RecallQueryInternal): number {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_IDF_DAMPING;
 }
 
+/** Default coverage boost exponent (0.5 = square root, gentle boost). */
+const DEFAULT_COVERAGE_BOOST = 0.5;
+
+/** Max allowed coverage_boost exponent — values above 2 produce extreme penalties. */
+const MAX_COVERAGE_BOOST = 2;
+
+function getCoverageBoost(query: RecallQueryInternal): number {
+  if (query.coverage_boost !== undefined) return Math.max(0, Math.min(MAX_COVERAGE_BOOST, query.coverage_boost));
+  const v = parseFloat(process.env.RECALL_COVERAGE_BOOST || '');
+  return Number.isFinite(v) && v >= 0 && v <= MAX_COVERAGE_BOOST ? v : DEFAULT_COVERAGE_BOOST;
+}
+
+/**
+ * Compute per-atom coverage boost factors based on how many query terms each atom matches.
+ *
+ * An atom matching all query terms gets boost = 1.0 (no change).
+ * An atom matching only a fraction gets boost = coverage^P where P is the exponent.
+ * This penalizes partial-match atoms that appear in FTS results via high per-term BM25
+ * but only match 1 of N query terms.
+ *
+ * For single-term queries, all FTS matches have coverage = 1.0 (no penalty).
+ */
+export function computeCoverageBoosts(
+  memoryDir: string,
+  queryTerms: string[],
+  ftsResults: { atom_id: string; rank: number }[],
+  filtered: Atom[],
+  exponent: number,
+): Map<string, number> {
+  const boosts = new Map<string, number>();
+
+  // No penalty when disabled, single term (all matches have coverage=1), or no FTS results
+  if (exponent === 0 || queryTerms.length <= 1 || ftsResults.length === 0) {
+    return boosts; // empty map — callers use ?? 1.0
+  }
+
+  // Build per-term FTS match sets (porter-stemmed, matches title+body)
+  const termAtomSets = new Map<string, Set<string>>();
+  for (const term of queryTerms) {
+    termAtomSets.set(term, getAtomsMatchingTerm(memoryDir, term));
+  }
+
+  // Build set of filtered atom IDs for intersection check
+  const filteredIds = new Set(filtered.map(a => a.frontmatter.id));
+  const ftsAtomIds = new Set(ftsResults.map(r => r.atom_id));
+
+  for (const atomId of ftsAtomIds) {
+    if (!filteredIds.has(atomId)) continue;
+
+    let matchedTerms = 0;
+    for (const term of queryTerms) {
+      if (termAtomSets.get(term)?.has(atomId)) {
+        matchedTerms++;
+      }
+    }
+
+    const coverage = matchedTerms / queryTerms.length;
+    // coverageBoost = coverage^P — e.g. (1/3)^0.5 ≈ 0.58, (2/3)^0.5 ≈ 0.82, 1.0^0.5 = 1.0
+    const boost = Math.pow(coverage, exponent);
+    boosts.set(atomId, boost);
+  }
+
+  return boosts;
+}
+
 /** Max allowed length_norm_k — values above 2 produce extreme penalties. */
 const MAX_LENGTH_NORM_K = 2;
 
@@ -423,6 +488,12 @@ export function recall(
       ? computeLengthFactors(filtered, lengthNormK)
       : new Map<string, number>();
 
+    // Query-term coverage boost: penalize atoms matching few query terms.
+    const coverageExponent = getCoverageBoost(query);
+    const coverageBoosts = coverageExponent > 0 && queryTerms.length > 1
+      ? computeCoverageBoosts(memoryDir, queryTerms, ftsResults ?? [], filtered, coverageExponent)
+      : new Map<string, number>();
+
     // Build semantic score map (if query vector provided or embeddings available)
     const semanticScoreMap = new Map<string, number>();
     if (query.queryVector) {
@@ -457,7 +528,7 @@ export function recall(
       for (const atom of filtered) {
         const id = atom.frontmatter.id;
         const ftsRaw = ftsScoreMap.get(id) ?? 0;
-        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0) * (lengthFactors.get(id) ?? 1.0);
+        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0) * (lengthFactors.get(id) ?? 1.0) * (coverageBoosts.get(id) ?? 1.0);
         const sem = semanticScoreMap.get(id) ?? 0;
         const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
         const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
