@@ -590,9 +590,13 @@ export function searchFts(
 
     if (!sanitised) return [];
 
-    // Implicit-AND token query: each token must appear somewhere in the document.
-    // BM25 scoring naturally ranks documents with more matching tokens higher.
-    const ftsQuery = sanitised;
+    // OR token query: documents matching ANY term are returned.
+    // BM25 naturally ranks documents matching more terms higher, and the
+    // coverage boost multiplier (Phase 7) explicitly penalizes partial matches.
+    // Previously used implicit AND which excluded partial-match documents entirely,
+    // making coverage boost a no-op.
+    const tokens = sanitised.split(/\s+/).filter(Boolean);
+    const ftsQuery = tokens.length > 1 ? tokens.join(' OR ') : sanitised;
 
     const rows = db.prepare(
       `SELECT atom_id, rank FROM atom_fts WHERE atom_fts MATCH ? ORDER BY rank LIMIT ?`,
