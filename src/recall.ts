@@ -112,10 +112,71 @@ function getNeighborBoost(): number {
 /** Default IDF damping strength (1.0 = full damping). */
 const DEFAULT_IDF_DAMPING = 1.0;
 
+/** Default content-length normalization strength (0.5 = moderate). */
+const DEFAULT_LENGTH_NORM_K = 0.5;
+
 function getIdfDamping(query: RecallQueryInternal): number {
   if (query.idf_damping !== undefined) return Math.max(0, Math.min(1, query.idf_damping));
   const v = parseFloat(process.env.RECALL_IDF_DAMPING || '');
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_IDF_DAMPING;
+}
+
+/** Max allowed length_norm_k — values above 2 produce extreme penalties. */
+const MAX_LENGTH_NORM_K = 2;
+
+function getLengthNormK(query: RecallQueryInternal): number {
+  if (query.length_norm_k !== undefined) return Math.max(0, Math.min(MAX_LENGTH_NORM_K, query.length_norm_k));
+  const v = parseFloat(process.env.RECALL_LENGTH_NORM_K || '');
+  return Number.isFinite(v) && v >= 0 && v <= MAX_LENGTH_NORM_K ? v : DEFAULT_LENGTH_NORM_K;
+}
+
+/**
+ * Compute per-atom length normalization factors.
+ *
+ * Atoms longer than the average word count in the result set get a penalty
+ * factor < 1.0. Atoms at or below average get 1.0 (no boost).
+ *
+ * Formula: lengthFactor = 1 / (1 + k * (wordCount / avgWordCount - 1))
+ * where k controls penalty strength. Clamped to 1.0 for short atoms.
+ */
+export function computeLengthFactors(
+  filtered: Atom[],
+  k: number,
+): Map<string, number> {
+  const factors = new Map<string, number>();
+
+  if (k === 0 || filtered.length === 0) return factors;
+
+  // Compute word counts
+  const wordCounts = new Map<string, number>();
+  let totalWords = 0;
+  for (const atom of filtered) {
+    const wc = atom.body.split(/\s+/).filter(w => w.length > 0).length;
+    wordCounts.set(atom.frontmatter.id, wc);
+    totalWords += wc;
+  }
+
+  const avgWordCount = totalWords / filtered.length;
+
+  // Edge case: all atoms empty or single atom
+  if (avgWordCount === 0) return factors;
+
+  for (const atom of filtered) {
+    const id = atom.frontmatter.id;
+    const wc = wordCounts.get(id) ?? 0;
+    const ratio = wc / avgWordCount;
+
+    if (ratio <= 1.0) {
+      // At or below average — no penalty (factor = 1.0)
+      factors.set(id, 1.0);
+    } else {
+      // Above average — apply penalty
+      const factor = 1 / (1 + k * (ratio - 1));
+      factors.set(id, factor);
+    }
+  }
+
+  return factors;
 }
 
 /**
@@ -356,6 +417,12 @@ export function recall(
       ? computeSpecificityScores(memoryDir, queryTerms, ftsResults ?? [], filtered, idfDamping)
       : new Map<string, number>();
 
+    // Content-length normalization: penalize long atoms that get inflated BM25 scores.
+    const lengthNormK = getLengthNormK(query);
+    const lengthFactors = lengthNormK > 0
+      ? computeLengthFactors(filtered, lengthNormK)
+      : new Map<string, number>();
+
     // Build semantic score map (if query vector provided or embeddings available)
     const semanticScoreMap = new Map<string, number>();
     if (query.queryVector) {
@@ -390,7 +457,7 @@ export function recall(
       for (const atom of filtered) {
         const id = atom.frontmatter.id;
         const ftsRaw = ftsScoreMap.get(id) ?? 0;
-        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0);
+        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0) * (lengthFactors.get(id) ?? 1.0);
         const sem = semanticScoreMap.get(id) ?? 0;
         const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
         const recency = temporalDecay(atom.frontmatter.created_at, halfLife);

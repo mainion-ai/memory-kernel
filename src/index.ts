@@ -139,7 +139,7 @@ export type {
   ResolveConflictOptions,
   ResolveConflictResult,
 } from './retain.js';
-export { recall, recallWithEmbeddings } from './recall.js';
+export { recall, recallWithEmbeddings, computeLengthFactors } from './recall.js';
 export { reflect } from './reflect.js';
 
 // Merge

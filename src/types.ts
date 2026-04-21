@@ -165,6 +165,8 @@ export interface RecallQuery {
   no_reservations?: boolean; // Disable type reservations entirely (useful for task-focused recall)
   // Phase 5: IDF hub damping — penalizes atoms matching only ubiquitous query terms
   idf_damping?: number; // 0 = disabled, 1 = full damping (default from RECALL_IDF_DAMPING env or 1.0)
+  // Phase 6: Content-length normalization — penalizes long atoms that get inflated BM25 scores
+  length_norm_k?: number; // 0 = disabled, 0.5 = moderate (default), 1.0 = aggressive
 }
 
 // --- Episode types ---
