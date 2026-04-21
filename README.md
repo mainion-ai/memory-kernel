@@ -190,7 +190,7 @@ my-memory/
 | `mk init [dir]` | Initialize memory directory |
 | `mk status -d <dir> [--json]` | Show atom counts, tag stats, index status |
 | `mk remember -d <dir> --type <type> "body" [--json]` | Create an atom |
-| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--half-life N] [--no-graph] [--json]` | Load context; `--task` enables hybrid FTS + semantic re-ranking with temporal decay and type weights |
+| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--decay-half-life N] [--no-graph] [--json]` | Load context; `--task` enables hybrid FTS + semantic re-ranking with temporal decay and type weights |
 | `mk reflect -d <dir> [--json]` | Consolidate: dedup, expire, promote, detect conflicts |
 | `mk checkpoint -d <dir> [--json]` | Generate checkpoint/handoff bundle (stdout) |
 | `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |

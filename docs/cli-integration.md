@@ -127,8 +127,8 @@ When `--task` is provided, atoms are re-ranked by composite score (FTS BM25 + op
 
 Optional flags:
 - `--include-episodes` — include session episodes
-- `--decay-weight N` — weight for temporal decay (0–1, default 0.3)
-- `--half-life N` — recency half-life in days (default 14)
+- `--decay-weight N` — weight for temporal decay (0–1, default 0.2)
+- `--decay-half-life N` — recency half-life in days (default 30)
 - `--no-graph` — disable graph-walk boost
 
 ### mk reflect
