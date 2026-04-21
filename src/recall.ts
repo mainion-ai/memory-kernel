@@ -186,6 +186,137 @@ export function computeCoverageBoosts(
   return boosts;
 }
 
+// --- MMR (Maximal Marginal Relevance) result diversity ---
+
+/** Default MMR lambda: 0.7 = moderate diversity. */
+const DEFAULT_MMR_LAMBDA = 0.7;
+
+function getMMRLambda(query: RecallQueryInternal): number {
+  if (query.mmr_lambda !== undefined) return Math.max(0, Math.min(1, query.mmr_lambda));
+  const v = parseFloat(process.env.RECALL_MMR_LAMBDA || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_MMR_LAMBDA;
+}
+
+/**
+ * Compute Jaccard similarity on word trigrams between two text bodies.
+ * Returns 0.0 (no overlap) to 1.0 (identical trigram sets).
+ */
+export function computeTextSimilarity(bodyA: string, bodyB: string): number {
+  const trigramsA = extractTrigrams(bodyA);
+  const trigramsB = extractTrigrams(bodyB);
+
+  if (trigramsA.size === 0 && trigramsB.size === 0) return 1.0;
+  if (trigramsA.size === 0 || trigramsB.size === 0) return 0.0;
+
+  let intersection = 0;
+  for (const t of trigramsA) {
+    if (trigramsB.has(t)) intersection++;
+  }
+
+  const union = trigramsA.size + trigramsB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Extract word trigrams from text. Lowercase, strip punctuation, split into words,
+ * then generate consecutive 3-word windows.
+ */
+function extractTrigrams(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .split(/\s+/)
+    .filter(w => w.length > 0);
+
+  const trigrams = new Set<string>();
+  for (let i = 0; i <= words.length - 3; i++) {
+    trigrams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+  }
+  return trigrams;
+}
+
+/**
+ * Apply Maximal Marginal Relevance re-ranking (Carbonell & Goldstein, 1998).
+ *
+ * Greedy selection: pick the highest-scoring atom first, then iteratively select
+ * the candidate that maximizes λ * score(d) - (1-λ) * max_sim(d, selected).
+ *
+ * Scores are normalized to [0, 1] before MMR computation. The returned scores
+ * are the MMR scores (for debugging/audit), not the original relevance scores.
+ *
+ * O(n²) complexity but n is small (typically <200 atoms after filtering).
+ */
+export function applyMMR(
+  scored: Array<{ atom: Atom; score: number }>,
+  lambda: number,
+): Array<{ atom: Atom; score: number }> {
+  if (scored.length <= 1 || lambda >= 1.0) return scored;
+
+  // Normalize scores to [0, 1]
+  let maxScore = -Infinity;
+  let minScore = Infinity;
+  for (const s of scored) {
+    if (s.score > maxScore) maxScore = s.score;
+    if (s.score < minScore) minScore = s.score;
+  }
+  const scoreRange = maxScore - minScore || 1;
+
+  const candidates = scored.map(s => ({
+    atom: s.atom,
+    originalScore: s.score,
+    normalizedScore: (s.score - minScore) / scoreRange,
+    body: s.atom.body,
+  }));
+
+  const selected: Array<{ atom: Atom; score: number }> = [];
+  const selectedBodies: string[] = [];
+  const remaining = new Set(candidates.map((_, i) => i));
+
+  // First pick: highest normalized score
+  let bestIdx = 0;
+  let bestNorm = -Infinity;
+  for (const i of remaining) {
+    if (candidates[i].normalizedScore > bestNorm) {
+      bestNorm = candidates[i].normalizedScore;
+      bestIdx = i;
+    }
+  }
+  selected.push({ atom: candidates[bestIdx].atom, score: candidates[bestIdx].normalizedScore });
+  selectedBodies.push(candidates[bestIdx].body);
+  remaining.delete(bestIdx);
+
+  // Greedy MMR loop
+  while (remaining.size > 0) {
+    let bestMMR = -Infinity;
+    let bestCandIdx = -1;
+
+    for (const i of remaining) {
+      const relevance = candidates[i].normalizedScore;
+
+      // max similarity to any already-selected atom
+      let maxSim = 0;
+      for (const selBody of selectedBodies) {
+        const sim = computeTextSimilarity(candidates[i].body, selBody);
+        if (sim > maxSim) maxSim = sim;
+      }
+
+      const mmrScore = lambda * relevance - (1 - lambda) * maxSim;
+      if (mmrScore > bestMMR) {
+        bestMMR = mmrScore;
+        bestCandIdx = i;
+      }
+    }
+
+    if (bestCandIdx === -1) break;
+
+    selected.push({ atom: candidates[bestCandIdx].atom, score: bestMMR });
+    selectedBodies.push(candidates[bestCandIdx].body);
+    remaining.delete(bestCandIdx);
+  }
+
+  return selected;
+}
+
 /** Max allowed length_norm_k — values above 2 produce extreme penalties. */
 const MAX_LENGTH_NORM_K = 2;
 
@@ -563,6 +694,24 @@ export function recall(
         if (statusOrder !== 0) return statusOrder;
         return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
       });
+    }
+
+    // Phase 8: MMR result diversity — re-rank to prevent redundant atoms filling token budget.
+    // Applied after scoring + sorting but BEFORE the token budget.
+    const mmrLambda = getMMRLambda(query);
+    if (mmrLambda < 1.0 && filtered.length > 1 && finalScoreMap.size > 0) {
+      const scoredForMMR = filtered.map(a => ({
+        atom: a,
+        score: finalScoreMap.get(a.frontmatter.id) ?? 0,
+      }));
+      const reranked = applyMMR(scoredForMMR, mmrLambda);
+      filtered = reranked.map(r => r.atom);
+      // Update finalScoreMap with MMR scores for token budget ordering
+      finalScoreMap = new Map<string, number>();
+      for (let i = 0; i < reranked.length; i++) {
+        // Use descending synthetic scores to preserve MMR order in downstream sort
+        finalScoreMap.set(reranked[i].atom.frontmatter.id, reranked.length - i);
+      }
     }
 
     // Apply token budget — always when max_tokens is set, even if FTS had no results.

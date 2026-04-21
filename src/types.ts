@@ -169,6 +169,8 @@ export interface RecallQuery {
   length_norm_k?: number; // 0 = disabled, 0.5 = moderate (default), 1.0 = aggressive
   // Phase 7: Query-term coverage boost — penalizes atoms matching few query terms
   coverage_boost?: number; // Exponent P: 0 = disabled, 0.5 = moderate (default), 2.0 = aggressive
+  // Phase 8: MMR result diversity — re-ranks to prevent redundant atoms filling token budget
+  mmr_lambda?: number; // 0 = pure diversity, 0.7 = moderate (default), 1.0 = disabled (pure relevance)
 }
 
 // --- Episode types ---
