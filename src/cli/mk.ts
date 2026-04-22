@@ -54,6 +54,7 @@ import { registerCitationsCommand } from './citations.js';
 import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { registerLintCommand } from './lint.js';
 import { registerExtractCommand } from './extract.js';
+import { registerConsolidateCommand } from './consolidate.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -1258,5 +1259,6 @@ registerCitationsCommand(program);
 registerEnrichRelationsCommand(program);
 registerLintCommand(program);
 registerExtractCommand(program);
+registerConsolidateCommand(program);
 
 program.parse();

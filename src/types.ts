@@ -331,3 +331,44 @@ export interface ExtractResult {
   possible_duplicates: number;
   atoms: ExtractedAtomResult[];
 }
+
+// --- Consolidate types ---
+
+/** Options for consolidateAtoms. */
+export interface ConsolidateOptions {
+  memoryDir: string;
+  agentId?: string;
+  sessionId?: string;
+  dryRun?: boolean;
+  /** Include all draft atoms, not just auto-extracted ones. */
+  all?: boolean;
+  /** Only process drafts of this atom type. */
+  type?: AtomType;
+  /** Max atoms to process (default: 50). */
+  limit?: number;
+  /** BM25 rank threshold for duplicate detection (default: -2.0). */
+  duplicateThreshold?: number;
+}
+
+export type ConsolidateAtomStatus = 'promoted' | 'skipped' | 'error' | 'would_promote' | 'would_skip';
+
+/** Result for a single atom processed during consolidation. */
+export interface ConsolidateAtomResult {
+  atom_id: string;
+  slug: string;
+  type: string;
+  status: ConsolidateAtomStatus;
+  title: string;
+  reason?: string;
+  possible_duplicate_of?: string;
+}
+
+/** Result returned by consolidateAtoms. */
+export interface ConsolidateResult {
+  processed: number;
+  promoted: number;
+  skipped: number;
+  errors: number;
+  dry_run: boolean;
+  atoms: ConsolidateAtomResult[];
+}
