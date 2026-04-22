@@ -164,6 +164,9 @@ mk status -d ~/mk-memory
 mk render ~/mk-memory /tmp/test-claude.md
 cat /tmp/test-claude.md
 
+# Run semantic health check
+mk lint -d ~/mk-memory
+
 # Test sync
 bash scripts/memory-sync.sh
 
@@ -172,6 +175,8 @@ crontab -l
 ```
 
 If `mk status` shows your atoms and `mk render` produces a valid CLAUDE.md, you're done. Next time NanoClaw starts a session, the agent will load its memory.
+
+Run `mk lint` periodically (weekly is enough) to catch contradictions, stale facts, orphaned atoms, and near-duplicates before they accumulate.
 
 ## How the Agent Uses It
 

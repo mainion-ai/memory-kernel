@@ -360,6 +360,45 @@ const context2 = recall('./memory', {
 const context3 = recall('./memory', { task: 'auth', graph_boost: false });
 ```
 
+### IDF hub damping, coverage boost, and MMR diversity (v1.15.0+)
+
+Large "hub" atoms (entity summaries, session logs, meta-atoms) contain ubiquitous terms and can crowd out smaller, genuinely relevant atoms. Three scoring adjustments address this:
+
+**IDF hub damping** penalises atoms whose FTS match came primarily from common terms.
+
+**Coverage boost** penalises atoms that match only a subset of query terms (OR semantics cast a wide net; this narrows it back).
+
+**MMR (Maximal Marginal Relevance)** re-ranks the final result set to remove near-duplicate atoms.
+
+All three are on by default. Adjust per-call or globally via env vars:
+
+```typescript
+const context = recall('./memory', {
+  task: 'postgresql migration plan',
+
+  // IDF hub damping — 0 = off, 1 = full damping (default: 1.0)
+  idf_damping: 1.0,
+
+  // Coverage boost exponent — 0 = off, higher = stricter (default: 0.5)
+  // score *= coverage^exponent, where coverage = matched_terms / total_terms
+  coverage_boost: 0.5,
+
+  // MMR lambda — 0 = maximum diversity, 1 = pure relevance (default: 0.7)
+  mmr_lambda: 0.7,
+});
+```
+
+Environment variable overrides:
+
+```bash
+RECALL_IDF_DAMPING=0.5    # halve the IDF penalty
+RECALL_COVERAGE_BOOST=1.0 # strict: atoms must match most terms
+RECALL_MMR_LAMBDA=0.5     # more diversity in results
+RECALL_DECAY_WEIGHT=0.2   # validated production value (benchmarked)
+```
+
+> **Validated defaults**: A 2×2 factorial benchmark (±scoring stack × ±temporal decay) found `decay_weight=0.2` is load-bearing when OR semantics are active — without it, multi-session and temporal recall degrades severely. The defaults ship with `decay_weight=0.2`.
+
 ### Relation edges
 
 ```typescript
@@ -401,6 +440,61 @@ mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-PERF-BENCH-
 # Show all edges for an atom
 mk relations DECI-2026-04-01-USE-POSTGRES-abc1 -d ./memory
 ```
+
+---
+
+## Semantic Health Check — mk lint (v1.15.0+)
+
+`mk lint` checks the semantic health of a memory store: contradictions between active atoms, stale facts and decisions with no recent events, orphaned atoms with no relations, near-duplicate content, low-confidence beliefs that haven't been reviewed, and atoms approaching TTL expiry.
+
+### CLI
+
+```bash
+# Pretty-printed report
+mk lint -d ./memory
+
+# Machine-readable JSON
+mk lint -d ./memory --json
+
+# Adjust stale threshold (default 90 days)
+mk lint -d ./memory --stale-days 60
+
+# Exit code: 0 = clean, 1 = warnings found
+```
+
+### Programmatic API
+
+```typescript
+import { lintMemoryStore } from 'memory-kernel';
+import type { LintResult, LintFinding } from 'memory-kernel';
+
+const result: LintResult = lintMemoryStore('./memory', {
+  staleDays: 60,  // default: 90
+});
+
+// result.findings — array of LintFinding
+// result.summary  — { total, warnings, info }
+
+for (const finding of result.findings) {
+  console.log(finding.category);  // 'contradiction' | 'stale' | 'orphan' | 'duplicate' | 'confidence_drift' | 'ttl_warning'
+  console.log(finding.severity);  // 'warning' | 'info'
+  console.log(finding.atom_ids);  // affected atom IDs
+  console.log(finding.message);   // human-readable description
+}
+```
+
+**Finding categories:**
+
+| Category | Severity | Triggered when |
+|---|---|---|
+| `contradiction` | warning | Two active atoms have a `contradicts` relation |
+| `stale` | warning | A `fact` or `decision` has had no events in N days |
+| `orphan` | info | An active atom has zero relations (excludes `entity_summary`, `procedure`) |
+| `duplicate` | warning | Two active atoms have high FTS similarity AND >50% tag overlap |
+| `confidence_drift` | info | A `belief` with confidence < 0.5 hasn't been updated in 30+ days |
+| `ttl_warning` | warning | An active/draft atom expires within 7 days |
+
+Run weekly as part of the memory maintenance cycle. Add to cron alongside `mk reflect` and `mk render`.
 
 ---
 
