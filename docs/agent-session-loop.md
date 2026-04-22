@@ -144,8 +144,9 @@ Refreshes CLAUDE.md so the next session starts with current memory. This is the 
 Run in this order:
 
 ```bash
-# 1. Validate store integrity
+# 1. Validate store integrity and semantic health
 mk doctor -d {dir} --json
+mk lint -d {dir} --json
 
 # 2. Check for constitutive drift and entanglement
 mk closure -d {dir} --trajectory --json
@@ -169,6 +170,7 @@ mk render {memory-dir} {path/to/CLAUDE.md}
 | Command | Why |
 |---|---|
 | `mk doctor` | Catches schema errors, broken links, and conflicts before they compound |
+| `mk lint` | Semantic health: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
 | `mk closure --trajectory` | Measures entanglement% and belief%; entanglement > 5% = constitutive drift risk; belief% > 80% = diversify atom types. **What drift looks like from the outside:** the agent starts reasoning in circles, over-references its own prior conclusions, and resists updating on new evidence. The closure metric catches this structurally before it becomes behaviorally obvious. |
 | `mk citations` | Indexes concept-name references across atoms; feeds wander's activation scoring. Run this **before** `mk relink` — citations builds the concept index (used by wander), relink creates explicit graph edges (used by recall). They are separate commands because you may want to update the wander scoring without modifying the relation graph, or vice versa. |
 | `mk relink --apply` | Finds atom ID references in body text and creates explicit relation edges; builds the graph that `mk recall --graph` traverses |
@@ -225,6 +227,7 @@ mk reindex -d {dir}
 | Situation | Command |
 |---|---|
 | Something seems wrong — atoms missing, recall feels off | `mk doctor -d {dir}` |
+| Check for semantic issues: contradictions, stale atoms, orphans, duplicates | `mk lint -d {dir}` |
 | Quick health check — counts, index status | `mk status -d {dir}` |
 | Agent feels like it's reasoning in circles or over-referencing itself | `mk closure -d {dir} --trajectory` |
 | Recall returns irrelevant atoms | `mk reindex -d {dir}` (rebuild index) |

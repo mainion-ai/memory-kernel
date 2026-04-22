@@ -9,6 +9,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-04-22
+
+### Added — `mk lint` semantic health checker
+
+- **New command `mk lint`** (`src/cli/lint.ts`, `src/lint.ts`) — checks the memory store for six categories of semantic problems and reports findings grouped by severity:
+  - `contradiction` — atoms with mutually inconsistent claims
+  - `stale` — facts and decisions not updated within `--stale-days` (default: 90 days)
+  - `orphan` — atoms with no relation edges and no tag overlap with other atoms
+  - `duplicate` — near-duplicate atom pairs (high body-text similarity)
+  - `confidence_drift` — beliefs whose confidence has not changed despite multiple event updates
+  - `ttl_warning` — atoms approaching TTL expiry
+
+- **Flags:** `-d/--dir <dir>` (memory directory), `--json` (structured output), `--stale-days <n>` (staleness threshold, default 90), `--fix` (placeholder — warns not yet implemented, runs lint in read-only mode)
+- **Exit codes:** exits `1` when the memory directory is not found or `--stale-days` is invalid; exits `0` on all lint outcomes including findings (findings are informational, not fatal)
+- **JSON output:** `{ findings: LintFinding[], summary: { total, warnings, info } }`
+
+### Fixed — Recall pipeline quality (PRs #18, #19, #20)
+
+- **Content-length normalization** (`src/recall.ts`, `src/index-db.ts`) — Long atoms (entity summaries, session episodes) previously received inflated BM25 scores purely due to document length. A post-FTS length factor `1 / (1 + K * (wordCount/avgWordCount - 1))` now dampens scores for atoms above average length. `K=0.5` by default. Configurable via `RECALL_LENGTH_NORM_K` env var or `RecallQuery.length_norm_k`. Short atoms are capped at `1.0` (no boost, only penalty for long atoms).
+
+- **FTS OR semantics + query-term coverage boost** (`src/index-db.ts`, `src/recall.ts`) — `searchFts()` previously used implicit AND, requiring all query terms to match. Switched to explicit OR so partial-match atoms enter the result set. A coverage boost multiplier `(matched/total)^P` (default `P=0.5`) then penalizes atoms that match only a fraction of terms, ensuring all-term matches rank higher despite OR expansion. Configurable via `RECALL_COVERAGE_BOOST` env var or `RecallQuery.coverage_boost` (clamped `[0, 2]`).
+
+- **MMR result diversity** (`src/recall.ts`) — After switching to OR semantics, the result set can contain many near-duplicate atoms about the same topic that fill the token budget redundantly. Maximal Marginal Relevance (Carbonell & Goldstein, 1998) now re-ranks after scoring but before token-budget application, balancing relevance with textual diversity using word-trigram Jaccard similarity. Applied to both task and no-task (constitution/render) paths. `RECALL_MMR_LAMBDA` env var (default `0.7`) and per-call `RecallQuery.mmr_lambda` override. `lambda=1.0` disables MMR entirely (zero cost). Trigrams are precomputed once per atom to avoid O(n²) extraction in the selection loop.
+
+### Tests
+
+- Full suite: 921/921 passing.
+
 ## [1.14.0] — 2026-04-21
 
 ### Fixed — IDF hub-damping specificity scoring

@@ -54,8 +54,11 @@ mk render ~/mk-memory ~/path/to/nanoclaw/groups/{name}/CLAUDE.md
 # Find unexpected connections
 mk wander -d ~/mk-memory --tags architecture,performance --json
 
-# Full health check
+# Full health check (schema, links, conflicts)
 mk doctor -d ~/mk-memory
+
+# Semantic health check (contradictions, stale, orphans, duplicates, confidence drift, TTL)
+mk lint -d ~/mk-memory
 
 # Rebuild index if queries are slow (or after upgrading — rebuilds schema)
 mk reindex -d ~/mk-memory
@@ -219,7 +222,7 @@ node -e "console.log(require.resolve('memory-kernel/dist/cli/mk.js'))"
 | Frequency | Commands |
 |---|---|
 | Nightly 02:00 | `mk render {dir} {CLAUDE.md}` |
-| Weekly Sun 03:00 | `mk doctor` → `mk closure --trajectory` → `mk citations` → `mk relink --apply` → `mk reflect` → `mk gc` → `mk render` |
+| Weekly Sun 03:00 | `mk doctor` → `mk lint` → `mk closure --trajectory` → `mk citations` → `mk relink --apply` → `mk reflect` → `mk gc` → `mk render` |
 | Weekly Sun 04:00 | `mk enrich-relations --apply` (Ollama only) |
 | Monthly 1st 04:00 | `mk compact` |
 

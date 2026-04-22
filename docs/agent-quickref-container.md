@@ -43,6 +43,9 @@ npx mk wander -d /workspace/extra/memory --tags api,performance --json
 # Validate your memory setup
 npx mk doctor -d /workspace/extra/memory
 
+# Semantic health check (contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL)
+npx mk lint -d /workspace/extra/memory
+
 # Create a typed relation edge between two atoms (v1.4.0+)
 npx mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-BENCH-xyz9 \
   -d /workspace/extra/memory
@@ -109,6 +112,7 @@ npx mk reindex -d /workspace/extra/memory --embed    # optional: add semantic se
 | Start of session (intra-day atoms not yet in CLAUDE.md) | `npx mk recall -d ... --task "..." --include-episodes --decay-weight 0.3 --decay-half-life 60` |
 | Looking for unexpected connections | `npx mk wander -d ... --tags tag1,tag2` |
 | Every 5 sessions | `npx mk reflect -d ... && npx mk gc -d ...` |
+| Weekly — check semantic health | `npx mk lint -d /workspace/extra/memory` |
 
 ## Session Loop
 

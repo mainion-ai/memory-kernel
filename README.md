@@ -202,6 +202,7 @@ my-memory/
 | `mk merge -d <dir> --from <path> [--dry-run]` | Merge remote event log |
 | `mk gc -d <dir> [--json]` | Archive expired atoms |
 | `mk doctor -d <dir> [--json]` | Validate schema, links, conflicts |
+| `mk lint -d <dir> [--json] [--stale-days N]` | Semantic health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
 | `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
 | `mk replay --from <file>` | Reconstruct state from events |
 | `mk bootstrap-events -d <dir>` | Migrate to V2 event format |
