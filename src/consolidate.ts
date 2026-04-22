@@ -13,7 +13,8 @@ import { updateAtom } from './retain.js';
 import { appendEvent } from './event-log.js';
 import { serializeAtom } from './format.js';
 import { searchFts, indexExists } from './index-db.js';
-import type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult } from './types.js';
+import type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, Relation } from './types.js';
+import { RELATION_TYPES } from './types.js';
 
 export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult };
 export type { ConsolidateAtomStatus } from './types.js';
@@ -22,6 +23,58 @@ export type { ConsolidateAtomStatus } from './types.js';
 // BM25 ranks are negative; more negative = better match.
 // A rank < -2.0 indicates a strong match (same as extract.ts DUPLICATE_RANK_THRESHOLD).
 const DEFAULT_DUPLICATE_THRESHOLD = -2.0;
+
+/**
+ * Canonical mappings for stale relation types from older mk versions.
+ * Used during promotion to silently fix relation types that no longer pass schema validation.
+ */
+const STALE_RELATION_TYPE_MAP: Record<string, string> = {
+  seeded: 'related',
+  complements: 'related',
+  synthesizes: 'related',
+  qualifies: 'related',
+  evidenced_by: 'supports',
+  grounds: 'supports',
+  refines: 'extends',
+};
+
+/**
+ * Canonicalize any stale/invalid relation types on an atom's relations array.
+ * Returns the cleaned relations array, or undefined if all were removed/unchanged.
+ * Relations with empty targets are dropped; unknown stale types are mapped to 'related'.
+ */
+function canonicalizeRelations(relations: Relation[] | undefined): {
+  relations: Relation[] | undefined;
+  changed: boolean;
+} {
+  if (!relations || relations.length === 0) return { relations, changed: false };
+
+  const validTypes = new Set<string>(RELATION_TYPES);
+  let changed = false;
+  const cleaned: Relation[] = [];
+
+  for (const rel of relations) {
+    // Drop relations with empty or missing target
+    if (!rel.target || rel.target.trim() === '') {
+      changed = true;
+      continue;
+    }
+
+    const currentType = rel.type as string;
+    if (validTypes.has(currentType)) {
+      cleaned.push(rel);
+    } else {
+      changed = true;
+      const canonical = STALE_RELATION_TYPE_MAP[currentType] ?? 'related';
+      cleaned.push({ ...rel, type: canonical as Relation['type'] });
+    }
+  }
+
+  return {
+    relations: cleaned.length > 0 ? cleaned : undefined,
+    changed,
+  };
+}
 
 /**
  * Extract the first non-empty line of the body as a title, stripping leading markdown headers.
@@ -171,6 +224,10 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
         ? { ...atom.frontmatter.scope, tags: newTags.length > 0 ? newTags : undefined }
         : newTags.length > 0 ? { tags: newTags } : undefined;
 
+      // Canonicalize stale relation types from older mk versions before calling
+      // updateAtom — schema validation inside updateAtom would otherwise throw.
+      const { relations: cleanedRelations } = canonicalizeRelations(atom.frontmatter.relations);
+
       const updatedAtom = updateAtom({
         memoryDir,
         agent_id: agentId,
@@ -179,6 +236,9 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
         updates: {
           status: 'active',
           scope: newScope,
+          ...(cleanedRelations !== undefined || atom.frontmatter.relations !== undefined
+            ? { relations: cleanedRelations }
+            : {}),
         },
       });
 
