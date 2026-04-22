@@ -10,6 +10,8 @@
 import path from 'path';
 import { listAtoms } from './store.js';
 import { updateAtom } from './retain.js';
+import { appendEvent } from './event-log.js';
+import { serializeAtom } from './format.js';
 import { searchFts, indexExists } from './index-db.js';
 import type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult } from './types.js';
 
@@ -97,6 +99,12 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
     const slug = extractSlug(atom.filePath, id);
     const title = extractTitle(atom.body, id);
 
+    // Skip SECRET and PERSONAL atoms — classified atoms must not be auto-processed
+    const classification = atom.frontmatter.classification;
+    if (classification === 'SECRET' || classification === 'PERSONAL') {
+      continue;
+    }
+
     // Near-duplicate check using FTS (only when index is available)
     let possibleDuplicateOf: string | null = null;
     if (hasIndex && atom.body.trim()) {
@@ -158,12 +166,12 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
       const currentTags = atom.frontmatter.scope?.tags ?? [];
       const newTags = currentTags.filter((t) => t !== 'auto-extracted');
 
-      // Build scope update: preserve existing scope, update tags
+      // Build scope update: preserve existing scope, update tags (omit empty array)
       const newScope = atom.frontmatter.scope
-        ? { ...atom.frontmatter.scope, tags: newTags }
+        ? { ...atom.frontmatter.scope, tags: newTags.length > 0 ? newTags : undefined }
         : newTags.length > 0 ? { tags: newTags } : undefined;
 
-      updateAtom({
+      const updatedAtom = updateAtom({
         memoryDir,
         agent_id: agentId,
         session_id: sessionId,
@@ -172,6 +180,17 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
           status: 'active',
           scope: newScope,
         },
+      });
+
+      // Emit atom_promoted for semantic audit trail (updateAtom emits atom_updated
+      // which records the field-level change; atom_promoted records the lifecycle event)
+      appendEvent(memoryDir, 'atom_promoted', {
+        agent_id: agentId,
+        session_id: sessionId,
+        atom_refs: [id],
+        schema_version: 2,
+        atom_snapshot: serializeAtom(updatedAtom),
+        meta: { from_status: 'draft', to_status: 'active' },
       });
 
       promoted++;

@@ -201,24 +201,29 @@ describe('consolidateAtoms', () => {
   });
 
   it('catches and records errors gracefully', async () => {
-    // Create a draft atom then remove its file to simulate a missing file error
-    const atom = createDraftAtom({ slug: 'broken-fact' });
+    // Create two draft atoms, then make ENTITIES/ non-writable.
+    // listAtoms can still read existing files (r-x permission on the directory),
+    // but writeFileAtomic cannot create temp files inside it, so updateAtom throws
+    // EACCES. The catch block in consolidateAtoms records the error for each atom.
+    createDraftAtom({ slug: 'broken-fact-1' });
+    createDraftAtom({ slug: 'broken-fact-2' });
 
-    // Remove the file so updateAtom will fail
-    if (atom.filePath && fs.existsSync(atom.filePath)) {
-      fs.unlinkSync(atom.filePath);
+    const entitiesDir = path.join(testDir, 'ENTITIES');
+    fs.chmodSync(entitiesDir, 0o555);
+
+    let result;
+    try {
+      result = await consolidateAtoms({ memoryDir: testDir });
+    } finally {
+      // Restore so afterEach cleanup can remove files
+      fs.chmodSync(entitiesDir, 0o755);
     }
 
-    // Re-list atoms manually: since file is gone, listAtoms won't find it
-    // Instead test with a corrupted file
-    // We'll create a fresh atom to confirm the happy path still works
-    createDraftAtom({ slug: 'good-fact' });
-
-    const result = await consolidateAtoms({ memoryDir: testDir });
-
-    // good-fact should be promoted; no crash even if something goes wrong
-    expect(result.errors).toBe(0);
-    expect(result.promoted).toBeGreaterThanOrEqual(0);
+    expect(result!.errors).toBeGreaterThan(0);
+    expect(result!.promoted).toBe(0);
+    const errorAtoms = result!.atoms.filter((a) => a.status === 'error');
+    expect(errorAtoms.length).toBeGreaterThan(0);
+    expect(errorAtoms[0].reason).toBeTruthy();
   });
 
   it('result contains atom_id, slug, type, title, and status for each atom', async () => {
