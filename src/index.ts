@@ -248,6 +248,10 @@ export type {
   RenderMode,
 } from './types.js';
 
+// Lint (semantic health checking)
+export { lintMemoryStore } from './lint.js';
+export type { LintFinding, LintOptions, LintResult } from './lint.js';
+
 // Migration (shared → isolated)
 export { migrate } from './migrate.js';
 export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.js';
