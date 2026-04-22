@@ -255,3 +255,7 @@ export type { LintFinding, LintOptions, LintResult } from './lint.js';
 // Migration (shared → isolated)
 export { migrate } from './migrate.js';
 export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.js';
+
+// Extract (automatic atom extraction from conversation logs)
+export { extractFromLog } from './extract.js';
+export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';

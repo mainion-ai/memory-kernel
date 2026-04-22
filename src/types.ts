@@ -286,3 +286,48 @@ export interface RenderConfig {
   type_weights: Partial<Record<AtomType, number>>;
 }
 
+// --- Extract types ---
+
+/** A candidate atom extracted by the LLM from a conversation log. */
+export interface CandidateAtom {
+  type: string; // AtomType, validated at runtime
+  slug: string;
+  title: string;
+  body: string;
+  tags?: string[];
+  confidence?: number;
+  rationale?: string;
+}
+
+/** Result for a single extracted atom candidate. */
+export interface ExtractedAtomResult {
+  atom_id: string | null; // null if skipped/dry-run with no ID
+  slug: string;
+  type: string;
+  /** 'new' | 'skipped' | 'possible_duplicate' */
+  status: 'new' | 'skipped' | 'possible_duplicate';
+  reason?: string;
+  possible_duplicate_of?: string;
+}
+
+/** Options for extractFromLog. */
+export interface ExtractOptions {
+  logPath: string;
+  memoryDir: string;
+  agentId?: string;
+  sessionId?: string;
+  dryRun?: boolean;
+  json?: boolean;
+  /** Model name: omit for claude -p (default), or Ollama model e.g. "qwen2.5:14b" */
+  model?: string;
+  maxAtoms?: number;
+  skipLines?: number;
+}
+
+/** Result returned by extractFromLog. */
+export interface ExtractResult {
+  extracted: number;
+  skipped: number;
+  possible_duplicates: number;
+  atoms: ExtractedAtomResult[];
+}
