@@ -46,6 +46,12 @@ During session →  mk remember -d $DIR [-a $AGENT] -t fact "body text" --json
 
 Session end    →  mk episode --session-id $SID --summary "text" -d $DIR --json
                   mk render $DIR $OUTPUT_PATH
+
+Post-session  →  mk extract <conversation-log> -d $DIR [--model <model>] --json
+                  (auto-extract atoms from conversation log — creates drafts)
+
+Periodic      →  mk consolidate -d $DIR [--dry-run] --json
+                  (review and promote auto-extracted drafts to active)
 ```
 
 ### Nightly cron (recommended)
@@ -294,6 +300,65 @@ mk render $MEMORY_DIR $OUTPUT_PATH --max-tokens 8000
 
 Renders atoms into a Markdown file (typically CLAUDE.md). Beliefs with `extends` relations are grouped into developmental arcs. No `--json` flag — output IS the rendered file.
 
+### mk extract
+
+```bash
+mk extract ./conversation.log -d $DIR --json
+```
+
+```json
+{
+  "extracted": 5,
+  "skipped": 1,
+  "possible_duplicates": 2,
+  "atoms": [
+    { "atom_id": "FACT-2026-04-22-...", "slug": "api-rate-limit", "type": "fact", "status": "new" },
+    { "atom_id": null, "slug": "old-fact", "type": "fact", "status": "possible_duplicate", "possible_duplicate_of": "FACT-2026-04-01-..." }
+  ]
+}
+```
+
+Reads a conversation log, calls an LLM to extract facts/decisions/beliefs/preferences, reconciles against the existing store, and writes draft atoms. Extracted atoms have `status: draft` and `source: auto-extracted` metadata.
+
+Optional flags:
+- `--model <model>` — LLM to use. Omit for Claude CLI (`claude -p`), or pass an Ollama model name (e.g. `qwen2.5:14b`)
+- `--dry-run` — preview extractions without writing files
+- `--max-atoms <n>` — max atoms to extract (default: 20)
+- `--skip-lines <n>` — skip first N lines of the log (e.g. CLAUDE.md preamble)
+- `--agent-id <id>`, `--session-id <id>` — tag extracted atoms
+
+**Environment:** Set `CLAUDE_PATH` to override the Claude CLI binary path (default: `claude` on PATH).
+
+### mk consolidate
+
+```bash
+mk consolidate -d $DIR --json
+```
+
+```json
+{
+  "processed": 8,
+  "promoted": 5,
+  "skipped": 3,
+  "errors": 0,
+  "dry_run": false,
+  "atoms": [
+    { "atom_id": "FACT-2026-04-22-...", "slug": "api-rate-limit", "type": "fact", "status": "promoted", "title": "API rate limit is 1000/min" },
+    { "atom_id": "FACT-2026-04-22-...", "slug": "old-fact", "type": "fact", "status": "skipped", "title": "...", "possible_duplicate_of": "FACT-2026-04-01-..." }
+  ]
+}
+```
+
+Reviews auto-extracted draft atoms and promotes them to active. Detects possible duplicates via BM25 ranking against the active store.
+
+Optional flags:
+- `--dry-run` — preview without writing
+- `--all` — include ALL draft atoms, not just auto-extracted ones
+- `--type <type>` — filter by atom type (e.g. `belief`, `fact`)
+- `--limit <n>` — max atoms to process (default: 50)
+- `--duplicate-threshold <n>` — BM25 rank threshold for duplicate detection (default: -2.0)
+- `--agent-id <id>`, `--session-id <id>` — for event attribution
+
 ### mk reindex
 
 ```bash
@@ -362,7 +427,7 @@ mk reflect -d $AGENT_A_MEMORY    # post-merge: dedup, detect conflicts
 The same npm package provides both CLI and TypeScript SDK. For zero-overhead integration (no Node.js startup cost):
 
 ```typescript
-import { createAtom, recall, reflect, wander } from 'memory-kernel';
+import { createAtom, recall, reflect, wander, extractFromLog, consolidateAtoms } from 'memory-kernel';
 ```
 
 See [SDK reference](sdk-reference.md) for the full API. CLI and library are functionally equivalent — choose based on whether you prefer process isolation (CLI) or in-process performance (library).

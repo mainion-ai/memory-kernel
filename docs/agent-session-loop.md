@@ -114,6 +114,29 @@ mk episode -d {dir} \
 
 **Why episodes, not FACT atoms:** Episodes capture the arc of a session — context, decisions, open threads — in a format that `--include-episodes` can pull efficiently at session start. FACT atoms are for durable individual facts. Writing session state as FACT atoms pollutes the atom store with ephemeral content and inflates recall noise.
 
+### Extract atoms from conversation log (optional)
+
+If your orchestrator saves conversation logs, run extraction after each session to capture facts and decisions you may have missed:
+
+```bash
+mk extract ./conversation.log -d {dir} --skip-lines 200 --json
+```
+
+`--skip-lines` skips the CLAUDE.md preamble that was injected at session start (otherwise the extractor "discovers" atoms you already have). Extracted atoms are created as drafts with `source: auto-extracted` — they do not enter the active store or CLAUDE.md until consolidated.
+
+**LLM choice:** Omit `--model` for Claude CLI (default, highest quality), or pass `--model qwen2.5:14b` for local Ollama (free, faster, slightly lower quality).
+
+### Consolidate extracted drafts (periodic)
+
+Review and promote auto-extracted drafts. Run after extraction, or batch weekly:
+
+```bash
+mk consolidate -d {dir} --dry-run --json    # preview first
+mk consolidate -d {dir} --json              # promote to active
+```
+
+Consolidation detects duplicates against the active store via BM25 ranking and skips them. Use `--all` to include manually-created drafts too.
+
 ---
 
 ## Every 5 Sessions
@@ -157,11 +180,14 @@ mk citations -d {dir}
 # 4. Surface implicit atom-to-atom connections from body text
 mk relink -d {dir} --apply
 
-# 5. Consolidate and expire
+# 5. Promote auto-extracted drafts
+mk consolidate -d {dir} --json
+
+# 6. Consolidate and expire
 mk reflect -d {dir}
 mk gc -d {dir}
 
-# 6. Re-render with fresh index
+# 7. Re-render with fresh index
 mk render {memory-dir} {path/to/CLAUDE.md}
 ```
 
@@ -174,6 +200,7 @@ mk render {memory-dir} {path/to/CLAUDE.md}
 | `mk closure --trajectory` | Measures entanglement% and belief%; entanglement > 5% = constitutive drift risk; belief% > 80% = diversify atom types. **What drift looks like from the outside:** the agent starts reasoning in circles, over-references its own prior conclusions, and resists updating on new evidence. The closure metric catches this structurally before it becomes behaviorally obvious. |
 | `mk citations` | Indexes concept-name references across atoms; feeds wander's activation scoring. Run this **before** `mk relink` — citations builds the concept index (used by wander), relink creates explicit graph edges (used by recall). They are separate commands because you may want to update the wander scoring without modifying the relation graph, or vice versa. |
 | `mk relink --apply` | Finds atom ID references in body text and creates explicit relation edges; builds the graph that `mk recall --graph` traverses |
+| `mk consolidate` | Promotes auto-extracted draft atoms to active after duplicate detection; completes the extract→consolidate lifecycle |
 | `mk reflect` | Dedup, expire, promote — weekly catch for anything the every-5-session run missed |
 | `mk gc` | Archive the atoms reflect marked expired |
 | `mk render` | Publish the clean, consolidated state to CLAUDE.md |

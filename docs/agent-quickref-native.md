@@ -60,6 +60,13 @@ mk doctor -d ~/mk-memory
 # Semantic health check (contradictions, stale, orphans, duplicates, confidence drift, TTL)
 mk lint -d ~/mk-memory
 
+# Extract atoms from a conversation log (LLM-powered — creates drafts)
+mk extract ./conversation.log -d ~/mk-memory --skip-lines 200 --json
+
+# Review and promote extracted drafts to active
+mk consolidate -d ~/mk-memory --dry-run    # preview first
+mk consolidate -d ~/mk-memory              # apply
+
 # Rebuild index if queries are slow (or after upgrading — rebuilds schema)
 mk reindex -d ~/mk-memory
 
@@ -153,12 +160,15 @@ Session starts
   │   └── mk wander --tags ... (when exploring connections)
   │
   └── Session ends:
-      └── mk episode -d {dir} --session-id "YYYY-MM-DD-N" \
-                    --summary "[TOPIC]...[DECISIONS]...[NEXT]..."
-          (not mk render — render runs nightly via cron)
+      ├── mk episode -d {dir} --session-id "YYYY-MM-DD-N" \
+      │                --summary "[TOPIC]...[DECISIONS]...[NEXT]..."
+      │   (not mk render — render runs nightly via cron)
+      └── mk extract <conversation-log> -d {dir} --skip-lines 200 --json
+          (optional — auto-extract atoms from conversation log)
 ```
 
 Every 5 sessions: `mk reflect -d {dir} && mk gc -d {dir}`
+Periodically: `mk consolidate -d {dir}` (promote extracted drafts)
 
 ### When to remember vs. when not to
 
@@ -222,7 +232,8 @@ node -e "console.log(require.resolve('memory-kernel/dist/cli/mk.js'))"
 | Frequency | Commands |
 |---|---|
 | Nightly 02:00 | `mk render {dir} {CLAUDE.md}` |
-| Weekly Sun 03:00 | `mk doctor` → `mk lint` → `mk closure --trajectory` → `mk citations` → `mk relink --apply` → `mk reflect` → `mk gc` → `mk render` |
+| Post-session | `mk extract <log> -d {dir} --json` (optional — auto-extract atoms from conversation) |
+| Weekly Sun 03:00 | `mk doctor` → `mk lint` → `mk closure --trajectory` → `mk citations` → `mk relink --apply` → `mk consolidate` → `mk reflect` → `mk gc` → `mk render` |
 | Weekly Sun 04:00 | `mk enrich-relations --apply` (Ollama only) |
 | Monthly 1st 04:00 | `mk compact` |
 

@@ -11,6 +11,21 @@ All notable changes to this project will be documented in this file.
 
 ## [1.15.0] — 2026-04-22
 
+### Added — `mk extract` automatic atom extraction
+
+- **New command `mk extract`** (`src/cli/extract.ts`, `src/extract.ts`) — reads a conversation log file, calls an LLM to identify facts, decisions, preferences, and beliefs worth remembering, reconciles against the existing store (BM25 duplicate detection), and writes draft atoms.
+- **LLM providers:** Claude Code CLI (`claude -p`, default) or Ollama HTTP API (pass `--model qwen2.5:14b` or any Ollama model name).
+- **Flags:** `<log-path>` (positional), `-d/--dir <dir>`, `--model <model>`, `--dry-run`, `--json`, `--max-atoms <n>` (default 20), `--skip-lines <n>` (skip preamble), `--agent-id <id>`, `--session-id <id>`.
+- **SDK:** `extractFromLog(options: ExtractOptions): Promise<ExtractResult>` — same functionality, programmatic access.
+- **JSON output:** `{ extracted, skipped, possible_duplicates, atoms: ExtractedAtomResult[] }`
+
+### Added — `mk consolidate` lifecycle promotion
+
+- **New command `mk consolidate`** (`src/cli/consolidate.ts`, `src/consolidate.ts`) — reviews auto-extracted draft atoms and promotes them to active status. Detects possible duplicates against the active store via BM25 ranking.
+- **Flags:** `-d/--dir <dir>`, `--dry-run`, `--all` (include all drafts, not just auto-extracted), `--type <type>` (filter by atom type), `--limit <n>` (default 50), `--json`, `--agent-id <id>`, `--session-id <id>`, `--duplicate-threshold <n>` (default -2.0).
+- **SDK:** `consolidateAtoms(options: ConsolidateOptions): Promise<ConsolidateResult>` — same functionality, programmatic access.
+- **JSON output:** `{ processed, promoted, skipped, errors, dry_run, atoms: ConsolidateAtomResult[] }`
+
 ### Added — `mk lint` semantic health checker
 
 - **New command `mk lint`** (`src/cli/lint.ts`, `src/lint.ts`) — checks the memory store for six categories of semantic problems and reports findings grouped by severity:
@@ -35,7 +50,7 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 
-- Full suite: 921/921 passing.
+- Full suite: 1070/1070 passing.
 
 ## [1.14.0] — 2026-04-21
 

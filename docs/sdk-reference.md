@@ -72,6 +72,10 @@ import {
   extractCitations,
   indexCitations,
   deriveConceptNames,
+  // Extract — automatic atom extraction from conversation logs (v1.15.0+)
+  extractFromLog,
+  // Consolidate — promote auto-extracted drafts (v1.15.0+)
+  consolidateAtoms,
 } from 'memory-kernel';
 ```
 
@@ -395,6 +399,9 @@ RECALL_IDF_DAMPING=0.5    # halve the IDF penalty
 RECALL_COVERAGE_BOOST=1.0 # strict: atoms must match most terms
 RECALL_MMR_LAMBDA=0.5     # more diversity in results
 RECALL_DECAY_WEIGHT=0.2   # validated production value (benchmarked)
+RECALL_CONFIDENCE_FLOOR=0.7  # minimum confidence to include (default: 0.7)
+RECALL_NEIGHBOR_BOOST=0.15   # graph-walk neighbor boost factor (default: 0.15)
+RECALL_GRAPH_BOOST=true      # enable/disable graph-walk boost (default: true)
 ```
 
 > **Validated defaults**: A 2×2 factorial benchmark (±scoring stack × ±temporal decay) found `decay_weight=0.2` is load-bearing when OR semantics are active — without it, multi-session and temporal recall degrades severely. The defaults ship with `decay_weight=0.2`.
@@ -819,6 +826,60 @@ import { renderAgentClaudeMd } from 'memory-kernel';
 // Uses recallIsolated() internally when include_shared is true
 const markdown = renderAgentClaudeMd('./memory', 'alice');
 ```
+
+### Extract atoms from conversation logs
+
+```typescript
+import { extractFromLog } from 'memory-kernel';
+import type { ExtractOptions, ExtractResult, ExtractedAtomResult } from 'memory-kernel';
+
+const result: ExtractResult = await extractFromLog({
+  logPath: './conversation.log',
+  memoryDir: './memory',
+  agentId: 'my-agent',        // optional — tags extracted atoms
+  sessionId: 'session-1',      // optional — tags extracted atoms
+  dryRun: false,                // true = preview only, no files written
+  model: undefined,             // omit for claude -p (default), or 'qwen2.5:14b' for Ollama
+  maxAtoms: 20,                 // max atoms to extract (default: 20)
+  skipLines: 0,                 // skip preamble lines (e.g. CLAUDE.md prefix)
+});
+// result.extracted — count of new atoms written
+// result.skipped — count of invalid/collision atoms
+// result.possible_duplicates — count flagged as possible duplicates
+// result.atoms — per-atom details: { atom_id, slug, type, status, reason?, possible_duplicate_of? }
+```
+
+**LLM providers:**
+- Default: `claude -p` subprocess (Claude Code CLI). Requires `claude` or `CLAUDE_PATH` on PATH.
+- Ollama: pass `model: 'qwen2.5:14b'` (any name containing `:` or known Ollama model). Connects to `http://localhost:11434`.
+
+Extracted atoms are created with `status: 'draft'` and `source: 'auto-extracted'` in metadata. Use `consolidateAtoms()` to review and promote them.
+
+### Consolidate auto-extracted drafts
+
+```typescript
+import { consolidateAtoms } from 'memory-kernel';
+import type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult } from 'memory-kernel';
+
+const result: ConsolidateResult = await consolidateAtoms({
+  memoryDir: './memory',
+  agentId: 'my-agent',          // optional — for event attribution
+  sessionId: 'consolidation-1', // optional — for event attribution
+  dryRun: true,                 // true = preview, no writes
+  all: false,                   // true = process ALL drafts, not just auto-extracted
+  type: 'belief',               // optional — filter by atom type
+  limit: 50,                    // max atoms to process (default: 50)
+  duplicateThreshold: -2.0,     // BM25 rank threshold for duplicate detection
+});
+// result.processed — total atoms reviewed
+// result.promoted — count promoted from draft to active
+// result.skipped — count skipped (duplicates, errors)
+// result.errors — count of processing errors
+// result.dry_run — whether this was a dry run
+// result.atoms — per-atom details: { atom_id, slug, type, status, title, reason?, possible_duplicate_of? }
+```
+
+**Statuses:** `promoted` (draft → active), `skipped` (possible duplicate or error), `would_promote`/`would_skip` (dry-run equivalents).
 
 ### Migration
 

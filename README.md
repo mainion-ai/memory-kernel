@@ -211,6 +211,9 @@ my-memory/
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
+| `mk enrich-relations -d <dir> [--dry-run\|--apply] [--model <model>]` | Reclassify `related` edges into typed relations using LLM (Ollama) |
+| `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using LLM (Claude CLI or Ollama) |
+| `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active status |
 | `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational closure metrics (self-referential density, entanglement, phase detection) |
 | `mk share <atom-id> --from <agent> -d <dir> [--json]` | Copy atom snapshot to shared namespace (isolated mode) |
 | `mk unshare <atom-id> -d <dir> [--json]` | Remove atom from shared namespace (isolated mode) |
@@ -222,7 +225,7 @@ my-memory/
 ## SDK
 
 ```typescript
-import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander, indexCitations, closure } from 'memory-kernel';
+import { initMemoryDir, createAtom, recall, recallWithEmbeddings, reflect, wander, indexCitations, closure, extractFromLog, consolidateAtoms } from 'memory-kernel';
 
 // Initialize
 initMemoryDir('./memory');
@@ -252,6 +255,24 @@ reflect({ memoryDir: './memory', agent_id: 'my-agent', session_id: 'session-2' }
 const result = wander({ memoryDir: './memory', seedTags: ['api', 'design'], steps: 5 });
 // result.collisions — atom pairs from different domains with structural overlap
 // result.activated — all activated atoms with scores
+
+// Extract atoms from a conversation log (LLM-powered)
+const extracted = await extractFromLog({
+  logPath: './conversation.log',
+  memoryDir: './memory',
+  agentId: 'my-agent',
+  sessionId: 'session-1',
+  maxAtoms: 20,
+});
+// extracted.atoms — array of { atom_id, slug, type, status }
+
+// Consolidate: review and promote auto-extracted drafts
+const consolidated = await consolidateAtoms({
+  memoryDir: './memory',
+  dryRun: true,  // preview without writing
+  limit: 50,
+});
+// consolidated.promoted — count of atoms promoted from draft to active
 
 // Render to CLAUDE.md
 import { renderClaudeMd } from 'memory-kernel';
@@ -402,6 +423,46 @@ Next session: NanoClaw loads CLAUDE.md as context
 Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, cron, restart).
 
 **[Full integration guide →](docs/nanoclaw-integration.md)**
+
+---
+
+## Environment Variables
+
+All environment variables are optional. memory-kernel works fully without any of them.
+
+### Embeddings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EMBEDDING_PROVIDER` | Embedding provider: `voyage` (512-dim) or `openai` (1536-dim) | _(none — FTS only)_ |
+| `EMBEDDING_API_KEY` | API key for the embedding provider | _(none)_ |
+| `EMBEDDING_MODEL` | Override the default model for the provider | `voyage-3-lite` / `text-embedding-3-small` |
+| `EMBEDDING_DIMENSIONS` | Override embedding dimensions (OpenAI only) | Provider default |
+
+### Recall Scoring
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SEMANTIC_WEIGHT` | Weight for semantic similarity in hybrid ranking (0–1) | `0.6` |
+| `MIN_SIMILARITY` | Minimum cosine similarity to include in results (0–1) | `0.3` |
+| `RECALL_CONFIDENCE_FLOOR` | Minimum confidence score for atoms to appear in recall (0–1) | `0.7` |
+| `RECALL_NEIGHBOR_BOOST` | Graph-walk neighbor boost factor (0–1) | `0.15` |
+| `RECALL_GRAPH_BOOST` | Enable/disable graph-walk boost (`true`/`false`) | `true` |
+| `RECALL_IDF_DAMPING` | IDF hub-damping strength (0 = disabled, 1 = full) | `1.0` |
+
+### Extraction
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CLAUDE_PATH` | Path to the Claude CLI binary for `mk extract` | `claude` |
+
+### Isolation
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MK_ISOLATION` | Enable per-agent isolation mode (`per-agent`) | _(shared mode)_ |
+| `MCP_AGENT_ID` | Default agent ID for MCP server operations | `mcp-server` |
+| `MEMORY_ENCRYPTION_KEY` | Encryption key for SECRET-classified atoms | _(none — SECRET atoms skipped)_ |
 
 ---
 

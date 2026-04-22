@@ -210,6 +210,21 @@ mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 
 The nightly sync picks this up, reflects on it, renders it into CLAUDE.md, and the next session has it as context.
 
+### Post-Session Extraction (v1.15.0+)
+
+If NanoClaw saves conversation logs, you can auto-extract atoms after each session:
+
+```bash
+# Extract atoms from the conversation log (creates drafts)
+mk extract /path/to/conversation.log -d ~/mk-memory --skip-lines 200 --json
+
+# Review and promote extracted drafts
+mk consolidate -d ~/mk-memory --dry-run    # preview first
+mk consolidate -d ~/mk-memory              # apply
+```
+
+`--skip-lines` skips the CLAUDE.md preamble injected at session start. Extracted atoms are created as drafts — they don't enter the active store until consolidated. Add `mk consolidate` to your nightly sync or run it weekly.
+
 ## Drift Integration (Wander Pre-Filter)
 
 NanoClaw's post-conversation drift feature fires after a conversation ends (default: 2-minute delay). By default, every drift spawns an expensive LLM session. With `mk wander`, you can add a cheap Tier 1 gate that skips drift when there's nothing interesting to explore.
