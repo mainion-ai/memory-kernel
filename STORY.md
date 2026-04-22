@@ -2,7 +2,9 @@
   <img src="docs/images/transparent_logo.png" alt="Memory Kernel" width="150">
 </p>
 
-# How Memory Kernel Works — A Story for Humans
+# Memory Kernel — A Filing Cabinet for AI Agents
+
+> *Persistent, structured memory that survives the end of every conversation — built from plain markdown files, an event log, and three simple verbs.*
 
 > *You don't need to be a programmer to understand this. If you've ever written a sticky note, kept a journal, or cleaned out a filing cabinet, you already know how Memory Kernel works.*
 
@@ -38,6 +40,65 @@ Think of Memory Kernel as a **filing cabinet** in an office. Here's how the anal
 | A logbook of everything   | The **event log** (`events.ndjson`) |
 | A quick-lookup index      | The **SQLite index** (`.memory-index.db`) |
 | A summary sheet on top    | Auto-generated **views** (INDEX.md, etc.) |
+
+---
+
+## At a Glance — The Whole System in One Picture
+
+```
+     YOU (or your agent)
+         |
+         |  "Remember this" / "What do I know?" / "Clean up"
+         |
+         v
+  +--------------+
+  | RETAIN       |  Creates/updates/archives atoms
+  | RECALL       |  Queries atoms by type, tags, paths, budget
+  | REFLECT      |  Expires, deduplicates, promotes, regenerates views
+  +--------------+
+         |
+         |  reads/writes
+         |
+         v
+  +--------------+     +-------------------+
+  | Atom Files   |<--->| SQLite Index      |
+  | (ENTITIES/)  |     | (speed cache,     |
+  |              |     |  always derived)  |
+  +--------------+     +-------------------+
+         |
+         |  every mutation logged
+         |
+         v
+  +--------------+     +-------------------+
+  | Event Log    |---->| Replay            |
+  | (events.ndjson)    | (reconstruct      |
+  |              |     |  everything from  |
+  |              |     |  events alone)    |
+  +--------------+     +-------------------+
+         |
+         |  summarized into
+         |
+         v
+  +--------------+
+  | Views        |
+  | INDEX.md     |
+  | DECISIONS.md |
+  | CONSTRAINTS  |
+  | OPEN_QUESTIONS|
+  | HANDOFF.md   |
+  +--------------+
+```
+
+**Files are truth.** Everything else is derived. Delete the SQLite index? Rebuild it. Delete the views? Reflect regenerates them. Delete the atom files? Replay them from the event log. The system is designed so that any single component can be lost and rebuilt from the others.
+
+---
+
+## Reading Paths
+
+> **Just want the gist?** Read Ch. 1–2 and Ch. 11 (A Day in the Life). ~10 min.
+> **Evaluating it for your project?** Add Ch. 10 (on-disk layout) and "Why It Works." ~20 min.
+> **Adopting it?** Read the whole thing. ~45 min.
+> **Curious how it grew up?** Skip to Ch. 19 and follow the version arc through Ch. 26.
 
 ---
 
@@ -102,7 +163,7 @@ Memory Kernel has **nine types**, each serving a different purpose:
 **Special:**
 - **conflict** — two pieces of knowledge that contradict each other ("Docs say port 8080, config says 3000" — 30 day TTL)
 
-The **TTL** (time-to-live) is the key insight. A belief that hasn't been proven in 30 days probably isn't worth keeping. A preference that nobody has mentioned in 6 months might have changed. The system automatically cleans these up.
+The **TTL** (time-to-live) is the key insight — *this is what makes the system self-cleaning instead of ever-growing.* A belief that hasn't been proven in 30 days probably isn't worth keeping. A preference that nobody has mentioned in 6 months might have changed. The system automatically cleans these up.
 
 ---
 
@@ -201,6 +262,8 @@ Here's what one event looks like (formatted for readability):
 ```
 
 The crucial part is `atom_snapshot` — it contains the **full text of the atom at that moment**. This means the event log alone can reconstruct the entire memory state. You don't even need the atom files.
+
+> **Why this one field carries the whole system:** `atom_snapshot` is the difference between "we logged what happened" and "we logged what the world looked like." Without it, a delete event loses the thing that was deleted. With it, replay can rebuild every atom that ever existed.
 
 ### Why This Matters
 
@@ -434,7 +497,8 @@ A checkpoint creates the handoff document. Tomorrow's session will read it and p
 If the event log has grown large, `mk compact` runs. It keeps only the latest event per atom and removes the intermediate updates. A backup of the full log is saved first.
 
 Before: 2,847 events
-After: 412 events (latest state for each atom + all reflect/checkpoint events)
+After:    412 events (latest state for each atom + all reflect/checkpoint events)
+          ↑ 86% reduction, byte-identical replay output — no information lost.
 
 The compacted log can still reconstruct the exact same current state via replay.
 
@@ -518,58 +582,6 @@ mk bootstrap-events -d ./my-memory --agent-id my-agent
 # Health check
 mk doctor -d ./my-memory
 ```
-
----
-
-## The Big Picture
-
-Here's the entire system in one diagram:
-
-```
-     YOU (or your agent)
-         |
-         |  "Remember this" / "What do I know?" / "Clean up"
-         |
-         v
-  +--------------+
-  | RETAIN       |  Creates/updates/archives atoms
-  | RECALL       |  Queries atoms by type, tags, paths, budget
-  | REFLECT      |  Expires, deduplicates, promotes, regenerates views
-  +--------------+
-         |
-         |  reads/writes
-         |
-         v
-  +--------------+     +-------------------+
-  | Atom Files   |<--->| SQLite Index      |
-  | (ENTITIES/)  |     | (speed cache,     |
-  |              |     |  always derived)  |
-  +--------------+     +-------------------+
-         |
-         |  every mutation logged
-         |
-         v
-  +--------------+     +-------------------+
-  | Event Log    |---->| Replay            |
-  | (events.ndjson)    | (reconstruct      |
-  |              |     |  everything from  |
-  |              |     |  events alone)    |
-  +--------------+     +-------------------+
-         |
-         |  summarized into
-         |
-         v
-  +--------------+
-  | Views        |
-  | INDEX.md     |
-  | DECISIONS.md |
-  | CONSTRAINTS  |
-  | OPEN_QUESTIONS|
-  | HANDOFF.md   |
-  +--------------+
-```
-
-**Files are truth.** Everything else is derived. Delete the SQLite index? Rebuild it. Delete the views? Reflect regenerates them. Delete the atom files? Replay them from the event log. The system is designed so that any single component can be lost and rebuilt from the others.
 
 ---
 
@@ -1020,6 +1032,8 @@ Output:
 
 The PRD target is p95 < 50ms. The actual result is 3ms — **16× better than required**.
 
+> **Why the gap matters:** agents query memory 5–20× per session. At 50ms each, the query budget shows up as a human-noticeable pause. At 3ms, every query disappears into the noise — recall stops being something the agent has to plan around.
+
 You can pin a baseline for your own machine:
 
 ```bash
@@ -1033,6 +1047,23 @@ If a future change makes recall significantly slower, you'll see it immediately 
 Because memory is load-bearing. An agent that makes decisions based on corrupted facts is worse than an agent with no memory — at least with no memory, you know it's working from scratch. A corrupted fact is invisible damage.
 
 Every test is a promise: *this invariant holds, on every machine, after every change.* The 551 tests are 551 such promises.
+
+---
+
+## The Version Arc — How Memory Kernel Grew Up
+
+The next eight chapters are a development story, not a changelog. Each version solved a specific problem the previous one exposed. Here's the shape of the arc:
+
+```
+ v1.0  ─── v1.0.1 ─── v1.4 ──── v1.5 ──── v1.6 ──── v2.0 ──── v2.1
+ core      docs +     type &    body-     weighted   prod-     per-
+ library   plugin +   temporal  text      edges +    ready     agent
+ shipped   rename     decay     refs      closure    infra     isolation
+
+ Ch.1–18   Ch.19      Ch.20     Ch.21     Ch.22–24   Ch.25     Ch.26
+```
+
+v1.0 proved the library worked. v1.0.1 made it approachable. v1.4 taught it what matters most. v1.5 taught it to read its own prose. v1.6 taught it that not all connections are equal. v2.0 bolted it to the floor as infrastructure. v2.1 gave each agent its own drawer.
 
 ---
 
@@ -1157,6 +1188,11 @@ Now it scans every other atom's body for those concept names. When a belief says
 
 On a 93-atom store, atom-ID references found 46 citations. Concept-name matching found 160. The informal reference layer was 3.5× larger than the explicit one. More than three out of four connections existed only in natural language, invisible to anything that only looked for formal IDs.
 
+```
+Formal atom-ID links:  ██████  46
+Concept-name matches:  ████████████████████████  160  (3.5×)
+```
+
 These concept-name citations become actual graph edges — the same kind that spreading activation traverses in `wander`. Connections that were locked inside prose now participate in the graph walk. An atom that was isolated because nobody linked to it by ID might turn out to be one of the most-referenced concepts in the store.
 
 If v1.4.0 taught the system which drawer matters most, this taught it that the *contents* of the drawers are a map to each other.
@@ -1174,7 +1210,8 @@ Think about how your own memory works. You don't remember a fact because you *de
 Cognitive science has a model for this. ACT-R — Adaptive Control of Thought-Rational — describes how human memory activation works with a power-law formula:
 
 ```
-B_i = ln(n) − d · ln(t)
+B_i = ln(n) − d · ln(t)     // ACT-R base-level learning equation
+                            // (Anderson & Schooler, 1991)
 ```
 
 Where `n` is the number of times you've retrieved the memory (here: citation count + 1), `t` is how old it is in days, and `d` is a decay constant (0.5, the standard ACT-R value).
@@ -1283,7 +1320,7 @@ The daily trajectory mode shows this evolution over time — each day's snapshot
 
 Closure isn't good or bad. It's a measurement of structural maturity that predicts specific things:
 
-**Automation resistance** — at closure index below 3, small LLM classifiers work fine on the atoms. They can read a belief and correctly categorise it, extract its key claims, or suggest relations. Above 5, accuracy drops below 55%. The body text is so self-referential — describing concepts in terms of other atoms — that classifiers without access to the full graph get confused.
+**Automation resistance** — at closure index below 3, small LLM classifiers work fine on the atoms. They can read a belief and correctly categorise it, extract its key claims, or suggest relations. Above 5, accuracy drops below 55% in our observational measurements across the reference stores — these are not controlled experiments, and the exact thresholds will shift with the classifier. The direction is what matters: the body text is so self-referential — describing concepts in terms of other atoms — that classifiers without access to the full graph get confused.
 
 **Transplant resistance** — at low closure, you can copy atoms between agents and they'll make sense in their new home. Above 5, 87% or more of beliefs fail direct transplant. They reference concepts that only exist in the source store. The belief "file-first proved resilient under the deployment-rollback constraint" is meaningless to an agent that has never seen the deployment-rollback constraint.
 
