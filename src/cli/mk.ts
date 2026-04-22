@@ -52,6 +52,7 @@ import { registerMigrateRelationsCommand } from './migrate-relations.js';
 import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
 import { registerEnrichRelationsCommand } from './enrich-relations.js';
+import { registerLintCommand } from './lint.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -238,6 +239,8 @@ program
   .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
   .option('--graph', 'Enable graph-relation neighbor boost (default: on)')
   .option('--no-graph', 'Disable graph-relation neighbor boost')
+  .option('--reservations', 'Enable type-based token reservations (default: on for no-task, off for --task)')
+  .option('--no-reservations', 'Disable type-based token reservations')
   .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
@@ -249,12 +252,22 @@ program
     decayWeight?: number;
     includeEpisodes?: boolean;
     graph: boolean; // Commander sets this to true/false via --graph/--no-graph
+    reservations?: boolean; // Commander sets via --reservations/--no-reservations
     json?: boolean;
   }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
       exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
+    // Determine no_reservations:
+    //   --no-reservations → force off (no_reservations = true)
+    //   --reservations    → force on  (no_reservations = false, overrides task auto-disable)
+    //   neither           → let getTypeReservations decide (auto-disable for --task)
+    const noReservations = opts.reservations === false
+      ? true
+      : opts.reservations === true
+        ? false
+        : undefined;
     const bundle = recall(memoryDir, {
       task: opts.task,
       paths: opts.paths,
@@ -264,6 +277,7 @@ program
       decay_weight: opts.decayWeight,
       include_episodes: opts.includeEpisodes,
       graph_boost: opts.graph,
+      no_reservations: noReservations,
     });
 
     if (opts.json) {
@@ -1241,5 +1255,6 @@ registerMigrateRelationsCommand(program);
 registerRelinkCommand(program);
 registerCitationsCommand(program);
 registerEnrichRelationsCommand(program);
+registerLintCommand(program);
 
 program.parse();

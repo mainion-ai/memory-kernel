@@ -43,6 +43,9 @@ npx mk wander -d /workspace/extra/memory --tags api,performance --json
 # Validate your memory setup
 npx mk doctor -d /workspace/extra/memory
 
+# Semantic health check (contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL)
+npx mk lint -d /workspace/extra/memory
+
 # Create a typed relation edge between two atoms (v1.4.0+)
 npx mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-BENCH-xyz9 \
   -d /workspace/extra/memory
@@ -104,23 +107,34 @@ npx mk reindex -d /workspace/extra/memory --embed    # optional: add semantic se
 | User told you a preference | `mk remember ... -t preference` |
 | Something is unresolved | `mk remember ... -t open_question` |
 | You wrote a how-to | `mk remember ... -t procedure` |
-| After any `mk remember` | `mk render` (updates CLAUDE.md for next session) |
-| Start of session (optional) | `mk recall -d ... --task "current task"` (uses semantic re-ranking if embeddings configured) |
-| Looking for unexpected connections | `mk wander -d ... --tags tag1,tag2` |
+| You notice a connection between two atoms | `npx mk relate <src> <type> <tgt> -d ...` |
+| End of every session | `npx mk episode -d ... --session-id ... --summary "[TOPIC]...[DECISIONS]...[NEXT]..."` |
+| Start of session (intra-day atoms not yet in CLAUDE.md) | `npx mk recall -d ... --task "..." --include-episodes --decay-weight 0.3 --decay-half-life 60` |
+| Looking for unexpected connections | `npx mk wander -d ... --tags tag1,tag2` |
+| Every 5 sessions | `npx mk reflect -d ... && npx mk gc -d ...` |
+| Weekly — check semantic health | `npx mk lint -d /workspace/extra/memory` |
 
 ## Session Loop
 
-The recommended pattern for using memory during a session:
+> For the full operational loop with cadence, cron setup, A2A handoff, and diagnostics, see **[agent-session-loop.md](agent-session-loop.md)**.
 
 ```
-Session starts → CLAUDE.md already loaded (automatic)
+Session starts → CLAUDE.md already loaded (automatic via nightly render)
+                 If you wrote atoms after the last nightly render, also run:
+                 npx mk recall -d /workspace/extra/memory \
+                   --task "current task" --include-episodes \
+                   --decay-weight 0.3 --decay-half-life 60
                  ↓
-During session → mk remember (when you learn something worth keeping)
+During session → npx mk remember (facts, decisions, beliefs, preferences)
+                 npx mk relate <src> <type> <tgt>  ← wire connections as you see them
+                 npx mk wander --tags ...           ← explore connections
                  ↓
-Session ends   → mk render (so next session has the new knowledge)
+Session ends   → npx mk episode --session-id "YYYY-MM-DD-N" \
+                   --summary "[TOPIC]...[DECISIONS]...[NEXT]..."
+                 (render runs nightly via cron — not per session)
 ```
 
-You don't need to `mk recall` at session start — CLAUDE.md already contains your rendered memory. Use `mk recall --task "..."` only when you need task-specific context that might not be in the rendered view.
+Every 5 sessions: `npx mk reflect -d /workspace/extra/memory && npx mk gc -d /workspace/extra/memory`
 
 ## /tmp Install Workaround
 

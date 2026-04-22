@@ -96,6 +96,9 @@ export {
   addRelation,
   getAllRelations,
   getAllAtomIds,
+  getTermDocumentFrequencies,
+  getCorpusSize,
+  getAtomsMatchingTerm,
 } from './index-db.js';
 export type { IndexQueryResult, AtomRelation } from './index-db.js';
 
@@ -136,7 +139,7 @@ export type {
   ResolveConflictOptions,
   ResolveConflictResult,
 } from './retain.js';
-export { recall, recallWithEmbeddings } from './recall.js';
+export { recall, recallWithEmbeddings, computeLengthFactors, computeCoverageBoosts, computeTextSimilarity, applyMMR } from './recall.js';
 export { reflect } from './reflect.js';
 
 // Merge
@@ -244,6 +247,10 @@ export type {
   RenderConfig,
   RenderMode,
 } from './types.js';
+
+// Lint (semantic health checking)
+export { lintMemoryStore } from './lint.js';
+export type { LintFinding, LintOptions, LintResult } from './lint.js';
 
 // Migration (shared → isolated)
 export { migrate } from './migrate.js';

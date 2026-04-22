@@ -577,18 +577,26 @@ export function searchFts(
   try {
     const db = openIndex(memoryDir);
 
-    // Strip FTS5 special characters to treat the input as a plain phrase.
-    // We wrap in double-quotes for a quoted phrase query (exact token sequence or stemmed match).
+    // Strip FTS5 special characters and build an implicit-AND token query.
+    // Each word becomes a separate token — FTS5 default is implicit AND,
+    // so "notation erasure" matches documents containing both words (in any order).
+    // Previously used a quoted phrase query which required exact token sequence,
+    // causing most multi-word task queries to return 0 results.
     const sanitised = queryText
-      .replace(/["*()]/g, ' ')  // remove FTS5 operators/syntax chars
-      .replace(/\b(AND|OR|NOT)\b/g, ' ') // remove boolean operators
+      .replace(/["*()^:\-]/g, ' ')  // remove FTS5 operators/syntax chars (- = NOT, ^ = boost, : = column)
+      .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ') // remove boolean operators
       .replace(/\s+/g, ' ')
       .trim();
 
     if (!sanitised) return [];
 
-    // Quoted phrase query: FTS5 matches documents containing all tokens in order (with stemming).
-    const ftsQuery = `"${sanitised}"`;
+    // OR token query: documents matching ANY term are returned.
+    // BM25 naturally ranks documents matching more terms higher, and the
+    // coverage boost multiplier (Phase 7) explicitly penalizes partial matches.
+    // Previously used implicit AND which excluded partial-match documents entirely,
+    // making coverage boost a no-op.
+    const tokens = sanitised.split(/\s+/).filter(Boolean);
+    const ftsQuery = tokens.length > 1 ? tokens.join(' OR ') : sanitised;
 
     const rows = db.prepare(
       `SELECT atom_id, rank FROM atom_fts WHERE atom_fts MATCH ? ORDER BY rank LIMIT ?`,
@@ -785,6 +793,95 @@ export function getAllRelations(memoryDir: string): AtomRelation[] {
     return db.prepare('SELECT * FROM atom_relations').all() as AtomRelation[];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Get document frequency for each query term in the FTS index.
+ * Returns a map of term → number of atoms containing that term.
+ * Returns null if FTS index is unavailable.
+ *
+ * Uses the same sanitisation as searchFts (porter-tokenized stems match).
+ */
+export function getTermDocumentFrequencies(
+  memoryDir: string,
+  terms: string[],
+): Map<string, number> | null {
+  if (!indexExists(memoryDir)) return null;
+
+  try {
+    const db = openIndex(memoryDir);
+    const result = new Map<string, number>();
+    const stmt = db.prepare(
+      'SELECT count(*) as cnt FROM atom_fts WHERE atom_fts MATCH ?',
+    );
+
+    for (const term of terms) {
+      // Sanitise the same way searchFts does
+      const sanitised = term
+        .replace(/["*()^:\-]/g, ' ')
+        .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!sanitised) {
+        result.set(term, 0);
+        continue;
+      }
+      try {
+        const row = stmt.get(sanitised) as { cnt: number };
+        result.set(term, row.cnt);
+      } catch {
+        result.set(term, 0);
+      }
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Return the set of atom_ids whose FTS entry matches the given term
+ * (porter-stemmed, same sanitisation as searchFts / getTermDocumentFrequencies).
+ * Returns an empty set on any error or missing index.
+ */
+export function getAtomsMatchingTerm(
+  memoryDir: string,
+  term: string,
+): Set<string> {
+  if (!indexExists(memoryDir)) return new Set();
+
+  try {
+    const db = openIndex(memoryDir);
+    const sanitised = term
+      .replace(/["*()^:\-]/g, ' ')
+      .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!sanitised) return new Set();
+
+    const rows = db
+      .prepare('SELECT atom_id FROM atom_fts WHERE atom_fts MATCH ?')
+      .all(sanitised) as { atom_id: string }[];
+    return new Set(rows.map((r) => r.atom_id));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Get total number of rows in the FTS index (corpus size).
+ * Returns 0 if FTS index is unavailable.
+ */
+export function getCorpusSize(memoryDir: string): number {
+  if (!indexExists(memoryDir)) return 0;
+
+  try {
+    const db = openIndex(memoryDir);
+    const row = db.prepare('SELECT count(*) as cnt FROM atom_fts').get() as { cnt: number };
+    return row.cnt;
+  } catch {
+    return 0;
   }
 }
 

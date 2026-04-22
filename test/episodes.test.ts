@@ -290,15 +290,64 @@ describe('recall() with include_episodes', () => {
     expect(bundle.episodes).toBeUndefined();
   });
 
-  it('filters episodes by task keyword when both task and include_episodes are set', () => {
+  it('scores episodes by task relevance — matching episodes rank first', () => {
     writeEpisode(testDir, 'sess-auth', 'Fixed authentication and JWT token refresh.', { tags: ['auth'] });
     writeEpisode(testDir, 'sess-db', 'Migrated database schema to PostgreSQL 15.', { tags: ['db'] });
 
     const bundle = recall(testDir, { task: 'authentication JWT', include_episodes: true });
     expect(bundle.episodes).toBeDefined();
-    // Auth session matches "authentication" keyword; DB session does not
+    // Auth episode scores higher (matches 2/2 query terms) than DB episode (matches 0/2)
+    expect(bundle.episodes![0]).toContain('authentication');
+  });
+
+  it('includes all episodes when no task is set (sorted by recency)', () => {
+    writeEpisode(testDir, 'sess-old', 'Old session summary.', { started_at: '2025-01-01T00:00:00Z' });
+    writeEpisode(testDir, 'sess-new', 'New session summary.', { started_at: '2026-04-21T00:00:00Z' });
+
+    const bundle = recall(testDir, { include_episodes: true });
+    expect(bundle.episodes).toBeDefined();
+    expect(bundle.episodes!.length).toBe(2);
+    // Newer episode first
+    expect(bundle.episodes![0]).toContain('sess-new');
+  });
+
+  it('caps episode tokens to MAX_EPISODE_BUDGET_RATIO when max_tokens is set', () => {
+    // Create a small atom so recall has something
+    createAtom({ ...base(testDir), type: 'fact', slug: 'tiny', body: 'X' });
+
+    // Create 10 episodes with substantial content (~200 tokens each)
+    for (let i = 0; i < 10; i++) {
+      writeEpisode(testDir, `sess-bulk-${i}`, 'A'.repeat(800), {
+        started_at: `2026-04-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+      });
+    }
+
+    // With tight budget (2000 tokens), episodes get at most 20% = 400 tokens
+    // 10 episodes × ~200 tokens each = ~2000 tokens without budget → only ~2 fit
+    const bundle = recall(testDir, {
+      include_episodes: true,
+      max_tokens: 2000,
+    });
+    expect(bundle.episodes).toBeDefined();
+    // Should NOT include all 10 — budget caps it
+    expect(bundle.episodes!.length).toBeLessThan(10);
+    expect(bundle.episodes!.length).toBeGreaterThan(0);
+  });
+
+  it('excludes zero-relevance episodes when task is set', () => {
+    writeEpisode(testDir, 'sess-python', 'Implemented Python data pipeline for ETL.', {});
+    writeEpisode(testDir, 'sess-unrelated', 'Completely unrelated gardening discussion.', {});
+
+    const bundle = recall(testDir, {
+      task: 'Python data pipeline ETL',
+      include_episodes: true,
+      max_tokens: 5000,
+    });
+    expect(bundle.episodes).toBeDefined();
     const allText = bundle.episodes!.join('\n');
-    expect(allText).toContain('authentication');
+    expect(allText).toContain('Python');
+    // Zero-relevance episode should be excluded (no query term matches)
+    expect(allText).not.toContain('gardening');
   });
 
   it('bundle.token_estimate includes episode token cost', () => {
@@ -310,5 +359,36 @@ describe('recall() with include_episodes', () => {
 
     // Token estimate should be higher when episodes are included
     expect(withEpisodes.token_estimate).toBeGreaterThanOrEqual(withoutEpisodes.token_estimate);
+  });
+
+  it('token_estimate stays within max_tokens when include_episodes and atoms compete for budget', () => {
+    // Pack enough atoms and episodes that each would exceed max_tokens on its own.
+    for (let i = 0; i < 15; i++) {
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: `atom-${i}`,
+        body: 'A'.repeat(600),
+      });
+    }
+    for (let i = 0; i < 10; i++) {
+      writeEpisode(testDir, `sess-big-${i}`, 'E'.repeat(800), {
+        started_at: `2026-04-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+      });
+    }
+
+    const MAX = 2000;
+    const taskBundle = recall(testDir, {
+      task: 'A',
+      include_episodes: true,
+      max_tokens: MAX,
+    });
+    expect(taskBundle.token_estimate).toBeLessThanOrEqual(MAX);
+
+    const noTaskBundle = recall(testDir, {
+      include_episodes: true,
+      max_tokens: MAX,
+    });
+    expect(noTaskBundle.token_estimate).toBeLessThanOrEqual(MAX);
   });
 });
