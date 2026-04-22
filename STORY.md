@@ -108,7 +108,7 @@ Think of Memory Kernel as a **filing cabinet** in an office. Here's how the anal
 2. **Self-cleaning.** Each piece of knowledge has an expiry date baked in. Stale beliefs get archived automatically, so the memory doesn't grow into a landfill.
 3. **Smart recall.** When the agent asks "what do I know about X?", the system doesn't just dump everything — it ranks by relevance, type, age, and how often each atom has been referenced, then fits the best matches into the available space.
 4. **Two agents can share a brain without colliding.** Each agent gets a private drawer plus a shared corkboard. When drawers need to merge, conflicts are flagged, not silently resolved.
-5. **Tested like infrastructure.** 1,400+ automated checks run on every change. 95 out of 100 memory queries finish in under 3 milliseconds. This is not a weekend toy.
+5. **Tested like infrastructure.** 1,000+ automated checks run on every change. 95 out of 100 memory queries finish in under 3 milliseconds. This is not a weekend toy.
 
 ---
 
@@ -1077,18 +1077,19 @@ Every test is a promise: *this invariant holds, on every machine, after every ch
 
 ## The Version Arc — How Memory Kernel Grew Up
 
-The next eight chapters are a development story, not a changelog. Each version solved a specific problem the previous one exposed. Here's the shape of the arc:
+The next eight chapters are a development story, not a changelog. Each release solved a specific problem the previous one exposed. Here's the shape of the arc, using the real version numbers you'll find on npm and in `CHANGELOG.md`:
 
 ```
- v1.0  ─── v1.0.1 ─── v1.4 ──── v1.5 ──── v1.6 ──── v2.0 ──── v2.1
- core      docs +     type &    body-     weighted   prod-     per-
- library   plugin +   temporal  text      edges +    ready     agent
- shipped   rename     decay     refs      closure    infra     isolation
-
- Ch.1–18   Ch.19      Ch.20     Ch.21     Ch.22–24   Ch.25     Ch.26
+ v1.0  ── v1.0.1 ── v1.4 ── v1.5 ── v1.6 ── v1.7 ── v1.9 ── v1.12 ── v1.15
+ core     docs +    type &  body-   ACT-R   --json  closure  prod-    extract,
+ library  plugin    age-    text    citation across  metric   ready    consoli-
+ shipped  rename    aware   refs    model   the     (self-   infra +  date,
+                    recall                  CLI     ref.     per-     lint
+                                                    index)   agent
+ Ch.1–18  Ch.19     Ch.20   Ch.21   Ch.22   Ch.23   Ch.24    Ch.25–26  Ch.27
 ```
 
-v1.0 proved the library worked. v1.0.1 made it approachable. v1.4 taught it what matters most. v1.5 taught it to read its own prose. v1.6 taught it that not all connections are equal. v2.0 bolted it to the floor as infrastructure. v2.1 gave each agent its own drawer.
+v1.0 proved the library worked. v1.0.1 made it approachable. v1.4 taught it what matters most. v1.5 taught it to read its own prose. v1.6 added citation-frequency activation. v1.7 made every command machine-readable. v1.9 gave the store a way to measure its own complexity. v1.12 bolted it to the floor as infrastructure *and* gave each agent its own drawer — the two huge changes shipped in the same release. v1.13 through v1.15 added episode-aware recall, ranking fixes, and the `extract`/`consolidate`/`lint` commands.
 
 ---
 
@@ -1254,7 +1255,7 @@ The filing cabinet now has fingerprints on the cards. The more a card has been h
 
 ## Chapter 23: Not All Edges Are Equal
 
-By v1.6, the memory graph had edges (Chapter 20), body-text discovery (Chapter 21), and frequency-weighted activation (Chapter 22). But every edge still carried the same weight during spreading activation. An `extends` edge — the developmental backbone of a belief chain — had the same influence as a `related` edge, which is often a residual catch-all for "these two things are vaguely connected."
+By v1.6, the memory graph had edges (Chapter 20), body-text discovery (Chapter 21), and frequency-weighted activation (Chapter 22). But every edge still carried the same weight during spreading activation — something v1.7 would start to fix. An `extends` edge — the developmental backbone of a belief chain — had the same influence as a `related` edge, which is often a residual catch-all for "these two things are vaguely connected."
 
 That's like saying a bridge and a wall both connect two rooms. Technically true. Not equally useful for getting across.
 
@@ -1302,6 +1303,8 @@ This is the first time Memory Kernel calls an AI model for its own maintenance. 
 
 ## Chapter 24: The Closure Test
 
+*(v1.9 shipped `mk closure` as its headline feature.)*
+
 When does a journal stop being a collection of notes and start being a *worldview*?
 
 There's a tipping point. Early on, atoms are independent — each one stands on its own, can be understood in isolation, moved to another agent's memory without losing meaning. But as the store grows, atoms begin to reference each other. A belief about deployment strategy mentions a decision about infrastructure. That decision references a constraint from the security review. The constraint links back to the original belief.
@@ -1347,6 +1350,8 @@ The closure index doesn't tell you whether your memory store is good or bad. It 
 ---
 
 ## Chapter 25: Going to Production
+
+*(v1.12 was the "move-in day" release: production infrastructure here in Chapter 25 and per-agent isolation in Chapter 26 — both shipped together.)*
 
 Everything up to Chapter 24 was the library and the CLI: tools you run in a terminal, test with `npm test`, and integrate however you see fit. The system worked. But working and being *production-ready* are different problems.
 
@@ -1408,17 +1413,19 @@ One last change made the output *look* different. Beliefs connected by `extends`
 
 Graph-ordered rendering changed this. Beliefs now appear as indented developmental arcs. A root belief sits at the top. The belief that extends it is indented below. The belief that extends *that* sits one level deeper. The developmental history of an idea is visible at a glance — not just what the system believes, but how it got there.
 
-### What v2.0 Represents
+### What v1.12 Represents
 
 v1.0 proved memory-kernel could store and retrieve. v1.4 taught it what matters most. The versions in between taught it to read its own files, count its own citations, weigh its own edges, and measure its own complexity.
 
-v2.0 is the point where it stopped being a library and started being infrastructure. Bolted to the floor, wired into the host, observable from the outside, and governed by a doctrine that says: *this is where knowledge lives.*
+v1.12 is the point where it stopped being a library and started being infrastructure. Bolted to the floor, wired into the host, observable from the outside, and governed by a doctrine that says: *this is where knowledge lives.* (The same v1.12 release also introduced per-agent isolation — see the next chapter.)
 
-The 805 tests are 805 promises that all of this — from the simplest atom creation to the most tangled closure metric — works exactly as described. The filing cabinet is no longer in the workshop. It's in the office, and people are using it.
+The test suite at this release — 983 checks — was 983 promises that all of this, from the simplest atom creation to the most tangled closure metric, worked exactly as described. The filing cabinet was no longer in the workshop. It was in the office, and people were using it.
 
 ---
 
 ## Chapter 26: When Agents Need Their Own Filing Cabinets
+
+The second big feature in v1.12 — shipping in the same release as the production infrastructure from the previous chapter — was per-agent isolation.
 
 Imagine an office with one filing cabinet. Two agents — Alice and Bob — both use it. Alice files a card: "Use Redis for caching." Bob, working a different problem, files: "Use Memcached for caching." Neither knows the other filed anything. Next morning, both cards are in the same drawer, and whoever reads them sees a contradiction that neither agent intended.
 
@@ -1474,7 +1481,7 @@ Each agent section has a `render.yaml` file that controls how CLAUDE.md is gener
 
 ```yaml
 mode: operational        # Alice might use 'constitutive' instead
-max_tokens: 8000
+max_tokens: 16000
 include_shared: true     # Pull in the corkboard
 type_weights:
   belief: 0.5
@@ -1514,7 +1521,27 @@ The mechanics are the same — atoms, events, typed knowledge, confidence scores
 
 This matters because agents aren't interchangeable. A research agent and a deployment agent have different jobs, different knowledge, and different priorities. Giving them separate memory isn't just about preventing collisions — it's about letting each agent develop its own understanding without being overwhelmed by knowledge that belongs to someone else.
 
-The 805 tests are now joined by 1,400 more, covering every path through isolation: config loading, union recall, share and unshare, migration strategies, graph scoping, render preferences, and the security checks that keep agent sections truly separate. The office building is load-tested. The walls are solid.
+The test suite grew to cover every new path through isolation: config loading, union recall, share and unshare, migration strategies, graph scoping, render preferences, and the security checks that keep agent sections truly separate. The office building is load-tested. The walls are solid.
+
+---
+
+## Chapter 27: Coda — What's Happened Since
+
+v1.12 was the big-bang release. After the filing cabinet moved into the office, the next three releases sanded down real edges that showed up in daily use.
+
+**v1.13 — Episodes That Earn Their Space.** Before v1.13, session summaries (episodes) were included in recall bulk-style — every candidate episode got added at roughly 800 tokens each, often crowding atoms out of tight budgets. v1.13 changed this: episodes are now ranked the same way atoms are (match + recency), zero-relevance episodes are dropped when you give a task, and episodes never exceed 20% of the token budget. You get fewer but better session memories, and the atom budget no longer gets silently eaten.
+
+**v1.14 — Fixing a Subtle Ranking Bug.** Memory Kernel's search understands that "running" and "run" are the same word (this is called stemming — the same trick Google uses). But the ranking logic had a bug: it measured how "specific" a word was by looking for the exact word in the atom's body. If the search matched via stemming — "running" in the query, "run" in the body — the specificity check would silently fail and the atom would get a false penalty. v1.14 fixed this by making the specificity check go through the same stemming path as the search itself. Rankings now match intuition.
+
+**v1.15 — Teaching the System to Extract and Consolidate.** The biggest question for users was always: *"how do I get my existing knowledge into Memory Kernel without filing everything by hand?"* v1.15 answered it with three new commands:
+
+- **`mk extract`** reads a conversation log (or any piece of text) and asks a language model — either Claude Code running locally, or Ollama on your own machine — to pull out the facts, decisions, preferences, and beliefs worth remembering. It cross-checks against what's already in your store so you don't end up with duplicates. The atoms it creates are marked as *drafts*, not active — they need a second pass before they count.
+- **`mk consolidate`** is that second pass. It reviews the draft atoms, shows you what's new, flags possible duplicates of existing active atoms, and lets you promote the ones worth keeping to active status. You can do the whole batch in a single command, or filter by type, or cap the size.
+- **`mk lint`** is a health checker. It scans the whole store looking for six categories of trouble: atoms that contradict each other, facts that haven't been updated in months, orphan atoms that nobody links to, near-duplicates, beliefs whose confidence never changes despite repeated updates, and stale `open_question` atoms that should probably be resolved or archived. You get a report grouped by severity. The lint doesn't fix anything — it just tells you where to look.
+
+The pattern across v1.13–v1.15 is clear: v1.12 built the infrastructure; the releases that followed have been about making the infrastructure *easier to live with*. Extract and consolidate close the hardest part of the onboarding loop — getting knowledge *into* the system in the first place. Lint closes the maintenance loop — finding knowledge that's turned stale or redundant. And the episode-ranking fix in v1.13 closes one of the last real-world rough edges in recall itself.
+
+At v1.15, the test suite has grown to around a thousand automated checks across fifty-six test files. Every one of them is a promise: *this works, on every machine, after every change.*
 
 ---
 
