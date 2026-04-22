@@ -40,7 +40,7 @@ export const DEFAULT_ISOLATION_CONFIG: IsolationConfig = {
 /** Default per-agent render config. */
 export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   mode: 'balanced',
-  max_tokens: 8000,
+  max_tokens: 16000,
   include_shared: true,
   type_weights: {},
 };
