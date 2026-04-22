@@ -9,6 +9,55 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-04-22
+
+### Added — `mk lint` semantic health checker
+
+- **New command `mk lint`** (`src/cli/lint.ts`, `src/lint.ts`) — checks the memory store for six categories of semantic problems and reports findings grouped by severity:
+  - `contradiction` — atoms with mutually inconsistent claims
+  - `stale` — facts and decisions not updated within `--stale-days` (default: 90 days)
+  - `orphan` — atoms with no relation edges and no tag overlap with other atoms
+  - `duplicate` — near-duplicate atom pairs (high body-text similarity)
+  - `confidence_drift` — beliefs whose confidence has not changed despite multiple event updates
+  - `ttl_warning` — atoms approaching TTL expiry
+
+- **Flags:** `-d/--dir <dir>` (memory directory), `--json` (structured output), `--stale-days <n>` (staleness threshold, default 90), `--fix` (placeholder — warns not yet implemented, runs lint in read-only mode)
+- **Exit codes:** exits `1` when the memory directory is not found or `--stale-days` is invalid; exits `0` on all lint outcomes including findings (findings are informational, not fatal)
+- **JSON output:** `{ findings: LintFinding[], summary: { total, warnings, info } }`
+
+### Fixed — Recall pipeline quality (PRs #18, #19, #20)
+
+- **Content-length normalization** (`src/recall.ts`, `src/index-db.ts`) — Long atoms (entity summaries, session episodes) previously received inflated BM25 scores purely due to document length. A post-FTS length factor `1 / (1 + K * (wordCount/avgWordCount - 1))` now dampens scores for atoms above average length. `K=0.5` by default. Configurable via `RECALL_LENGTH_NORM_K` env var or `RecallQuery.length_norm_k`. Short atoms are capped at `1.0` (no boost, only penalty for long atoms).
+
+- **FTS OR semantics + query-term coverage boost** (`src/index-db.ts`, `src/recall.ts`) — `searchFts()` previously used implicit AND, requiring all query terms to match. Switched to explicit OR so partial-match atoms enter the result set. A coverage boost multiplier `(matched/total)^P` (default `P=0.5`) then penalizes atoms that match only a fraction of terms, ensuring all-term matches rank higher despite OR expansion. Configurable via `RECALL_COVERAGE_BOOST` env var or `RecallQuery.coverage_boost` (clamped `[0, 2]`).
+
+- **MMR result diversity** (`src/recall.ts`) — After switching to OR semantics, the result set can contain many near-duplicate atoms about the same topic that fill the token budget redundantly. Maximal Marginal Relevance (Carbonell & Goldstein, 1998) now re-ranks after scoring but before token-budget application, balancing relevance with textual diversity using word-trigram Jaccard similarity. Applied to both task and no-task (constitution/render) paths. `RECALL_MMR_LAMBDA` env var (default `0.7`) and per-call `RecallQuery.mmr_lambda` override. `lambda=1.0` disables MMR entirely (zero cost). Trigrams are precomputed once per atom to avoid O(n²) extraction in the selection loop.
+
+### Tests
+
+- Full suite: 921/921 passing.
+
+## [1.14.0] — 2026-04-21
+
+### Fixed — IDF hub-damping specificity scoring
+
+- **Stemmer-consistent specificity check** (`src/recall.ts`, `src/index-db.ts`) — `computeSpecificityScores` now uses per-term FTS queries (`getAtomsMatchingTerm`) instead of raw substring matching on body text. Previously, porter-stemmed FTS matches (e.g. "running" → "run") would fail the substring check and receive a false specificity penalty. Title-only FTS matches were also missed since the old check only examined `atom.body`.
+- **New helper `getAtomsMatchingTerm`** (`src/index-db.ts`) — Returns the set of atom_ids matching a single term via FTS (porter-stemmed, same sanitisation as `searchFts`).
+- **Clamped `idf_damping` from caller** (`src/recall.ts`) — `query.idf_damping` is now clamped to [0, 1] on the query path, matching the env-var path. Previously a caller passing a value >1 or <0 would break the 0–1 contract.
+
+## [1.13.0] — 2026-04-21
+
+### Changed — Episode recall scores against task and respects token budget
+
+- **Episodes now rank by term-overlap + temporal decay** (`src/recall.ts`) — `recall({ include_episodes: true, task })` now scores candidate episodes with a lightweight TF relevance (fraction of query terms appearing in the summary) combined with exponential decay, using the same `relevance * (1 - decayWeight) + recency * decayWeight` composite as atoms. Zero-relevance episodes are dropped when a task is provided. Previously all candidate episodes were bulk-included unranked (~800 tokens each), crowding out atoms in tight budgets.
+- **Episode token slice is reserved from the atom budget** (`src/recall.ts`) — When `include_episodes` and `max_tokens` are both set, episodes get up to `MAX_EPISODE_BUDGET_RATIO` (20%) of `max_tokens` and that slice is subtracted from the atom budget up-front so `bundle.token_estimate` stays within `max_tokens`. Previously episodes were added on top of the full atom budget, allowing the bundle to exceed the requested cap.
+- **Episode candidate pool raised from 10 to 20** (`src/recall.ts`) — Gives the new scoring pass more candidates to rank against; the 20% budget cap prevents this from bloating output.
+
+### Tests
+
+- `test/episodes.test.ts` — new coverage for score-based ordering, budget-capped selection, zero-relevance filtering, backward-compatible no-task recency sort, and `token_estimate <= max_tokens` invariant for both task and no-task paths with `include_episodes: true`.
+- Full suite: 921/921 passing (two unrelated `openclaw-plugin*.test.ts` files fail to import `@sinclair/typebox` in this environment — not touched by this release).
+
 ## [1.12.0] — 2026-04-19
 
 ### Fixed — Task-focused recall returns relevant atoms

@@ -163,6 +163,14 @@ export interface RecallQuery {
   graph_boost?: boolean; // Enable/disable neighbor boost (default true)
   // Phase 4: Reservation override
   no_reservations?: boolean; // Disable type reservations entirely (useful for task-focused recall)
+  // Phase 5: IDF hub damping — penalizes atoms matching only ubiquitous query terms
+  idf_damping?: number; // 0 = disabled, 1 = full damping (default from RECALL_IDF_DAMPING env or 1.0)
+  // Phase 6: Content-length normalization — penalizes long atoms that get inflated BM25 scores
+  length_norm_k?: number; // 0 = disabled, 0.5 = moderate (default), 1.0 = aggressive
+  // Phase 7: Query-term coverage boost — penalizes atoms matching few query terms
+  coverage_boost?: number; // Exponent P: 0 = disabled, 0.5 = moderate (default), 2.0 = aggressive
+  // Phase 8: MMR result diversity — re-ranks to prevent redundant atoms filling token budget
+  mmr_lambda?: number; // 0 = pure diversity, 0.7 = moderate (default), 1.0 = disabled (pure relevance)
 }
 
 // --- Episode types ---

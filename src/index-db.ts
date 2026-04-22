@@ -590,9 +590,13 @@ export function searchFts(
 
     if (!sanitised) return [];
 
-    // Implicit-AND token query: each token must appear somewhere in the document.
-    // BM25 scoring naturally ranks documents with more matching tokens higher.
-    const ftsQuery = sanitised;
+    // OR token query: documents matching ANY term are returned.
+    // BM25 naturally ranks documents matching more terms higher, and the
+    // coverage boost multiplier (Phase 7) explicitly penalizes partial matches.
+    // Previously used implicit AND which excluded partial-match documents entirely,
+    // making coverage boost a no-op.
+    const tokens = sanitised.split(/\s+/).filter(Boolean);
+    const ftsQuery = tokens.length > 1 ? tokens.join(' OR ') : sanitised;
 
     const rows = db.prepare(
       `SELECT atom_id, rank FROM atom_fts WHERE atom_fts MATCH ? ORDER BY rank LIMIT ?`,
@@ -789,6 +793,95 @@ export function getAllRelations(memoryDir: string): AtomRelation[] {
     return db.prepare('SELECT * FROM atom_relations').all() as AtomRelation[];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Get document frequency for each query term in the FTS index.
+ * Returns a map of term → number of atoms containing that term.
+ * Returns null if FTS index is unavailable.
+ *
+ * Uses the same sanitisation as searchFts (porter-tokenized stems match).
+ */
+export function getTermDocumentFrequencies(
+  memoryDir: string,
+  terms: string[],
+): Map<string, number> | null {
+  if (!indexExists(memoryDir)) return null;
+
+  try {
+    const db = openIndex(memoryDir);
+    const result = new Map<string, number>();
+    const stmt = db.prepare(
+      'SELECT count(*) as cnt FROM atom_fts WHERE atom_fts MATCH ?',
+    );
+
+    for (const term of terms) {
+      // Sanitise the same way searchFts does
+      const sanitised = term
+        .replace(/["*()^:\-]/g, ' ')
+        .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!sanitised) {
+        result.set(term, 0);
+        continue;
+      }
+      try {
+        const row = stmt.get(sanitised) as { cnt: number };
+        result.set(term, row.cnt);
+      } catch {
+        result.set(term, 0);
+      }
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Return the set of atom_ids whose FTS entry matches the given term
+ * (porter-stemmed, same sanitisation as searchFts / getTermDocumentFrequencies).
+ * Returns an empty set on any error or missing index.
+ */
+export function getAtomsMatchingTerm(
+  memoryDir: string,
+  term: string,
+): Set<string> {
+  if (!indexExists(memoryDir)) return new Set();
+
+  try {
+    const db = openIndex(memoryDir);
+    const sanitised = term
+      .replace(/["*()^:\-]/g, ' ')
+      .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!sanitised) return new Set();
+
+    const rows = db
+      .prepare('SELECT atom_id FROM atom_fts WHERE atom_fts MATCH ?')
+      .all(sanitised) as { atom_id: string }[];
+    return new Set(rows.map((r) => r.atom_id));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Get total number of rows in the FTS index (corpus size).
+ * Returns 0 if FTS index is unavailable.
+ */
+export function getCorpusSize(memoryDir: string): number {
+  if (!indexExists(memoryDir)) return 0;
+
+  try {
+    const db = openIndex(memoryDir);
+    const row = db.prepare('SELECT count(*) as cnt FROM atom_fts').get() as { cnt: number };
+    return row.cnt;
+  } catch {
+    return 0;
   }
 }
 

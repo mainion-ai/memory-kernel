@@ -9,12 +9,12 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex, searchFts, getAllEmbeddings, getAllRelations } from './index-db.js';
+import { queryIndex, searchFts, getAllEmbeddings, getAllRelations, getTermDocumentFrequencies, getCorpusSize, getAtomsMatchingTerm } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import { DEFAULT_TYPE_WEIGHTS, DEFAULT_CONFIDENCE_FLOOR, DEFAULT_TYPE_RESERVATIONS } from './schema.js';
-import type { Atom, ContextBundle, RecallQuery, AtomType } from './types.js';
+import type { Atom, ContextBundle, Episode, RecallQuery, AtomType } from './types.js';
 
 // --- Configurable hybrid ranking parameters ---
 
@@ -28,6 +28,8 @@ const DEFAULT_DECAY_HALF_LIFE = 30;
 const DEFAULT_DECAY_WEIGHT = 0.2;
 /** Default neighbor boost factor for graph-walk spreading activation. */
 const DEFAULT_NEIGHBOR_BOOST = 0.15;
+/** Maximum fraction of total token budget that episodes may consume. */
+const MAX_EPISODE_BUDGET_RATIO = 0.2;
 
 function getSemanticWeight(): number {
   const v = parseFloat(process.env.SEMANTIC_WEIGHT || '');
@@ -107,6 +109,366 @@ function getNeighborBoost(): number {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_NEIGHBOR_BOOST;
 }
 
+/** Default IDF damping strength (1.0 = full damping). */
+const DEFAULT_IDF_DAMPING = 1.0;
+
+/** Default content-length normalization strength (0.5 = moderate). */
+const DEFAULT_LENGTH_NORM_K = 0.5;
+
+function getIdfDamping(query: RecallQueryInternal): number {
+  if (query.idf_damping !== undefined) return Math.max(0, Math.min(1, query.idf_damping));
+  const v = parseFloat(process.env.RECALL_IDF_DAMPING || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_IDF_DAMPING;
+}
+
+/** Default coverage boost exponent (0.5 = square root, gentle boost). */
+const DEFAULT_COVERAGE_BOOST = 0.5;
+
+/** Max allowed coverage_boost exponent — values above 2 produce extreme penalties. */
+const MAX_COVERAGE_BOOST = 2;
+
+function getCoverageBoost(query: RecallQueryInternal): number {
+  if (query.coverage_boost !== undefined) return Math.max(0, Math.min(MAX_COVERAGE_BOOST, query.coverage_boost));
+  const v = parseFloat(process.env.RECALL_COVERAGE_BOOST || '');
+  return Number.isFinite(v) && v >= 0 && v <= MAX_COVERAGE_BOOST ? v : DEFAULT_COVERAGE_BOOST;
+}
+
+/**
+ * Compute per-atom coverage boost factors based on how many query terms each atom matches.
+ *
+ * An atom matching all query terms gets boost = 1.0 (no change).
+ * An atom matching only a fraction gets boost = coverage^P where P is the exponent.
+ * This penalizes partial-match atoms that appear in FTS results via high per-term BM25
+ * but only match 1 of N query terms.
+ *
+ * For single-term queries, all FTS matches have coverage = 1.0 (no penalty).
+ */
+export function computeCoverageBoosts(
+  memoryDir: string,
+  queryTerms: string[],
+  ftsResults: { atom_id: string; rank: number }[],
+  filtered: Atom[],
+  exponent: number,
+): Map<string, number> {
+  const boosts = new Map<string, number>();
+
+  // No penalty when disabled, single term (all matches have coverage=1), or no FTS results
+  if (exponent === 0 || queryTerms.length <= 1 || ftsResults.length === 0) {
+    return boosts; // empty map — callers use ?? 1.0
+  }
+
+  // Build per-term FTS match sets (porter-stemmed, matches title+body)
+  const termAtomSets = new Map<string, Set<string>>();
+  for (const term of queryTerms) {
+    termAtomSets.set(term, getAtomsMatchingTerm(memoryDir, term));
+  }
+
+  // Build set of filtered atom IDs for intersection check
+  const filteredIds = new Set(filtered.map(a => a.frontmatter.id));
+  const ftsAtomIds = new Set(ftsResults.map(r => r.atom_id));
+
+  for (const atomId of ftsAtomIds) {
+    if (!filteredIds.has(atomId)) continue;
+
+    let matchedTerms = 0;
+    for (const term of queryTerms) {
+      if (termAtomSets.get(term)?.has(atomId)) {
+        matchedTerms++;
+      }
+    }
+
+    const coverage = matchedTerms / queryTerms.length;
+    // coverageBoost = coverage^P — e.g. (1/3)^0.5 ≈ 0.58, (2/3)^0.5 ≈ 0.82, 1.0^0.5 = 1.0
+    const boost = Math.pow(coverage, exponent);
+    boosts.set(atomId, boost);
+  }
+
+  return boosts;
+}
+
+// --- MMR (Maximal Marginal Relevance) result diversity ---
+
+/** Default MMR lambda: 0.7 = moderate diversity. */
+const DEFAULT_MMR_LAMBDA = 0.7;
+
+function getMMRLambda(query: RecallQueryInternal): number {
+  if (query.mmr_lambda !== undefined) return Math.max(0, Math.min(1, query.mmr_lambda));
+  const v = parseFloat(process.env.RECALL_MMR_LAMBDA || '');
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_MMR_LAMBDA;
+}
+
+/**
+ * Compute Jaccard similarity on word trigrams between two text bodies.
+ * Returns 0.0 (no overlap) to 1.0 (identical trigram sets).
+ *
+ * Edge case: texts shorter than 3 words produce no trigrams; two empty
+ * trigram sets are treated as identical (returns 1.0). In practice atom
+ * bodies are always longer than 3 words.
+ *
+ * Accepts optional pre-computed trigram sets to avoid redundant extraction
+ * in the MMR loop (O(n) instead of O(n²) extractions).
+ */
+export function computeTextSimilarity(
+  bodyA: string,
+  bodyB: string,
+  precomputedA?: Set<string>,
+  precomputedB?: Set<string>,
+): number {
+  const trigramsA = precomputedA ?? extractTrigrams(bodyA);
+  const trigramsB = precomputedB ?? extractTrigrams(bodyB);
+
+  if (trigramsA.size === 0 && trigramsB.size === 0) return 1.0;
+  if (trigramsA.size === 0 || trigramsB.size === 0) return 0.0;
+
+  let intersection = 0;
+  for (const t of trigramsA) {
+    if (trigramsB.has(t)) intersection++;
+  }
+
+  const union = trigramsA.size + trigramsB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Extract word trigrams from text. Lowercase, strip punctuation, split into words,
+ * then generate consecutive 3-word windows.
+ */
+function extractTrigrams(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .split(/\s+/)
+    .filter(w => w.length > 0);
+
+  const trigrams = new Set<string>();
+  for (let i = 0; i <= words.length - 3; i++) {
+    trigrams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+  }
+  return trigrams;
+}
+
+/**
+ * Apply Maximal Marginal Relevance re-ranking (Carbonell & Goldstein, 1998).
+ *
+ * Greedy selection: pick the highest-scoring atom first, then iteratively select
+ * the candidate that maximizes λ * score(d) - (1-λ) * max_sim(d, selected).
+ *
+ * Scores are normalized to [0, 1] before MMR computation. The returned scores
+ * are the MMR scores (for debugging/audit), not the original relevance scores.
+ * Note: returned scores can be negative when diversity penalty exceeds relevance
+ * (e.g., low-relevance atom highly similar to already-selected atoms).
+ *
+ * O(n²) similarity comparisons but n is small (typically <200 atoms after
+ * filtering). Trigrams are precomputed once per atom to avoid O(n²) extraction.
+ */
+export function applyMMR(
+  scored: Array<{ atom: Atom; score: number }>,
+  lambda: number,
+): Array<{ atom: Atom; score: number }> {
+  if (scored.length <= 1 || lambda >= 1.0) return scored;
+
+  // Normalize scores to [0, 1]
+  let maxScore = -Infinity;
+  let minScore = Infinity;
+  for (const s of scored) {
+    if (s.score > maxScore) maxScore = s.score;
+    if (s.score < minScore) minScore = s.score;
+  }
+  const scoreRange = maxScore - minScore || 1;
+
+  // Precompute trigrams once per atom (avoids O(n²) extraction in the loop)
+  const candidates = scored.map(s => ({
+    atom: s.atom,
+    originalScore: s.score,
+    normalizedScore: (s.score - minScore) / scoreRange,
+    body: s.atom.body,
+    trigrams: extractTrigrams(s.atom.body),
+  }));
+
+  const selected: Array<{ atom: Atom; score: number }> = [];
+  const selectedTrigrams: Set<string>[] = [];
+  const remaining = new Set(candidates.map((_, i) => i));
+
+  // First pick: highest normalized score
+  let bestIdx = 0;
+  let bestNorm = -Infinity;
+  for (const i of remaining) {
+    if (candidates[i].normalizedScore > bestNorm) {
+      bestNorm = candidates[i].normalizedScore;
+      bestIdx = i;
+    }
+  }
+  selected.push({ atom: candidates[bestIdx].atom, score: candidates[bestIdx].normalizedScore });
+  selectedTrigrams.push(candidates[bestIdx].trigrams);
+  remaining.delete(bestIdx);
+
+  // Greedy MMR loop
+  while (remaining.size > 0) {
+    let bestMMR = -Infinity;
+    let bestCandIdx = -1;
+
+    for (const i of remaining) {
+      const relevance = candidates[i].normalizedScore;
+
+      // max similarity to any already-selected atom
+      let maxSim = 0;
+      for (const selTri of selectedTrigrams) {
+        const sim = computeTextSimilarity('', '', candidates[i].trigrams, selTri);
+        if (sim > maxSim) maxSim = sim;
+      }
+
+      const mmrScore = lambda * relevance - (1 - lambda) * maxSim;
+      if (mmrScore > bestMMR) {
+        bestMMR = mmrScore;
+        bestCandIdx = i;
+      }
+    }
+
+    if (bestCandIdx === -1) break;
+
+    selected.push({ atom: candidates[bestCandIdx].atom, score: bestMMR });
+    selectedTrigrams.push(candidates[bestCandIdx].trigrams);
+    remaining.delete(bestCandIdx);
+  }
+
+  return selected;
+}
+
+/** Max allowed length_norm_k — values above 2 produce extreme penalties. */
+const MAX_LENGTH_NORM_K = 2;
+
+function getLengthNormK(query: RecallQueryInternal): number {
+  if (query.length_norm_k !== undefined) return Math.max(0, Math.min(MAX_LENGTH_NORM_K, query.length_norm_k));
+  const v = parseFloat(process.env.RECALL_LENGTH_NORM_K || '');
+  return Number.isFinite(v) && v >= 0 && v <= MAX_LENGTH_NORM_K ? v : DEFAULT_LENGTH_NORM_K;
+}
+
+/**
+ * Compute per-atom length normalization factors.
+ *
+ * Atoms longer than the average word count in the result set get a penalty
+ * factor < 1.0. Atoms at or below average get 1.0 (no boost).
+ *
+ * Formula: lengthFactor = 1 / (1 + k * (wordCount / avgWordCount - 1))
+ * where k controls penalty strength. Clamped to 1.0 for short atoms.
+ */
+export function computeLengthFactors(
+  filtered: Atom[],
+  k: number,
+): Map<string, number> {
+  const factors = new Map<string, number>();
+
+  if (k === 0 || filtered.length === 0) return factors;
+
+  // Compute word counts
+  const wordCounts = new Map<string, number>();
+  let totalWords = 0;
+  for (const atom of filtered) {
+    const wc = atom.body.split(/\s+/).filter(w => w.length > 0).length;
+    wordCounts.set(atom.frontmatter.id, wc);
+    totalWords += wc;
+  }
+
+  const avgWordCount = totalWords / filtered.length;
+
+  // Edge case: all atoms empty or single atom
+  if (avgWordCount === 0) return factors;
+
+  for (const atom of filtered) {
+    const id = atom.frontmatter.id;
+    const wc = wordCounts.get(id) ?? 0;
+    const ratio = wc / avgWordCount;
+
+    if (ratio <= 1.0) {
+      // At or below average — no penalty (factor = 1.0)
+      factors.set(id, 1.0);
+    } else {
+      // Above average — apply penalty
+      const factor = 1 / (1 + k * (ratio - 1));
+      factors.set(id, factor);
+    }
+  }
+
+  return factors;
+}
+
+/**
+ * Compute per-atom specificity scores based on IDF of matched query terms.
+ *
+ * Atoms matching only ubiquitous terms (low IDF) get penalized; atoms matching
+ * rare terms get scores closer to 1.0. Returns atom_id → specificity (0-1).
+ * Atoms not in FTS results default to 1.0 (no penalty).
+ *
+ * For single-term queries, all matches get 1.0 (IDF ratio is always 1).
+ */
+function computeSpecificityScores(
+  memoryDir: string,
+  queryTerms: string[],
+  ftsResults: { atom_id: string; rank: number }[],
+  filtered: Atom[],
+  damping: number,
+): Map<string, number> {
+  const scores = new Map<string, number>();
+
+  // No penalty when damping disabled, single term, or no FTS results
+  if (damping === 0 || queryTerms.length <= 1 || ftsResults.length === 0) {
+    return scores; // empty map — callers use ?? 1.0
+  }
+
+  // Get document frequencies and corpus size
+  const dfMap = getTermDocumentFrequencies(memoryDir, queryTerms);
+  const corpusSize = getCorpusSize(memoryDir);
+  if (!dfMap || corpusSize === 0) {
+    return scores; // graceful degradation
+  }
+
+  // Compute IDF per query term: idf(term) = log(1 + N / df(term))
+  const idfMap = new Map<string, number>();
+  let totalIdf = 0;
+  for (const term of queryTerms) {
+    const df = dfMap.get(term) ?? 0;
+    const idf = df > 0 ? Math.log(1 + corpusSize / df) : Math.log(1 + corpusSize);
+    idfMap.set(term, idf);
+    totalIdf += idf;
+  }
+
+  if (totalIdf === 0) return scores;
+
+  // Build a set of FTS-matched atom IDs for quick lookup
+  const ftsAtomIds = new Set(ftsResults.map(r => r.atom_id));
+
+  // Build per-term FTS match sets (porter-stemmed, matches title+body)
+  // This avoids the stemmer mismatch: FTS stems "running" → "run" and matches
+  // atoms containing "run", but a raw substring check for "running" would miss them.
+  const termAtomSets = new Map<string, Set<string>>();
+  for (const term of queryTerms) {
+    termAtomSets.set(term, getAtomsMatchingTerm(memoryDir, term));
+  }
+
+  // Build set of filtered atom IDs for intersection check
+  const filteredIds = new Set(filtered.map(a => a.frontmatter.id));
+
+  // Score each FTS-matched atom
+  for (const atomId of ftsAtomIds) {
+    if (!filteredIds.has(atomId)) continue; // atom not in filtered set
+
+    let matchedIdf = 0;
+    for (const term of queryTerms) {
+      // Use per-term FTS results: porter-stemmed, covers both title and body
+      if (termAtomSets.get(term)?.has(atomId)) {
+        matchedIdf += idfMap.get(term) ?? 0;
+      }
+    }
+
+    const rawSpecificity = matchedIdf / totalIdf;
+    // Apply damping: blend between 1.0 (no penalty) and rawSpecificity (full penalty)
+    const specificity = 1.0 - damping * (1.0 - rawSpecificity);
+    scores.set(atomId, specificity);
+  }
+
+  return scores;
+}
+
 /**
  * Exponential temporal decay: 1.0 at age=0, 0.5 at age=halfLife, 0.25 at age=2*halfLife.
  * Future-dated atoms are clamped to decay=1.0 (no boost beyond 1).
@@ -116,6 +478,78 @@ export function temporalDecay(createdAt: string, halfLifeDays: number): number {
   const ageMs = Date.now() - new Date(createdAt).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
   return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
+}
+
+/**
+ * Score an episode against a task query using term-overlap relevance + temporal decay.
+ *
+ * Episodes are not in the FTS index, so we compute a lightweight TF-based relevance
+ * score: fraction of query terms that appear in the episode summary. Combined with
+ * temporal decay so recent episodes rank higher when relevance is similar.
+ */
+interface ScoredEpisode {
+  episode: Episode;
+  formatted: string;
+  score: number;
+  relevance: number; // term-overlap component (0 = no query terms matched)
+  tokens: number;
+}
+
+function scoreEpisodes(
+  episodes: Episode[],
+  task: string | undefined,
+  halfLifeDays: number,
+  decayWeight: number,
+): ScoredEpisode[] {
+  const scored: ScoredEpisode[] = [];
+
+  // Tokenize query once
+  const queryTerms = task
+    ? task.toLowerCase().split(/\s+/).filter(t => t.length > 1)
+    : [];
+
+  for (const ep of episodes) {
+    const formatted = `## Episode: ${ep.id}\n\n${ep.summary}`;
+    const tokens = estimateTokens(formatted);
+
+    if (queryTerms.length === 0) {
+      // No task — score by recency only
+      const recency = ep.metadata.started_at
+        ? temporalDecay(ep.metadata.started_at, halfLifeDays)
+        : 0.5;
+      scored.push({ episode: ep, formatted, score: recency, relevance: 1, tokens });
+      continue;
+    }
+
+    // Term-overlap relevance: fraction of query terms found in the summary.
+    // Case-insensitive substring match (same behaviour as before, but normalized).
+    const summaryLower = ep.summary.toLowerCase();
+    let hits = 0;
+    for (const term of queryTerms) {
+      if (summaryLower.includes(term)) hits++;
+    }
+    const relevance = hits / queryTerms.length;
+
+    // Temporal decay
+    const recency = ep.metadata.started_at
+      ? temporalDecay(ep.metadata.started_at, halfLifeDays)
+      : 0.5;
+
+    // Composite: same formula as atoms (relevance * (1 - decayWeight) + recency * decayWeight)
+    const score = relevance * (1 - decayWeight) + recency * decayWeight;
+
+    scored.push({ episode: ep, formatted, score, relevance, tokens });
+  }
+
+  // Sort descending by score, then by recency (started_at) as tiebreaker
+  scored.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return (b.episode.metadata.started_at ?? '').localeCompare(
+      a.episode.metadata.started_at ?? '',
+    );
+  });
+
+  return scored;
 }
 
 /** @internal Extended query with pre-computed embedding vector — not part of the public API. */
@@ -188,6 +622,26 @@ export function recall(
       }
     }
 
+    // IDF hub damping: compute specificity scores to penalize promiscuous-vocabulary atoms.
+    // Tokenize query for specificity computation (same as episode scoring).
+    const idfDamping = getIdfDamping(query);
+    const queryTerms = query.task!.toLowerCase().split(/\s+/).filter(t => t.length > 1);
+    const specificityScores = idfDamping > 0 && queryTerms.length > 1
+      ? computeSpecificityScores(memoryDir, queryTerms, ftsResults ?? [], filtered, idfDamping)
+      : new Map<string, number>();
+
+    // Content-length normalization: penalize long atoms that get inflated BM25 scores.
+    const lengthNormK = getLengthNormK(query);
+    const lengthFactors = lengthNormK > 0
+      ? computeLengthFactors(filtered, lengthNormK)
+      : new Map<string, number>();
+
+    // Query-term coverage boost: penalize atoms matching few query terms.
+    const coverageExponent = getCoverageBoost(query);
+    const coverageBoosts = coverageExponent > 0 && queryTerms.length > 1
+      ? computeCoverageBoosts(memoryDir, queryTerms, ftsResults ?? [], filtered, coverageExponent)
+      : new Map<string, number>();
+
     // Build semantic score map (if query vector provided or embeddings available)
     const semanticScoreMap = new Map<string, number>();
     if (query.queryVector) {
@@ -221,7 +675,8 @@ export function recall(
       // decay + type_weight + conf_factor inside the comparator (O(n log n) otherwise).
       for (const atom of filtered) {
         const id = atom.frontmatter.id;
-        const fts = ftsScoreMap.get(id) ?? 0;
+        const ftsRaw = ftsScoreMap.get(id) ?? 0;
+        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0) * (lengthFactors.get(id) ?? 1.0) * (coverageBoosts.get(id) ?? 1.0);
         const sem = semanticScoreMap.get(id) ?? 0;
         const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
         const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
@@ -258,11 +713,33 @@ export function recall(
       });
     }
 
+    // Phase 8: MMR result diversity — re-rank to prevent redundant atoms filling token budget.
+    // Applied after scoring + sorting but BEFORE the token budget.
+    const mmrLambda = getMMRLambda(query);
+    if (mmrLambda < 1.0 && filtered.length > 1 && finalScoreMap.size > 0) {
+      const scoredForMMR = filtered.map(a => ({
+        atom: a,
+        score: finalScoreMap.get(a.frontmatter.id) ?? 0,
+      }));
+      const reranked = applyMMR(scoredForMMR, mmrLambda);
+      filtered = reranked.map(r => r.atom);
+      // Update finalScoreMap with MMR scores for token budget ordering
+      finalScoreMap = new Map<string, number>();
+      for (let i = 0; i < reranked.length; i++) {
+        // Use descending synthetic scores to preserve MMR order in downstream sort
+        finalScoreMap.set(reranked[i].atom.frontmatter.id, reranked.length - i);
+      }
+    }
+
     // Apply token budget — always when max_tokens is set, even if FTS had no results.
     // When finalScoreMap is empty, applyTokenBudget degrades to greedy insertion-order fill.
     if (query.max_tokens) {
       const baseTokens = estimateTokens(index + handoff + constraints);
-      const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+      // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
+      const episodeReservation = query.include_episodes
+        ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+        : 0;
+      const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
       filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
     }
   } else {
@@ -277,6 +754,19 @@ export function recall(
       const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
       return decayB - decayA;
     });
+
+    // Phase 8 (no-task path): MMR diversity for constitution/render pipeline.
+    // Uses sort-position as synthetic score so the MMR formula can balance
+    // ordering (relevance) against redundancy (similarity).
+    const mmrLambda = getMMRLambda(query);
+    if (mmrLambda < 1.0 && filtered.length > 1) {
+      const scoredForMMR = filtered.map((a, i) => ({
+        atom: a,
+        score: filtered.length - i, // descending synthetic score from sort order
+      }));
+      const reranked = applyMMR(scoredForMMR, mmrLambda);
+      filtered = reranked.map(r => r.atom);
+    }
   }
 
   // Estimate base view tokens (rough: 4 chars per token)
@@ -284,7 +774,11 @@ export function recall(
 
   // Apply token budget for no-task path (task path applies budget inside its scoring block)
   if (query.max_tokens && !(query.task && query.task.trim().length > 0)) {
-    const atomBudget = Math.max(0, query.max_tokens - baseTokens);
+    // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
+    const episodeReservation = query.include_episodes
+      ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+      : 0;
+    const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
     filtered = applyTokenBudget(filtered, atomBudget, query, new Map());
   }
   const atomTokens = filtered.reduce(
@@ -292,23 +786,37 @@ export function recall(
     0,
   );
 
-  // Episodes — load on demand only (never included in startup context by default)
+  // Episodes — scored and budget-capped (never included in startup context by default).
+  // Previously episodes were bulk-included with only a crude keyword filter, dumping
+  // ~800 tokens per episode unranked. Now they go through term-overlap scoring +
+  // temporal decay and compete for a capped fraction of the token budget.
   let episodeStrings: string[] | undefined;
   let episodeTokens = 0;
   if (query.include_episodes) {
-    const episodes = listEpisodes(memoryDir, { limit: 10 });
-    // If a task is specified, prefer episodes whose summary contains matching keywords
-    const relevant = query.task
-      ? episodes.filter((ep) =>
-          query.task!.toLowerCase().split(/\s+/).some((word) =>
-            ep.summary.toLowerCase().includes(word),
-          ),
-        )
-      : episodes;
-    episodeStrings = relevant.map(
-      (ep) => `## Episode: ${ep.id}\n\n${ep.summary}`,
-    );
-    episodeTokens = episodeStrings.reduce((s, e) => s + estimateTokens(e), 0);
+    const episodes = listEpisodes(memoryDir, { limit: 20 });
+    const halfLife = getDecayHalfLife(query);
+    const dw = getDecayWeight(query);
+    const scored = scoreEpisodes(episodes, query.task, halfLife, dw);
+
+    // Budget-aware greedy fill: episodes get at most MAX_EPISODE_BUDGET_RATIO of total budget.
+    // When no max_tokens is set, include all scored episodes (backward-compatible).
+    if (query.max_tokens) {
+      const episodeBudget = Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO);
+      const selected: ScoredEpisode[] = [];
+      let used = 0;
+      for (const ep of scored) {
+        if (ep.relevance <= 0 && query.task) continue; // Skip zero-relevance when task is set
+        if (used + ep.tokens > episodeBudget) continue; // Skip if over budget (try next smaller one)
+        selected.push(ep);
+        used += ep.tokens;
+      }
+      episodeStrings = selected.map((s) => s.formatted);
+      episodeTokens = used;
+    } else {
+      // No budget constraint — include all (sorted by score)
+      episodeStrings = scored.map((s) => s.formatted);
+      episodeTokens = scored.reduce((s, e) => s + e.tokens, 0);
+    }
   }
 
   const bundle: ContextBundle = {
