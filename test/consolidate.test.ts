@@ -248,4 +248,103 @@ describe('consolidateAtoms', () => {
     const liveResult = await consolidateAtoms({ memoryDir: testDir, dryRun: false });
     expect(liveResult.dry_run).toBe(false);
   });
+
+  it('promotes atoms with stale relation types by canonicalizing them', async () => {
+    // Older mk versions wrote relation types that are no longer valid in the current schema.
+    // We simulate this by writing a raw atom file directly to disk, bypassing createAtom's
+    // schema validation (exactly as those atoms ended up in real stores).
+    const atomId = 'BELI-2020-01-01-STALE-RELATIONS-1test';
+    const atomFile = path.join(testDir, 'ENTITIES', `${atomId}.md`);
+    const rawContent = [
+      '---',
+      `id: ${atomId}`,
+      'type: belief',
+      'status: draft',
+      'confidence: 0.5',
+      'created_at: "2020-01-01T00:00:00Z"',
+      'updated_at: "2020-01-01T00:00:00Z"',
+      'ttl_days: null',
+      'scope:',
+      '  tags:',
+      '    - auto-extracted',
+      'relations:',
+      '  - type: related',
+      '    target: some-other-atom',
+      '  - type: seeded',        // stale → related
+      '    target: another-atom',
+      '  - type: evidenced_by',  // stale → supports
+      '    target: evidence-atom',
+      '  - type: refines',       // stale → extends
+      '    target: parent-atom',
+      '---',
+      '',
+      '## Belief',
+      'This atom has stale relation types from an older mk version.',
+    ].join('\n');
+    fs.writeFileSync(atomFile, rawContent, 'utf-8');
+
+    const result = await consolidateAtoms({ memoryDir: testDir });
+
+    // Should be promoted without error despite stale relation types
+    expect(result.errors).toBe(0);
+    expect(result.promoted).toBe(1);
+    expect(result.atoms[0].status).toBe('promoted');
+
+    // Verify the promoted atom on disk has canonicalized relation types
+    const atoms = listAtoms(testDir);
+    const promoted = atoms.find((a) => a.frontmatter.id === atomId);
+    expect(promoted).toBeDefined();
+    expect(promoted!.frontmatter.status).toBe('active');
+
+    const rels = promoted!.frontmatter.relations ?? [];
+    const relByTarget = Object.fromEntries(rels.map((r) => [r.target, r.type]));
+    expect(relByTarget['some-other-atom']).toBe('related');   // unchanged
+    expect(relByTarget['another-atom']).toBe('related');      // seeded → related
+    expect(relByTarget['evidence-atom']).toBe('supports');    // evidenced_by → supports
+    expect(relByTarget['parent-atom']).toBe('extends');       // refines → extends
+  });
+
+  it('drops relations with empty targets during promotion', async () => {
+    // Write an atom with an empty-target relation directly to disk to simulate
+    // malformed atoms from older mk versions.
+    const atomId = 'FACT-2020-01-01-EMPTY-TARGET-FACT-1test';
+    const atomFile = path.join(testDir, 'ENTITIES', `${atomId}.md`);
+    const rawContent = [
+      '---',
+      `id: ${atomId}`,
+      'type: fact',
+      'status: draft',
+      'confidence: 0.8',
+      'created_at: "2020-01-01T00:00:00Z"',
+      'updated_at: "2020-01-01T00:00:00Z"',
+      'ttl_days: null',
+      'scope:',
+      '  tags:',
+      '    - auto-extracted',
+      'relations:',
+      '  - type: related',
+      '    target: valid-target',
+      '  - type: supports',
+      '    target: ""',     // empty — should be dropped
+      '---',
+      '',
+      '## Fact',
+      'This atom has a relation with an empty target.',
+    ].join('\n');
+    fs.writeFileSync(atomFile, rawContent, 'utf-8');
+
+    const result = await consolidateAtoms({ memoryDir: testDir });
+
+    expect(result.errors).toBe(0);
+    expect(result.promoted).toBe(1);
+
+    const atoms = listAtoms(testDir);
+    const promoted = atoms.find((a) => a.frontmatter.id === atomId);
+    expect(promoted).toBeDefined();
+    expect(promoted!.frontmatter.status).toBe('active');
+
+    const rels = promoted!.frontmatter.relations ?? [];
+    expect(rels).toHaveLength(1);
+    expect(rels[0].target).toBe('valid-target');
+  });
 });
