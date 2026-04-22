@@ -72,7 +72,7 @@ function findContradictions(atoms: Atom[], memoryDir: string): LintFinding[] {
     if (rel.relation_type === 'contradicts' && activeIds.has(rel.source_id) && activeIds.has(rel.target_id)) {
       // Avoid duplicate findings (A contradicts B and B contradicts A)
       const key = [rel.source_id, rel.target_id].sort().join('|');
-      if (!findings.some((f) => f.atom_ids.sort().join('|') === key)) {
+      if (!findings.some((f) => [...f.atom_ids].sort().join('|') === key)) {
         findings.push({
           category: 'contradiction',
           severity: 'warning',
@@ -159,6 +159,7 @@ function findNearDuplicates(atoms: Atom[], memoryDir: string): LintFinding[] {
   if (!indexExists(memoryDir)) return findings;
 
   const activeAtoms = atoms.filter((a) => a.frontmatter.status === 'active');
+  const activeById = new Map(activeAtoms.map((a) => [a.frontmatter.id, a]));
   const seen = new Set<string>();
 
   for (const atom of activeAtoms) {
@@ -179,7 +180,7 @@ function findNearDuplicates(atoms: Atom[], memoryDir: string): LintFinding[] {
       if (seen.has(key)) continue;
 
       // Find the other atom to check tags
-      const other = activeAtoms.find((a) => a.frontmatter.id === res.atom_id);
+      const other = activeById.get(res.atom_id);
       if (!other) continue;
 
       const otherTags = other.frontmatter.scope?.tags ?? [];

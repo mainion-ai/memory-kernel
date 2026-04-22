@@ -51,6 +51,14 @@ export function registerLintCommand(program: Command): void {
         exitWithError('--stale-days must be a positive integer', opts.json);
       }
 
+      if (opts.fix) {
+        if (opts.json) {
+          console.log(JSON.stringify({ warning: '--fix is not yet implemented' }));
+        } else {
+          console.warn('⚠ --fix is not yet implemented; running lint in read-only mode.\n');
+        }
+      }
+
       const result = lintMemoryStore(memoryDir, { staleDays });
 
       if (opts.json) {
