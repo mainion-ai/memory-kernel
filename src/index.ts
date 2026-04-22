@@ -259,3 +259,7 @@ export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.j
 // Extract (automatic atom extraction from conversation logs)
 export { extractFromLog } from './extract.js';
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
+
+// Consolidate (lifecycle pipeline for promoting draft atoms)
+export { consolidateAtoms } from './consolidate.js';
+export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, ConsolidateAtomStatus } from './types.js';
