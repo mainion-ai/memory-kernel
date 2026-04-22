@@ -143,7 +143,7 @@ function buildBeliefArcs(
 }
 
 export interface RenderClaudeMdOptions {
-  /** Token budget for recall. Default: 8000 (~5% of a 200K context window, ~100 atoms). */
+  /** Token budget for recall. Default: 16000. Override via MK_RENDER_BUDGET env var. */
   maxTokens?: number;
   /** Per-type score multipliers for recall ranking. */
   typeWeights?: Partial<Record<string, number>>;
@@ -154,7 +154,8 @@ export interface RenderClaudeMdOptions {
  * Returns the rendered content — caller is responsible for writing to disk.
  */
 export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = {}): string {
-  const maxTokens = opts.maxTokens ?? 8000;
+  const maxTokens = opts.maxTokens
+    ?? (parseInt(process.env.MK_RENDER_BUDGET || '0', 10) || 16000);
 
   // Recall with token budget — applies privacy filtering (no SECRET/PERSONAL) and token cap.
   const bundle = recall(memoryDir, {

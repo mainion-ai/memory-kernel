@@ -431,7 +431,7 @@ export async function handleResolveConflict(
 
 const getContextBundleSchema = {
   task: z.string().optional().describe('Task description for scoping and FTS re-ranking'),
-  max_tokens: z.number().int().min(0).optional().describe('Token budget, default 4000'),
+  max_tokens: z.number().int().min(0).optional().describe('Token budget, default 8000'),
   skip_reflect: z.boolean().optional().describe('Skip reflect step, default false'),
   agent_id: agentIdSchema.optional(),
   session_id: z.string().optional(),

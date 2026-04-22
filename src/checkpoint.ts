@@ -15,7 +15,7 @@ export interface CheckpointOptions {
   agent_id: string;
   session_id: string;
   task?: string;
-  max_tokens?: number; // default: 4000
+  max_tokens?: number; // default: 8000
   skipReflect?: boolean;
   // Isolation-aware recall: when all three are set and isolated=true,
   // checkpoint uses recallIsolated() to merge agent + shared atoms.
@@ -57,7 +57,7 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
   try {
     const recallQuery = {
       task: opts.task,
-      max_tokens: opts.max_tokens ?? 4000,
+      max_tokens: opts.max_tokens ?? 8000,
     };
 
     if (opts.isolated && opts.sharedRecall !== false && opts.baseDir) {
