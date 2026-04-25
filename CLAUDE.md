@@ -44,6 +44,7 @@ npm run build   # compile TypeScript
 - Error handling: use `exitWithError(message, opts.json)` helper
 - Relation types: `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `applied_to`, `related`
 - Wander has typed edge weights with presets: `constitution`, `tension`, `narrative`
+- **Skill seed-atom convention:** `/mk-memory-setup` bundles its lifecycle seed atoms at `container/skills/mk-memory-setup/seed-atoms/lifecycle/` (one markdown body per atom) and Step 8b in `SKILL.md` seeds them via `npx mk remember "$(cat <file>)" -t procedure --slug <stable-slug>`. The eight atoms (7 procedures + 1 constraint) mirror sections of `docs/agent-session-loop.md` — keep them in sync when either side changes. Re-seeding requires moving the stale `ENTITIES/<id>.md` to `ARCHIVE/` first, since `generateAtomId()` always appends a unique suffix.
 
 ## Per-agent isolation
 

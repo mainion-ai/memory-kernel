@@ -86,11 +86,21 @@ Then it runs all steps automatically.
 
 ## Post-Setup
 
-After setup, the agent can use the standard [session loop](../../../docs/agent-session-loop.md):
+After setup, the agent's full operating loop ([docs/agent-session-loop.md](../../../docs/agent-session-loop.md)) is **already inside memory** as 8 typed atoms — 7 procedures (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics) and 1 constraint (Session-Loop Pitfalls — the hard "what not to do" rules). The agent recalls its own lifecycle via `mk recall` like any other knowledge:
+
+```bash
+mk recall -d {memory-dir} --task "session loop lifecycle" --json
+```
+
+The seeds live in [`seed-atoms/lifecycle/`](seed-atoms/lifecycle/) — one markdown file per atom. Edit a file there and re-seed (Step 8b in `SKILL.md` shows how) to update what the agent knows.
+
+**The four-step quick mnemonic** still holds:
 1. **Session starts** → CLAUDE.md loaded automatically
-2. **During session** → `mk remember` when learning something worth keeping
-3. **Session ends** → `mk render` to update CLAUDE.md
+2. **During session** → `mk remember` when learning something worth keeping; `mk relate` when you see a connection
+3. **Session ends** → `mk episode`, then `mk render` to update CLAUDE.md
 4. **Between sessions** → `mk wander` finds unexpected connections (used by NanoClaw drift)
+
+The seeded atoms add the rest: when to run wander, the order of `citations` → `relink`, the weekly cron pipeline, A2A handoff protocol, and the hard rules.
 
 See also:
 - [Container quickref](../../../docs/agent-quickref-container.md) — paths and commands for container agents
