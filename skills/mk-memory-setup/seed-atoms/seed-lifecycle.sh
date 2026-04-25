@@ -71,5 +71,5 @@ done
 
 echo
 echo "✓ Lifecycle seed complete. Verify with:"
-echo "    npx mk recall -d \"$MEMORY_DIR\" --tags session-loop --json | jq '.atoms | length'"
+echo "    npx mk recall -d \"$MEMORY_DIR\" --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == \"session-loop\")] | length'"
 echo "  Expected: 8 (7 procedures + 1 constraint)"

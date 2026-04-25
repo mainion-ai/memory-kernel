@@ -36,7 +36,7 @@ bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory
 Verify after seeding:
 
 ```bash
-npx mk recall -d ~/mk-memory --tags session-loop --json | jq '.atoms | length'
+npx mk recall -d ~/mk-memory --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
 # Expected: 8
 ```
 

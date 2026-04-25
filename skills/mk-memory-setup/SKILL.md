@@ -241,7 +241,7 @@ The script seeds 7 procedure atoms (Session Start, During Session, Session End, 
 **Verify:**
 
 ```bash
-npx mk recall -d "{MEMORY_DIR}" --tags session-loop --json | jq '.atoms | length'
+npx mk recall -d "{MEMORY_DIR}" --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
 # Expected: 8 (7 procedures + 1 constraint)
 ```
 
@@ -361,7 +361,7 @@ Plus host-specific lines:
 
 Close the summary with:
 
-> Verify health any time with the `/mk-doctor` skill. The agent's full operating loop is already inside memory as 8 typed atoms (`mk recall --tags session-loop`).
+> Verify health any time with the `/mk-doctor` skill. The agent's full operating loop is already inside memory as 8 typed atoms (`mk recall --types procedure,constraint`).
 
 ---
 
@@ -379,6 +379,6 @@ Host-specific troubleshooting lives in each reference file. The items below are 
 
 **Git push fails:** ensure `gh repo create` was run (Step 5) or that the remote exists: `git remote -v`. If the user is unauthenticated, `gh auth login` first.
 
-**Lifecycle atoms didn't seed:** confirm `seed-lifecycle.sh` is executable (`chmod +x`), confirm `seed-atoms/lifecycle/` exists alongside it, then re-run with `bash` explicitly. Verify with `mk recall --tags session-loop --json | jq '.atoms | length'` — expect 8.
+**Lifecycle atoms didn't seed:** confirm `seed-lifecycle.sh` is executable (`chmod +x`), confirm `seed-atoms/lifecycle/` exists alongside it, then re-run with `bash` explicitly. Verify with `mk recall --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'` — expect 8.
 
 **`/mk-doctor` reports lifecycle missing on a previously-set-up agent:** that agent was bootstrapped before the lifecycle-seed step existed. Run `bash "$SKILL_DIR/seed-atoms/seed-lifecycle.sh" "{MEMORY_DIR}"` to seed them now.

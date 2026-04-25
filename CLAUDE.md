@@ -13,7 +13,7 @@ It contains test structure, API gotchas, security rules, and all coding conventi
 ## Commands
 
 ```bash
-npm test        # run all tests (vitest, 805+ tests)
+npm test        # run all tests (vitest, 1070+ tests)
 npm run build   # compile TypeScript
 ```
 

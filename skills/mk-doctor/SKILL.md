@@ -189,7 +189,7 @@ This synthesises `atom_imported` events from existing files so `mk replay` and `
 The agent's operating manual should live as 8 atoms tagged `session-loop` (7 procedure + 1 constraint), seeded by `mk-memory-setup` Step 8b. If they're missing, the agent has no in-memory guidance on when to wander, when to lint, or the A2A handoff protocol.
 
 ```bash
-LIFECYCLE_COUNT=$(npx mk recall -d "$MEMORY_DIR" --tags session-loop --json 2>/dev/null | jq -r '.atoms | length' 2>/dev/null || echo 0)
+LIFECYCLE_COUNT=$(npx mk recall -d "$MEMORY_DIR" --types procedure,constraint --json 2>/dev/null | jq -r '[.atoms[] | select(.tags[]? == "session-loop")] | length' 2>/dev/null || echo 0)
 echo "Lifecycle atoms found: $LIFECYCLE_COUNT (expected: 8)"
 ```
 

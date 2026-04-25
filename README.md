@@ -155,8 +155,8 @@ Human-readable, git-friendly, auditable, portable.
 | `fact` | Verified truths | ∞ |
 | `decision` | Architecture/design choices | ∞ |
 | `constraint` | Rules and boundaries | ∞ |
-| `belief` | Hypotheses, not yet verified | 30 days |
-| `preference` | User or agent preferences | 180 days |
+| `belief` | Hypotheses, not yet verified | ∞ (confidence scores handle evolution) |
+| `preference` | User or agent preferences | ∞ |
 | `open_question` | Unresolved questions | 90 days |
 | `procedure` | How-to instructions | ∞ |
 | `entity_summary` | Descriptions of key things | 180 days |

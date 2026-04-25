@@ -106,7 +106,7 @@ The result should show your `hostPath` and `containerPath: "memory"`. Inside the
 
 ## Step N4: Conversation-log and impulse-queue symlinks
 
-Link NanoClaw's session logs and impulse queue into the memory directory so kernel commands like `mk extract` and `mk wander --drift` can see what the agent did:
+Link NanoClaw's session logs and impulse queue into the memory directory so kernel commands like `mk extract` and `mk wander` can see what the agent did:
 
 ```bash
 NANOCLAW_DIR="{NANOCLAW_DIR}"
