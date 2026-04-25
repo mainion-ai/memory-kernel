@@ -13,7 +13,7 @@ It contains test structure, API gotchas, security rules, and all coding conventi
 ## Commands
 
 ```bash
-npm test        # run all tests (vitest, 805+ tests)
+npm test        # run all tests (vitest, 1070+ tests)
 npm run build   # compile TypeScript
 ```
 
@@ -44,6 +44,8 @@ npm run build   # compile TypeScript
 - Error handling: use `exitWithError(message, opts.json)` helper
 - Relation types: `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `applied_to`, `related`
 - Wander has typed edge weights with presets: `constitution`, `tension`, `narrative`
+- **Skill seed-atom convention:** `/mk-memory-setup` bundles its lifecycle seed atoms at `skills/mk-memory-setup/seed-atoms/lifecycle/` (one markdown body per atom) and seeds them via the bundled `seed-atoms/seed-lifecycle.sh` script (called from Step 7b in `SKILL.md`). The eight atoms (7 procedures + 1 constraint) mirror sections of `docs/agent-session-loop.md` — keep them in sync when either side changes. Re-seeding requires moving the stale `ENTITIES/<id>.md` to `ARCHIVE/` first, since `generateAtomId()` always appends a unique suffix.
+- **Skill host-axis convention:** the setup and doctor skills treat memory-kernel as host-agnostic at their core, with host-specific knowledge living in `references/<host>.md`. The three first-class hosts are NanoClaw (rendered CLAUDE.md), OpenClaw (native plugin + AGENTS.md/MEMORY.md doctrine), and MCP clients (Claude Desktop / Cursor / Continue running `mk-mcp` over stdio). When adding host-specific behaviour, branch in the skill's host-detect step and write the details into the matching reference file rather than hard-coding into SKILL.md.
 
 ## Per-agent isolation
 

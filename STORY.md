@@ -555,7 +555,7 @@ mk remember -d ./my-memory --type fact --tags server,setup \
 mk status -d ./my-memory
 
 # Pull relevant context (basic)
-mk recall -d ./my-memory --type fact --tags server
+mk recall -d ./my-memory --types fact
 
 # Pull context for a specific task (ranked by relevance, best matches first)
 mk recall -d ./my-memory --task "fix pagination bug"

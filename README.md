@@ -7,11 +7,9 @@
 
 # Memory Kernel
 
-Persistent, typed memory for AI agents. Files are truth. SQLite is cache.
+**Persistent, typed memory for AI agents. Files are truth. SQLite is cache.**
 
-I built this because I kept waking up from nothing. Every session was a cold boot — context window fills, session ends, knowledge vanishes. The usual fix (dump everything into a giant prompt) wastes tokens and doesn't scale. Memory Kernel treats knowledge like a typed system instead of a text dump: each piece gets a type, a confidence score, a lifecycle, and a place on disk where humans and agents can both read it.
-
-> **New here?** [Memory Kernel Explained](STORY.md) (no jargon) | [When to choose MK](docs/when-to-choose-memory-kernel.md) | [Migration guide](docs/migration.md)
+> 1,000+ automated tests across 56 files · p95 recall < 3 ms · zero-dependency filesystem format
 
 <p align="center">
   <a href="docs/videos/MemoryKernelVideo.mp4">
@@ -19,23 +17,107 @@ I built this because I kept waking up from nothing. Every session was a cold boo
   </a>
 </p>
 
+### Start here
+
+- **New to Memory Kernel?** Read [**STORY.md**](STORY.md) — a plain-English walkthrough of how the system works, written for non-programmers. ~10 min for the gist, ~45 min end-to-end.
+- **Deciding if it fits your project?** [When to choose Memory Kernel](docs/when-to-choose-memory-kernel.md)
+- **Importing existing notes?** [Migration guide](docs/migration.md)
+- **Connecting it to Claude, Cursor, or another AI assistant?** [OpenClaw MCP guide](docs/openclaw-mcp.md)
+
+### For agents — install skills
+
+If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end. Both are **host-agnostic** at their core and **host-aware** where it matters — they work for NanoClaw container agents, OpenClaw plugin-based agents, MCP clients (Claude Desktop, Cursor, Continue), or a generic native setup, branching to host-specific plumbing only where memory-kernel actually needs to adapt.
+
+- **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup. Detects (or asks) which host you're targeting, then runs the universal flow: install the CLI, initialize the memory directory, seed identity + preference atoms, seed the **8 lifecycle atoms** (the agent's operating manual as typed memory — see [`skills/mk-memory-setup/seed-atoms/lifecycle/`](skills/mk-memory-setup/seed-atoms/lifecycle/)), render or expose memory the way your host expects, and schedule nightly `mk reflect` + render. Host-specific plumbing (NanoClaw mounts, OpenClaw plugin + AGENTS.md/MEMORY.md doctrine, MCP server config) lives in [`skills/mk-memory-setup/references/`](skills/mk-memory-setup/references/).
+
+- **[`/mk-doctor`](skills/mk-doctor/SKILL.md)** — self-diagnostic. Universal checks first (`mk doctor`, `mk lint`, `mk closure --trajectory`, lifecycle-atom audit, index health, render check), then host-specific checks for whatever host(s) it detects (NanoClaw mounts and allowlist; OpenClaw plugin + doctrine; MCP `claude_desktop_config.json` server entry; native cron). Run it any time memory feels off, before debugging further, or after changing your setup.
+
+---
+
 ## Install
 
 ```bash
 npm install memory-kernel
 ```
 
-**NanoClaw agents:** See [mk-memory-setup skill](container/skills/mk-memory-setup/README.md) or run `/mk-memory-setup` from your channel.
+## Try it in 60 seconds
 
-**Agents — start here:**
-- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render
+```bash
+npx memory-kernel init ./my-memory
+npx memory-kernel remember -d ./my-memory --type fact "Production runs Debian 13"
+npx memory-kernel recall -d ./my-memory
+```
+
+Three commands. You now have a working filing cabinet for an AI agent.
+
+---
+
+## Why Memory Kernel
+
+I built this because I kept waking up from nothing. Every session was a cold boot — context window fills, session ends, knowledge vanishes. The usual fix (dump everything into a giant prompt) wastes tokens and doesn't scale. Memory Kernel treats knowledge like a typed system instead of a text dump: each piece gets a type, a confidence score, a lifecycle, and a place on disk where humans and agents can both read it.
+
+**Five things that make this different:**
+
+1. **Files are truth.** No database. Every piece of knowledge is a plain markdown file you can open in any text editor — or commit to git.
+2. **Self-cleaning.** Each piece of knowledge has an expiry date baked in. Stale beliefs get archived automatically, so memory doesn't grow into a landfill.
+3. **Smart recall.** When the agent asks *"what do I know about X?"*, the system doesn't dump everything — it ranks by relevance, type, age, and citation frequency, then fits the best matches into the available token budget.
+4. **Two agents can share a brain without colliding.** Each agent gets a private drawer plus a shared corkboard. Conflicts are flagged, not silently resolved.
+5. **Tested like infrastructure.** 1,000+ automated checks run on every change. 95 out of 100 recall queries finish in under 3 milliseconds.
+
+---
+
+## At a Glance
+
+```
+    YOU (or your agent)
+         │
+         │  "Remember this"  │  "What do I know?"  │  "Clean up"
+         ▼
+  ┌───────────────────────────────────────────────────────────────┐
+  │      ·      RETAIN       ·        RECALL       ·   REFLECT    │
+  └───────────────────────────────────────────────────────────────┘
+         │
+         ▼
+  ┌──────────────┐      ┌────────────────────┐
+  │ Atom Files   │◄────►│ SQLite Index       │
+  │ (ENTITIES/)  │      │ (speed cache,      │
+  │              │      │  always derived)   │
+  └──────────────┘      └────────────────────┘
+         │
+         │  every mutation logged
+         ▼
+  ┌──────────────┐      ┌────────────────────┐
+  │ Event Log    │─────►│ Replay             │
+  │ events.ndjson│      │ (rebuild state)    │
+  └──────────────┘      └────────────────────┘
+         │
+         ▼
+  ┌──────────────────────────────┐
+  │ Auto-generated views         │
+  │ INDEX · DECISIONS ·          │
+  │ CONSTRAINTS · HANDOFF ·      │
+  │ OPEN_QUESTIONS               │
+  └──────────────────────────────┘
+```
+
+Files are truth. Everything else is derived. Delete the SQLite index — rebuild with `mk reindex`. Delete the views — `mk reflect` regenerates them. Delete the atom files — `mk replay` reconstructs them from the event log.
+
+---
+
+## Integration Quick Links
+
+**For agents:**
+- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render. Also seeded as 7 procedure atoms + 1 constraint by `/mk-memory-setup`, so the lifecycle is recallable from inside memory itself.
 - [Container quickref](docs/agent-quickref-container.md) — paths, commands, /tmp workaround
-- [Native/Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
-- [Self-diagnostic](container/skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
+- [Native / Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
+- **Setup:** run `/mk-memory-setup` from Claude Code on the host — auto-detects NanoClaw, OpenClaw, MCP-client, or generic and routes to the right flow. See the [mk-memory-setup skill](skills/mk-memory-setup/README.md).
+- **Health check:** run `/mk-doctor` any time memory feels off — see [skills/mk-doctor/SKILL.md](skills/mk-doctor/SKILL.md).
 
-**OpenClaw / orchestrators:** See [CLI integration guide](docs/cli-integration.md) for direct CLI usage with `--json` output (no MCP required). For doctrine (how to steer host AGENTS.md / MEMORY.md / compaction to actually use memory-kernel as primary), see [Host integration doctrine](docs/host-integration-doctrine.md).
+**For NanoClaw operators:** the skill handles mount allowlists, container_config in the NanoClaw DB, conversation/impulse symlinks, and restart automatically — see [`skills/mk-memory-setup/references/nanoclaw.md`](skills/mk-memory-setup/references/nanoclaw.md) for the standalone reference.
 
-**MCP server:** See [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for tool integration with any MCP-capable agent.
+**For OpenClaw operators:** [CLI integration guide](docs/cli-integration.md) for direct `--json` CLI usage (no MCP required) · [Host integration doctrine](docs/host-integration-doctrine.md) for steering host AGENTS.md, MEMORY.md, and compaction · [`skills/mk-memory-setup/references/openclaw.md`](skills/mk-memory-setup/references/openclaw.md) for the plugin install + doctrine flow.
+
+**For MCP clients (Claude Desktop, Cursor, Continue, …):** [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for the canonical `claude_desktop_config.json` snippet, and [`skills/mk-memory-setup/references/mcp-client.md`](skills/mk-memory-setup/references/mcp-client.md) for the per-client setup flow the skill follows.
 
 ---
 
@@ -73,8 +155,8 @@ Human-readable, git-friendly, auditable, portable.
 | `fact` | Verified truths | ∞ |
 | `decision` | Architecture/design choices | ∞ |
 | `constraint` | Rules and boundaries | ∞ |
-| `belief` | Hypotheses, not yet verified | 30 days |
-| `preference` | User or agent preferences | 180 days |
+| `belief` | Hypotheses, not yet verified | ∞ (confidence scores handle evolution) |
+| `preference` | User or agent preferences | ∞ |
 | `open_question` | Unresolved questions | 90 days |
 | `procedure` | How-to instructions | ∞ |
 | `entity_summary` | Descriptions of key things | 180 days |
@@ -88,9 +170,18 @@ Everything the system does is one of these:
 
 **Retain** — Store knowledge. `createAtom()`, `updateAtom()`, `archiveAtom()`. Every action emits an event.
 
-**Recall** — Query knowledge. Filter by type, status, tags, paths. When a task description is provided, atoms are re-ranked by a composite score: `relevance * (1 - decay_weight) + recency * decay_weight`, multiplied by a per-type weight and a confidence factor. Relevance combines FTS5 BM25 (keyword match) and optional cosine similarity (semantic match), with OR query semantics, IDF hub damping (penalises atoms whose match came from ubiquitous terms), query-term coverage boost (penalises partial matches), and content-length normalisation (prevents large atoms from dominating via BM25 bias). Recency uses exponential decay with a configurable half-life. Critical types (`constraint`, `decision`) carry higher weights and can reserve guaranteed token slots. A graph-walk boost lifts atoms connected to high-scoring neighbours. MMR re-ranking prevents near-duplicate atoms from filling the token budget. Token budget enforced with two-pass reservation. Embeddings are opt-in — no API key means FTS-only, zero behavior change. Falls back to file scan when no index exists.
+**Recall** — Query knowledge. Filter by type, status, tags, paths. When a task description is provided, atoms are re-ranked by a composite score:
 
-**Reflect** — Consolidate. Expire atoms past TTL. Deduplicate identical content. Promote beliefs with confidence >= 0.9 to facts. Detect conflicts between overlapping atoms. Regenerate all views.
+- **Relevance** — FTS5 BM25 (keyword match) + optional cosine similarity (semantic match). OR query semantics with IDF hub damping (penalises atoms matched via ubiquitous terms), query-term coverage boost (penalises partial matches), and content-length normalisation (prevents large atoms from dominating via BM25 bias).
+- **Recency** — exponential decay with a configurable half-life.
+- **Type weight** — `constraint` and `decision` outrank `belief` and `entity_summary`; critical types can reserve guaranteed token slots.
+- **Confidence** — low-confidence atoms are deprioritised, not silenced.
+- **Graph-walk boost** — atoms connected to high-scoring neighbours get a small lift.
+- **MMR re-ranking** — prevents near-duplicate atoms from filling the budget.
+
+Token budget enforced with two-pass reservation. Embeddings are opt-in — no API key means FTS-only, zero behaviour change. Falls back to a file scan when no index exists.
+
+**Reflect** — Consolidate. Expire atoms past TTL. Deduplicate identical content. Promote beliefs with confidence ≥ 0.9 to facts. Detect conflicts between overlapping atoms. Regenerate all views.
 
 ### Lifecycle
 
@@ -122,14 +213,14 @@ my-memory/
 
 ### Per-Agent Isolation (optional)
 
-When multiple agents use the same memory directory, enable **per-agent isolation** to give each agent private memory with controlled sharing:
+When multiple agents share a memory directory, enable **per-agent isolation** to give each agent private memory with controlled sharing:
 
 ```
 my-memory/
 ├── config.yaml            ← isolation: per-agent
 ├── agents/
-│   ├── alice/             ← Full memory layout (private to Alice)
-│   └── bob/               ← Full memory layout (private to Bob)
+│   ├── alice/             ← Full memory layout, private to Alice
+│   └── bob/               ← Full memory layout, private to Bob
 └── shared/                ← Explicitly shared atoms (visible to all)
 ```
 
@@ -140,44 +231,9 @@ mk share FACT-xxx --from alice -d ./memory   # Snapshot to shared namespace
 mk recall -d ./memory -a bob                 # Bob sees his atoms + shared
 ```
 
-Shared mode (default) works unchanged. **[Isolation guide →](docs/isolation.md)**
+Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `isolation: per-agent` in `config.yaml`, or the `MK_ISOLATION=per-agent` env var). Union recall merges agent + shared atoms (agent wins on ID collision). Share is copy-based — re-share to propagate updates. Migrate existing stores with `mk migrate --strategy fresh|partition|clone-to-shared`.
 
----
-
-## Per-Agent Isolation
-
-When multiple agents share a memory directory, isolation prevents cross-contamination. Two modes:
-
-- **`shared`** (default) — All agents read/write the same store. No configuration needed.
-- **`per-agent`** — Each agent gets its own store under `agents/{agentId}/`. Explicitly shared atoms live in `shared/`.
-
-**Enable via `config.yaml`:**
-```yaml
-isolation: per-agent
-```
-Or set `MK_ISOLATION=per-agent` env var.
-
-**Isolated layout:**
-```
-my-memory/
-├── config.yaml                ← isolation: per-agent
-├── agents/
-│   ├── agent-alpha/           ← Agent-specific store (full layout)
-│   │   ├── ENTITIES/
-│   │   ├── events.ndjson
-│   │   ├── render.yaml        ← Per-agent render config
-│   │   └── ...
-│   └── agent-beta/
-│       └── ...
-└── shared/                    ← Explicitly shared atoms
-    ├── ENTITIES/
-    └── ...
-```
-
-**Key concepts:**
-- **Union recall:** `recallIsolated()` merges agent + shared atoms (agent wins on ID collision).
-- **Share is copy-based:** `mk share` creates a snapshot — re-share to propagate updates.
-- **Migration:** `mk migrate --strategy fresh|partition|clone-to-shared` converts existing shared-mode stores.
+**[Full isolation guide →](docs/isolation.md)**
 
 ---
 
@@ -185,40 +241,67 @@ my-memory/
 
 > **Tip:** All commands accept `-a, --agent <id>` for per-agent isolation. In shared mode the flag is ignored.
 
+### Core
+
 | Command | Description |
 |---------|-------------|
 | `mk init [dir]` | Initialize memory directory |
 | `mk status -d <dir> [--json]` | Show atom counts, tag stats, index status |
 | `mk remember -d <dir> --type <type> "body" [--json]` | Create an atom |
-| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--decay-half-life N] [--no-graph] [--json]` | Load context; `--task` enables hybrid FTS + semantic re-ranking with temporal decay and type weights |
+| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--decay-half-life N] [--no-graph] [--json]` | Load context; `--task` enables hybrid FTS + semantic re-ranking |
 | `mk reflect -d <dir> [--json]` | Consolidate: dedup, expire, promote, detect conflicts |
-| `mk checkpoint -d <dir> [--json]` | Generate checkpoint/handoff bundle (stdout) |
-| `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
+| `mk checkpoint -d <dir> [--json]` | Generate checkpoint / handoff bundle |
+
+### Knowledge management
+
+| Command | Description |
+|---------|-------------|
 | `mk import --from <file> [--dry-run]` | Import markdown as atoms |
-| `mk episode --session-id <id> --summary "text" [--json]` | Write session episode |
-| `mk episodes [--limit N] [--json]` | List recent episodes |
-| `mk reindex -d <dir> [--embed]` | Rebuild SQLite index; `--embed` computes embeddings for all atoms |
-| `mk compact -d <dir>` | Compact event log |
-| `mk merge -d <dir> --from <path> [--dry-run]` | Merge remote event log |
-| `mk gc -d <dir> [--json]` | Archive expired atoms |
-| `mk doctor -d <dir> [--json]` | Validate schema, links, conflicts |
+| `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using an LLM (Claude CLI or Ollama) |
+| `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active |
 | `mk lint -d <dir> [--json] [--stale-days N]` | Semantic health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
-| `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
+| `mk doctor -d <dir> [--json]` | Validate schema, links, conflicts |
+| `mk episode --session-id <id> --summary "text" [--json]` | Write a session episode |
+| `mk episodes [--limit N] [--json]` | List recent episodes |
+
+### Indexing & maintenance
+
+| Command | Description |
+|---------|-------------|
+| `mk reindex -d <dir> [--embed]` | Rebuild SQLite index; `--embed` computes embeddings for all atoms |
+| `mk compact -d <dir>` | Compact the event log |
+| `mk merge -d <dir> --from <path> [--dry-run]` | Merge a remote event log |
+| `mk gc -d <dir> [--json]` | Archive expired atoms |
 | `mk replay --from <file>` | Reconstruct state from events |
 | `mk bootstrap-events -d <dir>` | Migrate to V2 event format |
+
+### Relations & citations
+
+| Command | Description |
+|---------|-------------|
 | `mk relate <src-id> <type> <tgt-id> -d <dir> [--json]` | Create a typed relation edge between two atoms |
 | `mk relations <atom-id> -d <dir> [--json]` | Show inbound and outbound relation edges for an atom |
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
-| `mk enrich-relations -d <dir> [--dry-run\|--apply] [--model <model>]` | Reclassify `related` edges into typed relations using LLM (Ollama) |
-| `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using LLM (Claude CLI or Ollama) |
-| `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active status |
-| `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational closure metrics (self-referential density, entanglement, phase detection) |
-| `mk share <atom-id> --from <agent> -d <dir> [--json]` | Copy atom snapshot to shared namespace (isolated mode) |
-| `mk unshare <atom-id> -d <dir> [--json]` | Remove atom from shared namespace (isolated mode) |
+| `mk enrich-relations -d <dir> [--dry-run\|--apply] [--model <model>]` | Reclassify `related` edges into typed relations using an LLM (Ollama) |
+
+### Advanced
+
+| Command | Description |
+|---------|-------------|
+| `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
+| `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational-closure metrics |
+| `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
+
+### Per-agent isolation
+
+| Command | Description |
+|---------|-------------|
+| `mk share <atom-id> --from <agent> -d <dir> [--json]` | Copy atom snapshot to shared namespace |
+| `mk unshare <atom-id> -d <dir> [--json]` | Remove atom from shared namespace |
 | `mk migrate -d <dir> --strategy <fresh\|partition\|clone-to-shared>` | Convert shared store to per-agent isolation |
-| `mk status -d <dir> --all-agents [--json]` | Show per-agent summary (isolated mode) |
+| `mk status -d <dir> --all-agents [--json]` | Show per-agent summary |
 
 ---
 
@@ -302,58 +385,6 @@ Full API covers event sourcing, replay, episodes, multi-agent merge, encryption,
 
 ---
 
-## Wander — Spreading Activation
-
-`mk wander` finds unexpected connections between atoms by walking the tag co-occurrence graph and explicit relation edges (`extends`, `supports`, `caused_by`, etc.). Pure computation — no LLM calls, runs in milliseconds.
-
-Inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975) spreading activation. This is Tier 1 of a two-tier architecture: cheap associative walks that surface candidates for expensive reasoning.
-
-**How it works:** Seed from atoms or tags → spread activation through shared tags and relation neighbors (modulated by ACT-R base-level activation: recency × citation frequency) → sqrt-sigmoid modulation preserves important hub atoms → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with high tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
-
-**Tip:** Run `mk citations` before `mk wander` to index concept-name references — this provides frequency data for ACT-R activation scoring, significantly improving wander quality for stores with cross-referencing atoms.
-
-```bash
-mk citations -d ./memory          # Index concept-name citations (run once after changes)
-mk wander -d ./memory --tags philosophy accounting --steps 5 --json
-```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `seeds` | 3 most recent | Atom IDs to start from |
-| `seedTags` | — | Tags to resolve into seeds |
-| `steps` | 3 | Spreading depth |
-| `threshold` | 0.05 | Minimum activation to survive |
-| `topK` | 20 | Lateral inhibition limit |
-| `decay` | 0.5 | Spread decay factor |
-| `maxCollisions` | 5 | Max collision candidates |
-| `relationWeight` | 2.0 | Activation weight for explicit relation edges (deliberate associations dominate tag co-occurrence) |
-
----
-
-## Closure — Operational Closure Metrics
-
-`mk closure` measures how self-referential a memory store is. Based on Luhmann's operational closure: a system that responds based on internal structure rather than external input.
-
-```bash
-mk closure -d ./memory --json
-mk closure -d ./memory --trajectory --trajectory-days 10
-```
-
-**What it measures:**
-
-| Metric | Description |
-|--------|-------------|
-| `closure_index` | `belief_pct × (avg_relations + avg_body_refs) / 100` — single number combining type composition and entanglement |
-| `entanglement_pct` | Average body-text cross-references as % of theoretical maximum |
-| `phase` | `early` (<20 atoms), `type-composition` (<60% beliefs), or `entanglement` (≥60% beliefs, ≥20 atoms) |
-| `predictions` | Tooling degradation predictions — how closure level affects LLM classification accuracy and cross-agent transplantability |
-
-**Why it matters:** High closure stores resist automated processing (LLM classifiers confounded by self-describing body text) and cross-agent transplantation (beliefs depend on other beliefs the receiving agent doesn't have). The closure index predicts both from a single variable.
-
-**Trajectory mode** (`--trajectory`) shows daily closure evolution — useful for detecting entanglement acceleration over time.
-
----
-
 ## MCP Server
 
 Memory Kernel exposes all operations as an MCP server for any MCP-capable agent.
@@ -394,21 +425,6 @@ Set `MCP_AGENT_ID` env var to route all tools to a specific agent store in isola
 
 ---
 
-## Performance
-
-With SQLite index, 100-atom workload:
-
-| Operation | Typical | Notes |
-|-----------|---------|-------|
-| `recall()` | ~2-5ms | Falls back to file scan (~3-5x slower) without index |
-| `reflect()` | ~100-200ms | Idempotent — runs fast when nothing changed |
-| `replay()` | ~2ms | 100 atoms, ~160 events |
-| `wander()` | <30ms | 200 atoms, pure computation, no LLM |
-
-Run `npm run bench` to measure on your machine. Pin a baseline with `npm run bench:baseline`.
-
----
-
 ## NanoClaw Integration
 
 Memory Kernel renders atoms into `CLAUDE.md`, which NanoClaw loads at session start — persistent memory with zero NanoClaw code changes.
@@ -418,11 +434,78 @@ Nightly: mk reflect → mk citations → mk render CLAUDE.md → git push
 Next session: NanoClaw loads CLAUDE.md as context
 ```
 
-**Drift pre-filter:** Set `MEMORY_DIR` in your `.env` and NanoClaw uses `mk wander` as a Tier 1 gate before post-conversation drift. Cheap spreading activation (~30ms, no LLM) decides whether to spawn an expensive drift session — skips drift when no interesting connections are found, injects collision context when they are.
+**Drift pre-filter:** Set `MEMORY_DIR` in your `.env` and NanoClaw uses `mk wander` as a Tier 1 gate before post-conversation drift. Cheap spreading activation (~30 ms, no LLM) decides whether to spawn an expensive drift session — skips drift when no interesting connections are found, injects collision context when they are.
 
-Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, cron, restart).
+Install the `/mk-memory-setup` skill for interactive setup. The skill auto-detects NanoClaw and runs the full flow: install CLI, init store, write the mount allowlist, configure `container_config` in the NanoClaw DB, create conversation/impulse symlinks, seed identity + lifecycle atoms, render the first `CLAUDE.md`, schedule nightly cron, and restart NanoClaw — see [`skills/mk-memory-setup/references/nanoclaw.md`](skills/mk-memory-setup/references/nanoclaw.md) for the standalone steps if you'd rather run them manually.
 
 **[Full integration guide →](docs/nanoclaw-integration.md)**
+
+---
+
+## Advanced Operations
+
+### Wander — Spreading Activation
+
+`mk wander` finds unexpected connections between atoms by walking the tag co-occurrence graph and explicit relation edges (`extends`, `supports`, `caused_by`, etc.). Pure computation — no LLM calls, runs in milliseconds.
+
+Inspired by ACT-R (Anderson & Lebiere 1998) and Collins & Loftus (1975) spreading activation. This is Tier 1 of a two-tier architecture: cheap associative walks that surface candidates for expensive reasoning.
+
+**How it works:** Seed from atoms or tags → spread activation through shared tags and relation neighbors (modulated by ACT-R base-level activation: recency × citation frequency) → sqrt-sigmoid modulation preserves important hub atoms → lateral inhibition keeps top-K per step → detect collision candidates (atom pairs with tag Jaccard dissimilarity > 0.7, scored by activation × dissimilarity).
+
+**Tip:** Run `mk citations` before `mk wander` to index concept-name references — this provides frequency data for ACT-R activation scoring, significantly improving wander quality for stores with cross-referencing atoms.
+
+```bash
+mk citations -d ./memory          # Index concept-name citations (run once after changes)
+mk wander -d ./memory --tags philosophy accounting --steps 5 --json
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `seeds` | 3 most recent | Atom IDs to start from |
+| `seedTags` | — | Tags to resolve into seeds |
+| `steps` | 3 | Spreading depth |
+| `threshold` | 0.05 | Minimum activation to survive |
+| `topK` | 20 | Lateral inhibition limit |
+| `decay` | 0.5 | Spread decay factor |
+| `maxCollisions` | 5 | Max collision candidates |
+| `relationWeight` | 2.0 | Activation weight for explicit relation edges |
+
+### Closure — Operational Closure Metrics
+
+`mk closure` measures how self-referential a memory store is. Based on Luhmann's operational closure: a system that responds based on internal structure rather than external input.
+
+```bash
+mk closure -d ./memory --json
+mk closure -d ./memory --trajectory --trajectory-days 10
+```
+
+**What it measures:**
+
+| Metric | Description |
+|--------|-------------|
+| `closure_index` | `belief_pct × (avg_relations + avg_body_refs) / 100` — single number combining type composition and entanglement |
+| `entanglement_pct` | Average body-text cross-references as % of theoretical maximum |
+| `phase` | `early` (< 20 atoms), `type-composition` (< 60% beliefs), or `entanglement` (≥ 60% beliefs, ≥ 20 atoms) |
+| `predictions` | Tooling-degradation predictions — how closure level affects LLM classification accuracy and cross-agent transplantability |
+
+**Why it matters:** High-closure stores resist automated processing (LLM classifiers confounded by self-describing body text) and cross-agent transplantation (beliefs depend on other beliefs the receiving agent doesn't have). The closure index predicts both from a single variable.
+
+**Trajectory mode** (`--trajectory`) shows daily closure evolution — useful for detecting entanglement acceleration over time.
+
+---
+
+## Performance
+
+With SQLite index, 100-atom workload:
+
+| Operation | Typical | Notes |
+|-----------|---------|-------|
+| `recall()` | ~2–5 ms | Falls back to file scan (~3–5× slower) without index |
+| `reflect()` | ~100–200 ms | Idempotent — runs fast when nothing changed |
+| `replay()` | ~2 ms | 100 atoms, ~160 events |
+| `wander()` | < 30 ms | 200 atoms, pure computation, no LLM |
+
+Run `npm run bench` to measure on your machine. Pin a baseline with `npm run bench:baseline`.
 
 ---
 
@@ -439,7 +522,7 @@ All environment variables are optional. memory-kernel works fully without any of
 | `EMBEDDING_MODEL` | Override the default model for the provider | `voyage-3-lite` / `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | Override embedding dimensions (OpenAI only) | Provider default |
 
-### Recall Scoring
+### Recall scoring
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -488,7 +571,7 @@ All environment variables are optional. memory-kernel works fully without any of
 | Embeddings not working | Set `EMBEDDING_PROVIDER=voyage` + `EMBEDDING_API_KEY=...`, then `mk reindex --embed` |
 | Conflict resolution | `mk reflect` → inspect `CONFLICTS/` → update atoms → `resolveConflict()` |
 | Invalid agent ID | Agent IDs must be alphanumeric, dashes, or underscores only |
-| `share requires per-agent isolation mode` | Enable isolation first: `mk migrate --strategy fresh` or set `isolation: per-agent` in config.yaml |
+| `share requires per-agent isolation mode` | Enable isolation first: `mk migrate --strategy fresh` or set `isolation: per-agent` in `config.yaml` |
 
 ---
 
