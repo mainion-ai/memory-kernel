@@ -26,10 +26,11 @@
 
 ### For agents — install skills
 
-If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end — no manual CLI juggling required:
+If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end. Both are **host-agnostic** at their core and **host-aware** where it matters — they work for NanoClaw container agents, OpenClaw plugin-based agents, MCP clients (Claude Desktop, Cursor, Continue), or a generic native setup, branching to host-specific plumbing only where memory-kernel actually needs to adapt.
 
-- **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup for agents. Installs the CLI, initializes the memory directory, wires container mounts, seeds identity atoms, renders the first `CLAUDE.md`, and (optionally) configures nightly cron + GitHub backup. Run from the host via Claude Code.
-- **[`/mk-doctor`](skills/mk-doctor/SKILL.md)** — self-diagnostic. Auto-detects container vs. native mode and verifies CLI, memory directory, mounts, cron, and CLAUDE.md render. Run it any time memory "feels off" or after changing your setup.
+- **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup. Detects (or asks) which host you're targeting, then runs the universal flow: install the CLI, initialize the memory directory, seed identity + preference atoms, seed the **8 lifecycle atoms** (the agent's operating manual as typed memory — see [`skills/mk-memory-setup/seed-atoms/lifecycle/`](skills/mk-memory-setup/seed-atoms/lifecycle/)), render or expose memory the way your host expects, and schedule nightly `mk reflect` + render. Host-specific plumbing (NanoClaw mounts, OpenClaw plugin + AGENTS.md/MEMORY.md doctrine, MCP server config) lives in [`skills/mk-memory-setup/references/`](skills/mk-memory-setup/references/).
+
+- **[`/mk-doctor`](skills/mk-doctor/SKILL.md)** — self-diagnostic. Universal checks first (`mk doctor`, `mk lint`, `mk closure --trajectory`, lifecycle-atom audit, index health, render check), then host-specific checks for whatever host(s) it detects (NanoClaw mounts and allowlist; OpenClaw plugin + doctrine; MCP `claude_desktop_config.json` server entry; native cron). Run it any time memory feels off, before debugging further, or after changing your setup.
 
 ---
 
@@ -105,16 +106,18 @@ Files are truth. Everything else is derived. Delete the SQLite index — rebuild
 
 ## Integration Quick Links
 
-**Agents / NanoClaw users:**
-- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render
+**For agents:**
+- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render. Also seeded as 7 procedure atoms + 1 constraint by `/mk-memory-setup`, so the lifecycle is recallable from inside memory itself.
 - [Container quickref](docs/agent-quickref-container.md) — paths, commands, /tmp workaround
 - [Native / Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
-- [Self-diagnostic](skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
-- **NanoClaw setup:** run `/mk-memory-setup` from your channel, or see the [mk-memory-setup skill](skills/mk-memory-setup/README.md)
+- **Setup:** run `/mk-memory-setup` from Claude Code on the host — auto-detects NanoClaw, OpenClaw, MCP-client, or generic and routes to the right flow. See the [mk-memory-setup skill](skills/mk-memory-setup/README.md).
+- **Health check:** run `/mk-doctor` any time memory feels off — see [skills/mk-doctor/SKILL.md](skills/mk-doctor/SKILL.md).
 
-**OpenClaw / orchestrators:** [CLI integration guide](docs/cli-integration.md) for direct `--json` CLI usage (no MCP required) · [Host integration doctrine](docs/host-integration-doctrine.md) for steering host AGENTS.md, MEMORY.md, and compaction.
+**For NanoClaw operators:** the skill handles mount allowlists, container_config in the NanoClaw DB, conversation/impulse symlinks, and restart automatically — see [`skills/mk-memory-setup/references/nanoclaw.md`](skills/mk-memory-setup/references/nanoclaw.md) for the standalone reference.
 
-**Any MCP-capable agent:** [docs/openclaw-mcp.md](docs/openclaw-mcp.md).
+**For OpenClaw operators:** [CLI integration guide](docs/cli-integration.md) for direct `--json` CLI usage (no MCP required) · [Host integration doctrine](docs/host-integration-doctrine.md) for steering host AGENTS.md, MEMORY.md, and compaction · [`skills/mk-memory-setup/references/openclaw.md`](skills/mk-memory-setup/references/openclaw.md) for the plugin install + doctrine flow.
+
+**For MCP clients (Claude Desktop, Cursor, Continue, …):** [docs/openclaw-mcp.md](docs/openclaw-mcp.md) for the canonical `claude_desktop_config.json` snippet, and [`skills/mk-memory-setup/references/mcp-client.md`](skills/mk-memory-setup/references/mcp-client.md) for the per-client setup flow the skill follows.
 
 ---
 
@@ -433,7 +436,7 @@ Next session: NanoClaw loads CLAUDE.md as context
 
 **Drift pre-filter:** Set `MEMORY_DIR` in your `.env` and NanoClaw uses `mk wander` as a Tier 1 gate before post-conversation drift. Cheap spreading activation (~30 ms, no LLM) decides whether to spawn an expensive drift session — skips drift when no interesting connections are found, injects collision context when they are.
 
-Install the `/mk-memory-setup` skill for interactive setup (CLI, init, mounts, cron, restart).
+Install the `/mk-memory-setup` skill for interactive setup. The skill auto-detects NanoClaw and runs the full flow: install CLI, init store, write the mount allowlist, configure `container_config` in the NanoClaw DB, create conversation/impulse symlinks, seed identity + lifecycle atoms, render the first `CLAUDE.md`, schedule nightly cron, and restart NanoClaw — see [`skills/mk-memory-setup/references/nanoclaw.md`](skills/mk-memory-setup/references/nanoclaw.md) for the standalone steps if you'd rather run them manually.
 
 **[Full integration guide →](docs/nanoclaw-integration.md)**
 
