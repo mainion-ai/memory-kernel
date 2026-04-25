@@ -18,9 +18,7 @@ import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
 import { generateGraphConfig } from '../obsidian.js';
-import { listAtoms } from '../store.js';
-import { writeAtom } from '../store.js';
-import { parseAtom, serializeAtom } from '../format.js';
+import { listAtoms, writeAtom } from '../store.js';
 
 export function registerObsidianInitCommand(program: Command): void {
   program
@@ -60,9 +58,8 @@ export function registerObsidianInitCommand(program: Command): void {
         const atoms = listAtoms(memoryDir);
         for (const atom of atoms) {
           if (!atom.filePath) continue;
-          // Re-serialize — this triggers renderRelationsSection via serializeAtom
-          const serialized = serializeAtom(atom);
-          fs.writeFileSync(atom.filePath, serialized);
+          // Re-serialize via writeAtom — handles SECRET encryption + atomic writes
+          writeAtom(atom, atom.filePath);
           syncedCount++;
         }
       }

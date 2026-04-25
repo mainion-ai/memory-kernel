@@ -186,9 +186,9 @@ describe('generateGraphConfig', () => {
     const groups = config.colorGroups as { query: string; color: { a: number; rgb: number } }[];
     expect(groups.length).toBe(9); // 9 atom types
 
-    // Each group should have a path: prefix query
+    // Each group should have a file: prefix query
     for (const group of groups) {
-      expect(group.query).toMatch(/^path:/);
+      expect(group.query).toMatch(/^file:/);
       expect(group.color.a).toBe(1);
       expect(typeof group.color.rgb).toBe('number');
     }
@@ -198,15 +198,15 @@ describe('generateGraphConfig', () => {
     const config = generateGraphConfig() as Record<string, unknown>;
     const groups = config.colorGroups as { query: string }[];
     const queries = groups.map((g) => g.query);
-    expect(queries).toContain('path:BELI');
-    expect(queries).toContain('path:FACT');
-    expect(queries).toContain('path:DECI');
-    expect(queries).toContain('path:OPEN');
-    expect(queries).toContain('path:PREF');
-    expect(queries).toContain('path:CONS');
-    expect(queries).toContain('path:PROC');
-    expect(queries).toContain('path:ENTS');
-    expect(queries).toContain('path:CONF');
+    expect(queries).toContain('file:BELI');
+    expect(queries).toContain('file:FACT');
+    expect(queries).toContain('file:DECI');
+    expect(queries).toContain('file:OPEN');
+    expect(queries).toContain('file:PREF');
+    expect(queries).toContain('file:CONS');
+    expect(queries).toContain('file:PROC');
+    expect(queries).toContain('file:ENTS');
+    expect(queries).toContain('file:CONF');
   });
 });
 
@@ -254,6 +254,90 @@ describe('integration: atom files on disk are Obsidian-ready', () => {
     const atoms = listAtoms(testDir);
     const rawContent = fs.readFileSync(atoms[0].filePath!, 'utf-8');
     expect(rawContent).not.toContain(RELATIONS_SENTINEL);
+  });
+});
+
+// --- Tag promotion / stripping ---
+
+describe('tag promotion and stripping', () => {
+  const makeAtomWithTags = (tags: string[]): Atom => ({
+    frontmatter: {
+      id: 'BELI-2026-01-01-TAG-TEST-abc',
+      type: 'belief',
+      status: 'active',
+      confidence: 0.8,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      scope: { tags },
+    },
+    body: 'Tag test body.',
+  });
+
+  it('promotes scope.tags to top-level tags in serialized output', () => {
+    const atom = makeAtomWithTags(['philosophy', 'identity']);
+    const serialized = serializeAtom(atom);
+    // Top-level tags should appear in the YAML
+    expect(serialized).toMatch(/^tags:/m);
+    // scope.tags should also still be present inside scope
+    expect(serialized).toContain('scope:');
+  });
+
+  it('places top-level tags BEFORE scope in YAML output', () => {
+    const atom = makeAtomWithTags(['test-tag']);
+    const serialized = serializeAtom(atom);
+    const tagsIdx = serialized.indexOf('\ntags:');
+    const scopeIdx = serialized.indexOf('\nscope:');
+    expect(tagsIdx).toBeGreaterThan(-1);
+    expect(scopeIdx).toBeGreaterThan(-1);
+    expect(tagsIdx).toBeLessThan(scopeIdx);
+  });
+
+  it('strips promoted tags on parse — does not leak into frontmatter', () => {
+    const atom = makeAtomWithTags(['philosophy', 'identity']);
+    const serialized = serializeAtom(atom);
+    const parsed = parseAtom(serialized);
+    expect((parsed.frontmatter as Record<string, unknown>).tags).toBeUndefined();
+    expect(parsed.frontmatter.scope?.tags).toEqual(expect.arrayContaining(['philosophy', 'identity']));
+  });
+
+  it('merges Obsidian-edited tags back into scope.tags on parse', () => {
+    // Simulate what happens if a user adds a tag in Obsidian
+    const yaml = [
+      '---',
+      'id: BELI-2026-01-01-TAG-TEST-abc',
+      'type: belief',
+      'status: active',
+      'tags:',
+      '  - philosophy',
+      '  - identity',
+      '  - new-tag-from-obsidian',
+      'scope:',
+      '  tags:',
+      '    - philosophy',
+      '    - identity',
+      '---',
+      '',
+      'Body text.',
+    ].join('\n');
+    const parsed = parseAtom(yaml);
+    expect(parsed.frontmatter.scope?.tags).toContain('new-tag-from-obsidian');
+    expect(parsed.frontmatter.scope?.tags).toContain('philosophy');
+    expect(parsed.frontmatter.scope?.tags).toContain('identity');
+    expect((parsed.frontmatter as Record<string, unknown>).tags).toBeUndefined();
+  });
+
+  it('does not add tags field when scope.tags is empty', () => {
+    const atom: Atom = {
+      frontmatter: {
+        id: 'BELI-2026-01-01-NOTAG-abc',
+        type: 'belief',
+        status: 'active',
+        scope: { tags: [] },
+      },
+      body: 'No tags.',
+    };
+    const serialized = serializeAtom(atom);
+    expect(serialized).not.toMatch(/^tags:/m);
   });
 });
 

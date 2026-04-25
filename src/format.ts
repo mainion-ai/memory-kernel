@@ -28,17 +28,17 @@ const KEY_ORDER: (keyof AtomFrontmatter)[] = [
  * Serialize atom frontmatter to YAML with stable key ordering.
  */
 export function serializeFrontmatter(fm: AtomFrontmatter): string {
-  // Build ordered object
+  // Build ordered object, inserting promoted `tags` before `scope`
+  // so Obsidian's indexer sees the top-level tags field first.
   const ordered: Record<string, unknown> = {};
   for (const key of KEY_ORDER) {
+    // Insert promoted tags right before scope in YAML output
+    if (key === 'scope' && fm.scope?.tags && fm.scope.tags.length > 0) {
+      ordered.tags = fm.scope.tags;
+    }
     if (fm[key] !== undefined) {
       ordered[key] = fm[key];
     }
-  }
-
-  // Promote scope.tags to top-level `tags` for Obsidian native tag search
-  if (fm.scope?.tags && fm.scope.tags.length > 0) {
-    ordered.tags = fm.scope.tags;
   }
 
   return yaml.dump(ordered, {
@@ -78,9 +78,18 @@ export function parseAtom(content: string, filePath?: string): Atom {
     throw new Error(`Missing or invalid 'status' in frontmatter${filePath ? ` (${filePath})` : ''}`);
   }
 
-  // Strip the promoted top-level `tags` — it's a derived view of scope.tags
+  // Handle promoted top-level `tags` — it's a derived view of scope.tags
   // for Obsidian compatibility, not a canonical frontmatter field.
-  if (data.tags && data.scope?.tags) {
+  // If a user edited tags in Obsidian, merge them back into scope.tags.
+  if (data.tags) {
+    if (Array.isArray(data.tags) && data.tags.length > 0) {
+      if (!data.scope) data.scope = {};
+      const existing = new Set(data.scope.tags ?? []);
+      for (const t of data.tags) {
+        if (typeof t === 'string') existing.add(t);
+      }
+      data.scope.tags = [...existing].sort();
+    }
     delete data.tags;
   }
 

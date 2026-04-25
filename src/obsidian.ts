@@ -100,7 +100,7 @@ export function stripRelationsSection(body: string): string {
  */
 export function generateGraphConfig(): Record<string, unknown> {
   const colorGroups = ATOM_TYPES.map((type) => ({
-    query: `path:${TYPE_PREFIXES[type] ?? type.toUpperCase().slice(0, 4)}`,
+    query: `file:${TYPE_PREFIXES[type] ?? type.toUpperCase().slice(0, 4)}`,
     color: { a: 1, rgb: TYPE_COLORS[type] ?? 0x95A5A6 },
   }));
 
