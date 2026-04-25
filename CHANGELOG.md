@@ -28,7 +28,10 @@ All notable changes to this project will be documented in this file.
 - **`serializeAtom()` / `parseAtom()` hook** — single integration point in `format.ts`. All code paths that write or read atoms (retain, relink, enrich-relations, import, etc.) get wikilinks for free with zero changes.
 - **New module `src/obsidian.ts`** — exports `renderRelationsSection()`, `stripRelationsSection()`, `generateGraphConfig()`, `RELATIONS_SENTINEL`, `TYPE_COLORS`, `TYPE_PREFIXES`.
 - **New CLI command `mk obsidian-init`** — writes `.obsidian/graph.json` with type-based color groups (9 atom types, 4-char path-prefix queries). With `--sync`, rewrites all existing atom files to include `## Relations` sections.
-- **16 new tests** covering render/strip pure functions, round-trip serialize/parse, graph config structure, and integration (atom files on disk).
+- **Tag promotion to top-level YAML field** — `scope.tags` promoted to a top-level `tags:` field in frontmatter (before `scope:`), making tags indexable by Obsidian's native tag search. Tags are merged back into `scope.tags` on parse — round-trip safe.
+- **Tag normalization** — new `normalizeTags()` utility splits comma-separated strings, trims whitespace, dedupes, and sorts. Applied automatically during `serializeAtom()` and `parseAtom()` so Obsidian-edited tags are always canonical.
+- **Safe writes in `mk obsidian-init --sync`** — uses `writeAtom()` (which handles SECRET encryption + atomic writes) instead of raw `fs.writeFileSync`.
+- **23 new tests** covering render/strip pure functions, round-trip serialize/parse, graph config structure, tag promotion/stripping, tag normalization, and integration (atom files on disk).
 
 ## [1.15.0] — 2026-04-22
 

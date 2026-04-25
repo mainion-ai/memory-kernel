@@ -290,6 +290,7 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 
 | Command | Description |
 |---------|-------------|
+| `mk obsidian-init -d <dir> [--sync]` | Write `.obsidian/graph.json` with type-based color groups; `--sync` rewrites all atom files to include `## Relations` wikilink sections |
 | `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
 | `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational-closure metrics |
 | `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
@@ -439,6 +440,33 @@ Next session: NanoClaw loads CLAUDE.md as context
 Install the `/mk-memory-setup` skill for interactive setup. The skill auto-detects NanoClaw and runs the full flow: install CLI, init store, write the mount allowlist, configure `container_config` in the NanoClaw DB, create conversation/impulse symlinks, seed identity + lifecycle atoms, render the first `CLAUDE.md`, schedule nightly cron, and restart NanoClaw — see [`skills/mk-memory-setup/references/nanoclaw.md`](skills/mk-memory-setup/references/nanoclaw.md) for the standalone steps if you'd rather run them manually.
 
 **[Full integration guide →](docs/nanoclaw-integration.md)**
+
+---
+
+## Obsidian Integration
+
+Memory Kernel's `ENTITIES/` directory can be opened directly as an Obsidian vault — no export step needed. Atom files are valid Markdown with YAML frontmatter, and relation edges render as `[[wikilinks]]` in a sentinel-delimited `## Relations` section at the end of each file.
+
+### Quick setup
+
+```bash
+# 1. Initialize Obsidian graph config (type-based color groups for all 9 atom types)
+mk obsidian-init -d ./memory
+
+# 2. Rewrite existing atom files to include ## Relations wikilink sections
+mk obsidian-init -d ./memory --sync
+
+# 3. Open ENTITIES/ as an Obsidian vault
+#    → Graph view shows typed relations as navigable links
+#    → Tags are searchable via Obsidian's native tag index
+```
+
+### What happens under the hood
+
+- **Tag promotion**: `scope.tags` are promoted to a top-level `tags:` YAML field so Obsidian indexes them natively. Tags are merged back into `scope.tags` on parse — edits in Obsidian are preserved.
+- **Wikilink relations**: Atoms with `frontmatter.relations[]` get a `## Relations` section delimited by `<!-- mk:relations -->` sentinels. The section is stripped on parse and never pollutes `atom.body`.
+- **Graph coloring**: `mk obsidian-init` writes `.obsidian/graph.json` with color groups for each atom type (belief, fact, decision, preference, episode, open_question, procedure, constraint, impulse), using 4-char path-prefix queries.
+- **Round-trip safe**: Edit atoms in Obsidian (body text, tags, frontmatter) and Memory Kernel reads them back correctly. The `## Relations` section is machine-managed — manual edits there will be overwritten on next serialize.
 
 ---
 
