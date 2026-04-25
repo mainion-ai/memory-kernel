@@ -46,6 +46,13 @@ npx mk doctor -d /workspace/extra/memory
 # Semantic health check (contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL)
 npx mk lint -d /workspace/extra/memory
 
+# Extract atoms from a conversation log (LLM-powered — creates drafts)
+npx mk extract /workspace/group/logs/conversation.log -d /workspace/extra/memory --skip-lines 200 --json
+
+# Review and promote extracted drafts to active
+npx mk consolidate -d /workspace/extra/memory --dry-run    # preview first
+npx mk consolidate -d /workspace/extra/memory              # apply
+
 # Create a typed relation edge between two atoms (v1.4.0+)
 npx mk relate DECI-2026-04-01-USE-POSTGRES-abc1 supports FACT-2026-04-01-BENCH-xyz9 \
   -d /workspace/extra/memory
@@ -108,7 +115,9 @@ npx mk reindex -d /workspace/extra/memory --embed    # optional: add semantic se
 | Something is unresolved | `mk remember ... -t open_question` |
 | You wrote a how-to | `mk remember ... -t procedure` |
 | You notice a connection between two atoms | `npx mk relate <src> <type> <tgt> -d ...` |
-| End of every session | `npx mk episode -d ... --session-id ... --summary "[TOPIC]...[DECISIONS]...[NEXT]..."` |
+| End of every session (episode) | `npx mk episode -d ... --session-id ... --summary "[TOPIC]...[DECISIONS]...[NEXT]..."` |
+| End of every session (extract) | `npx mk extract /workspace/group/logs/conversation.log -d ... --skip-lines 200 --json` |
+| Periodically — promote extracted drafts | `npx mk consolidate -d ... [--dry-run] --json` |
 | Start of session (intra-day atoms not yet in CLAUDE.md) | `npx mk recall -d ... --task "..." --include-episodes --decay-weight 0.3 --decay-half-life 60` |
 | Looking for unexpected connections | `npx mk wander -d ... --tags tag1,tag2` |
 | Every 5 sessions | `npx mk reflect -d ... && npx mk gc -d ...` |
@@ -131,10 +140,14 @@ During session → npx mk remember (facts, decisions, beliefs, preferences)
                  ↓
 Session ends   → npx mk episode --session-id "YYYY-MM-DD-N" \
                    --summary "[TOPIC]...[DECISIONS]...[NEXT]..."
+                 npx mk extract /workspace/group/logs/conversation.log \
+                   -d /workspace/extra/memory --skip-lines 200 --json
+                 (optional — auto-extract atoms from conversation log)
                  (render runs nightly via cron — not per session)
 ```
 
 Every 5 sessions: `npx mk reflect -d /workspace/extra/memory && npx mk gc -d /workspace/extra/memory`
+Periodically: `npx mk consolidate -d /workspace/extra/memory` (promote extracted drafts)
 
 ## /tmp Install Workaround
 

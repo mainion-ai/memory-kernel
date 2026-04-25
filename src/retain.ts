@@ -16,7 +16,7 @@ import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
 import { indexAtom, indexExists, removeFromIndex, getAllAtomIds } from './index-db.js';
 import { encryptAtom, resolveKey } from './crypto.js';
 import { extractBodyReferences, extractConceptReferences, buildConceptMap, deduplicateRefs } from './relink.js';
-import type { Atom, AtomFrontmatter, AtomType, Classification, Relation } from './types.js';
+import type { Atom, AtomFrontmatter, AtomStatus, AtomType, Classification, Relation } from './types.js';
 
 /**
  * Serialize an atom snapshot, encrypting it if the atom is SECRET and a key is available.
@@ -52,6 +52,7 @@ export function createAtom(
     provenance?: AtomFrontmatter['provenance'];
     links?: AtomFrontmatter['links'];
     relations?: Relation[];
+    status?: AtomStatus;
   },
 ): Atom {
   const now = normalizeTimestamp();
@@ -60,7 +61,7 @@ export function createAtom(
   const frontmatter: AtomFrontmatter = {
     id,
     type: opts.type,
-    status: opts.type === 'belief' ? 'draft' : 'active',
+    status: opts.status ?? (opts.type === 'belief' ? 'draft' : 'active'),
     confidence: opts.confidence ?? (opts.type === 'belief' ? 0.5 : 0.8),
     created_at: now,
     updated_at: now,

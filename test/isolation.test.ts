@@ -309,7 +309,7 @@ describe('loadRenderConfig', () => {
   it('returns defaults when no render.yaml exists', () => {
     const config = loadRenderConfig(testDir);
     expect(config.mode).toBe('balanced');
-    expect(config.max_tokens).toBe(8000);
+    expect(config.max_tokens).toBe(16000);
     expect(config.include_shared).toBe(true);
     expect(config.type_weights).toEqual({});
   });
@@ -332,7 +332,7 @@ describe('loadRenderConfig', () => {
     fs.writeFileSync(path.join(testDir, 'render.yaml'), 'mode: constitutive\n');
     const config = loadRenderConfig(testDir);
     expect(config.mode).toBe('constitutive');
-    expect(config.max_tokens).toBe(8000); // default
+    expect(config.max_tokens).toBe(16000); // default
     expect(config.include_shared).toBe(true); // default
   });
 

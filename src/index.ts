@@ -49,6 +49,7 @@ export {
   serializeFrontmatter,
   parseAtom,
   normalizeTimestamp,
+  normalizeTags,
 } from './format.js';
 
 // Store
@@ -255,3 +256,20 @@ export type { LintFinding, LintOptions, LintResult } from './lint.js';
 // Migration (shared → isolated)
 export { migrate } from './migrate.js';
 export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.js';
+
+// Extract (automatic atom extraction from conversation logs)
+export { extractFromLog } from './extract.js';
+export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
+
+// Consolidate (lifecycle pipeline for promoting draft atoms)
+export { consolidateAtoms } from './consolidate.js';
+export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, ConsolidateAtomStatus } from './types.js';
+
+// Obsidian-native compatibility
+export {
+  RELATIONS_SENTINEL,
+  TYPE_COLORS,
+  renderRelationsSection,
+  stripRelationsSection,
+  generateGraphConfig,
+} from './obsidian.js';

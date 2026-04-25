@@ -1,6 +1,6 @@
 # Memory-Kernel: Where It Fits and Where It Doesn't
 
-> **v1.0.0 — production-ready** (released 2026-03-12, full PRD v1.2 scope shipped). MCP server, encryption, FTS5 recall, multi-agent merge, episode store, and compaction-loss PR gates are all in.
+> **v1.15.0** — MCP server, encryption, FTS5 + hybrid semantic recall, multi-agent merge, episode store, compaction-loss PR gates, IDF hub damping, MMR diversity, automatic atom extraction (`mk extract`), and draft promotion (`mk consolidate`).
 
 ## Where memory-kernel shines ✅
 

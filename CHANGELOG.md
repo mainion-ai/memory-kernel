@@ -9,7 +9,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — repository layout
+
+- **Renamed `container/skills/` → `skills/`.** Both `mk-memory-setup` and `mk-doctor` are host-side skills (run via Claude Code on the operator's machine, not inside a container), so the old location was misleading; `container/` was empty otherwise. No npm-package impact — the published `memory-kernel` package only ships `dist/`, `README.md`, and `LICENSE`.
+
+### Added — agent lifecycle as typed memory + multi-host setup
+
+- **`mk-memory-setup` now seeds 8 lifecycle atoms** (7 procedure + 1 constraint) so the agent's operating manual lives inside memory-kernel itself and is recallable per task — see `skills/mk-memory-setup/seed-atoms/lifecycle/`. The `seed-atoms/seed-lifecycle.sh` script is the canonical entry point.
+- **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
+- **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
+
+## [1.16.0] — 2026-04-25
+
+### Added — Obsidian-native atom compatibility
+
+- **Atom files are now natively Obsidian-compatible.** The ENTITIES/ directory can be opened directly as an Obsidian vault — no export step needed.
+- **`## Relations` wikilink section** appended to every atom file that has `frontmatter.relations[]`. Uses `<!-- mk:relations -->` sentinel to delimit the machine-managed section. Stripped on parse — never pollutes `atom.body`.
+- **`serializeAtom()` / `parseAtom()` hook** — single integration point in `format.ts`. All code paths that write or read atoms (retain, relink, enrich-relations, import, etc.) get wikilinks for free with zero changes.
+- **New module `src/obsidian.ts`** — exports `renderRelationsSection()`, `stripRelationsSection()`, `generateGraphConfig()`, `RELATIONS_SENTINEL`, `TYPE_COLORS`, `TYPE_PREFIXES`.
+- **New CLI command `mk obsidian-init`** — writes `.obsidian/graph.json` with type-based color groups (9 atom types, 4-char path-prefix queries). With `--sync`, rewrites all existing atom files to include `## Relations` sections.
+- **Tag promotion to top-level YAML field** — `scope.tags` promoted to a top-level `tags:` field in frontmatter (before `scope:`), making tags indexable by Obsidian's native tag search. Tags are merged back into `scope.tags` on parse — round-trip safe.
+- **Tag normalization** — new `normalizeTags()` utility splits comma-separated strings, trims whitespace, dedupes, and sorts. Applied automatically during `serializeAtom()` and `parseAtom()` so Obsidian-edited tags are always canonical.
+- **Safe writes in `mk obsidian-init --sync`** — uses `writeAtom()` (which handles SECRET encryption + atomic writes) instead of raw `fs.writeFileSync`.
+- **23 new tests** covering render/strip pure functions, round-trip serialize/parse, graph config structure, tag promotion/stripping, tag normalization, and integration (atom files on disk).
+
 ## [1.15.0] — 2026-04-22
+
+### Added — `mk extract` automatic atom extraction
+
+- **New command `mk extract`** (`src/cli/extract.ts`, `src/extract.ts`) — reads a conversation log file, calls an LLM to identify facts, decisions, preferences, and beliefs worth remembering, reconciles against the existing store (BM25 duplicate detection), and writes draft atoms.
+- **LLM providers:** Claude Code CLI (`claude -p`, default) or Ollama HTTP API (pass `--model qwen2.5:14b` or any Ollama model name).
+- **Flags:** `<log-path>` (positional), `-d/--dir <dir>`, `--model <model>`, `--dry-run`, `--json`, `--max-atoms <n>` (default 20), `--skip-lines <n>` (skip preamble), `--agent-id <id>`, `--session-id <id>`.
+- **SDK:** `extractFromLog(options: ExtractOptions): Promise<ExtractResult>` — same functionality, programmatic access.
+- **JSON output:** `{ extracted, skipped, possible_duplicates, atoms: ExtractedAtomResult[] }`
+
+### Added — `mk consolidate` lifecycle promotion
+
+- **New command `mk consolidate`** (`src/cli/consolidate.ts`, `src/consolidate.ts`) — reviews auto-extracted draft atoms and promotes them to active status. Detects possible duplicates against the active store via BM25 ranking.
+- **Flags:** `-d/--dir <dir>`, `--dry-run`, `--all` (include all drafts, not just auto-extracted), `--type <type>` (filter by atom type), `--limit <n>` (default 50), `--json`, `--agent-id <id>`, `--session-id <id>`, `--duplicate-threshold <n>` (default -2.0).
+- **SDK:** `consolidateAtoms(options: ConsolidateOptions): Promise<ConsolidateResult>` — same functionality, programmatic access.
+- **JSON output:** `{ processed, promoted, skipped, errors, dry_run, atoms: ConsolidateAtomResult[] }`
 
 ### Added — `mk lint` semantic health checker
 
@@ -35,7 +74,7 @@ All notable changes to this project will be documented in this file.
 
 ### Tests
 
-- Full suite: 921/921 passing.
+- Full suite: 1070/1070 passing.
 
 ## [1.14.0] — 2026-04-21
 

@@ -2,7 +2,9 @@
   <img src="docs/images/transparent_logo.png" alt="Memory Kernel" width="150">
 </p>
 
-# How Memory Kernel Works — A Story for Humans
+# Memory Kernel — A Filing Cabinet for AI Agents
+
+> *Persistent, structured memory that survives the end of every conversation. Three verbs — **retain, recall, reflect** — over plain markdown files and an event log.*
 
 > *You don't need to be a programmer to understand this. If you've ever written a sticky note, kept a journal, or cleaned out a filing cabinet, you already know how Memory Kernel works.*
 
@@ -38,6 +40,75 @@ Think of Memory Kernel as a **filing cabinet** in an office. Here's how the anal
 | A logbook of everything   | The **event log** (`events.ndjson`) |
 | A quick-lookup index      | The **SQLite index** (`.memory-index.db`) |
 | A summary sheet on top    | Auto-generated **views** (INDEX.md, etc.) |
+
+---
+
+## At a Glance — The Whole System in One Picture
+
+```
+     YOU (or your agent)
+         |
+         |  "Remember this" / "What do I know?" / "Clean up"
+         |
+         v
+  +--------------+
+  | RETAIN       |  Creates/updates/archives atoms
+  | RECALL       |  Queries atoms by type, tags, paths, budget
+  | REFLECT      |  Expires, deduplicates, promotes, regenerates views
+  +--------------+
+         |
+         |  reads/writes
+         |
+         v
+  +--------------+     +-------------------+
+  | Atom Files   |<--->| SQLite Index      |
+  | (ENTITIES/)  |     | (speed cache,     |
+  |              |     |  always derived)  |
+  +--------------+     +-------------------+
+         |
+         |  every mutation logged
+         |
+         v
+  +--------------+     +-------------------+
+  | Event Log    |---->| Replay            |
+  | (events.ndjson)    | (reconstruct      |
+  |              |     |  everything from  |
+  |              |     |  events alone)    |
+  +--------------+     +-------------------+
+         |
+         |  summarized into
+         |
+         v
+  +--------------+
+  | Views        |
+  | INDEX.md     |
+  | DECISIONS.md |
+  | CONSTRAINTS  |
+  | OPEN_QUESTIONS|
+  | HANDOFF.md   |
+  +--------------+
+```
+
+**Files are truth.** Everything else is derived. Delete the SQLite index? Rebuild it. Delete the views? Reflect regenerates them. Delete the atom files? Replay them from the event log. The system is designed so that any single component can be lost and rebuilt from the others.
+
+---
+
+## Reading Paths
+
+> **Just want the gist?** Read Ch. 1–2 and Ch. 11 (A Day in the Life). ~10 min.
+> **Evaluating it for your project?** Add Ch. 10 (on-disk layout) and "Why It Works." ~20 min.
+> **Adopting it?** Read the whole thing. ~45 min.
+> **Curious how it grew up?** Skip to Ch. 19 and follow the version arc through Ch. 26.
+
+---
+
+## Five Things That Make This Different
+
+1. **Files are truth.** No database. Every piece of knowledge is a plain markdown file you can open in any text editor — or commit to git.
+2. **Self-cleaning.** Each piece of knowledge has an expiry date baked in. Stale beliefs get archived automatically, so the memory doesn't grow into a landfill.
+3. **Smart recall.** When the agent asks "what do I know about X?", the system doesn't just dump everything — it ranks by relevance, type, age, and how often each atom has been referenced, then fits the best matches into the available space.
+4. **Two agents can share a brain without colliding.** Each agent gets a private drawer plus a shared corkboard. When drawers need to merge, conflicts are flagged, not silently resolved.
+5. **Tested like infrastructure.** 1,000+ automated checks run on every change. 95 out of 100 memory queries finish in under 3 milliseconds. This is not a weekend toy.
 
 ---
 
@@ -102,7 +173,7 @@ Memory Kernel has **nine types**, each serving a different purpose:
 **Special:**
 - **conflict** — two pieces of knowledge that contradict each other ("Docs say port 8080, config says 3000" — 30 day TTL)
 
-The **TTL** (time-to-live) is the key insight. A belief that hasn't been proven in 30 days probably isn't worth keeping. A preference that nobody has mentioned in 6 months might have changed. The system automatically cleans these up.
+The **TTL** (time-to-live) is the key insight — *this is what makes the system self-cleaning instead of ever-growing.* A belief that hasn't been proven in 30 days probably isn't worth keeping. A preference that nobody has mentioned in 6 months might have changed. The system automatically cleans these up.
 
 ---
 
@@ -143,7 +214,7 @@ The recall system has a fast path and a slow path:
 
 Either way, you get the same results. The index is just a speed trick.
 
-There's also **task-aware recall**. If you tell recall what you're working on — `task: "fix pagination bug"` — it uses full-text search (FTS5) with BM25 ranking to surface the most relevant atoms first. Atoms that match the task description closely float to the top; unrelated ones stay at the bottom. Same query on the same memory always gives the same order (it's deterministic).
+There's also **task-aware recall**. If you tell recall what you're working on — `task: "fix pagination bug"` — it uses a built-in search and ranking system (the same kind Wikipedia uses internally) to float the atoms that best match the task description to the top, and leave unrelated ones at the bottom. Run the same query twice on the same memory and you get the same order — no randomness.
 
 And if you want to include **session episodes** — summaries of past work sessions — you can ask for those too with `include_episodes: true`. The system returns recent episode summaries alongside the atoms, so the agent knows not just *what* it knows but also *what it did* in recent sessions.
 
@@ -201,6 +272,8 @@ Here's what one event looks like (formatted for readability):
 ```
 
 The crucial part is `atom_snapshot` — it contains the **full text of the atom at that moment**. This means the event log alone can reconstruct the entire memory state. You don't even need the atom files.
+
+> **Why this one field carries the whole system:** `atom_snapshot` is the difference between "we logged what happened" and "we logged what the world looked like." Without it, a delete event loses the thing that was deleted. With it, replay can rebuild every atom that ever existed.
 
 ### Why This Matters
 
@@ -434,7 +507,8 @@ A checkpoint creates the handoff document. Tomorrow's session will read it and p
 If the event log has grown large, `mk compact` runs. It keeps only the latest event per atom and removes the intermediate updates. A backup of the full log is saved first.
 
 Before: 2,847 events
-After: 412 events (latest state for each atom + all reflect/checkpoint events)
+After:    412 events (latest state for each atom + all reflect/checkpoint events)
+          ↑ 86% reduction, byte-identical replay output — no information lost.
 
 The compacted log can still reconstruct the exact same current state via replay.
 
@@ -481,9 +555,9 @@ mk remember -d ./my-memory --type fact --tags server,setup \
 mk status -d ./my-memory
 
 # Pull relevant context (basic)
-mk recall -d ./my-memory --type fact --tags server
+mk recall -d ./my-memory --types fact
 
-# Pull context for a specific task (FTS-ranked, most relevant first)
+# Pull context for a specific task (ranked by relevance, best matches first)
 mk recall -d ./my-memory --task "fix pagination bug"
 
 # Pull context with recent session history included
@@ -521,58 +595,6 @@ mk doctor -d ./my-memory
 
 ---
 
-## The Big Picture
-
-Here's the entire system in one diagram:
-
-```
-     YOU (or your agent)
-         |
-         |  "Remember this" / "What do I know?" / "Clean up"
-         |
-         v
-  +--------------+
-  | RETAIN       |  Creates/updates/archives atoms
-  | RECALL       |  Queries atoms by type, tags, paths, budget
-  | REFLECT      |  Expires, deduplicates, promotes, regenerates views
-  +--------------+
-         |
-         |  reads/writes
-         |
-         v
-  +--------------+     +-------------------+
-  | Atom Files   |<--->| SQLite Index      |
-  | (ENTITIES/)  |     | (speed cache,     |
-  |              |     |  always derived)  |
-  +--------------+     +-------------------+
-         |
-         |  every mutation logged
-         |
-         v
-  +--------------+     +-------------------+
-  | Event Log    |---->| Replay            |
-  | (events.ndjson)    | (reconstruct      |
-  |              |     |  everything from  |
-  |              |     |  events alone)    |
-  +--------------+     +-------------------+
-         |
-         |  summarized into
-         |
-         v
-  +--------------+
-  | Views        |
-  | INDEX.md     |
-  | DECISIONS.md |
-  | CONSTRAINTS  |
-  | OPEN_QUESTIONS|
-  | HANDOFF.md   |
-  +--------------+
-```
-
-**Files are truth.** Everything else is derived. Delete the SQLite index? Rebuild it. Delete the views? Reflect regenerates them. Delete the atom files? Replay them from the event log. The system is designed so that any single component can be lost and rebuilt from the others.
-
----
-
 ## Why It Works
 
 Memory Kernel works because it respects a few simple principles:
@@ -588,6 +610,16 @@ Memory Kernel works because it respects a few simple principles:
 5. **Automatic maintenance.** Reflect runs periodically and handles the housekeeping — expiring stale data, removing duplicates, promoting confirmed beliefs. The memory stays clean without manual intervention.
 
 6. **Collaboration without coordination.** When two agents work in parallel, their memories can be merged later without locking or synchronisation during the work. The event log records everything; the merge step reconciles it.
+
+---
+
+## A Turning Point
+
+Everything up to this chapter described **what Memory Kernel does**: atoms, events, views, recall, reflect. If you stop reading here, you've got the whole picture.
+
+Everything from here on describes **how it became good at doing it**. Each of the next thirteen chapters solves one real problem that showed up as people used the system. They're a development story, not a changelog — you can read them as a sequence, and each chapter builds on the one before it.
+
+If you're just evaluating whether Memory Kernel fits your project, "Why It Works" (above) is a perfectly fine stopping point. If you're curious how a filing cabinet grew into office infrastructure, keep going.
 
 ---
 
@@ -622,15 +654,15 @@ Agent A's events.ndjson:          Agent B's events.ndjson:
 mk merge -d ./agent-a-memory --remote ./agent-b-memory
 ```
 
-The merge algorithm (§11.7 Pattern B from the PRD) does four things:
+The merge does four things:
 
-1. **Union** — Combine all events from both logs, deduplicated by `event_id`. If the same event appears in both (e.g., a shared starting point), it's counted only once.
+1. **Union** — Combine all events from both logs. If the same event appears in both (maybe the two agents started from a shared copy), it gets counted once, not twice. Every event has a unique ID, so the system can tell duplicates apart from genuinely-separate events.
 
-2. **Sort** — Order all events by `(timestamp, event_id)`. This gives a deterministic, total ordering of every action both agents ever took.
+2. **Sort** — Put all the combined events in time order. The result is a single, consistent history of every action both agents ever took — as if they had been sharing one cabinet the whole time, just in slow motion.
 
-3. **Replay** — Run the merged event sequence through the same deterministic reducer that built each agent's memory from scratch. The result is a new, unified atom set that reflects everything both agents learned.
+3. **Replay** — Re-run the sorted events one by one, the same way each agent originally built their memory. The output is a new, unified set of atoms that reflects everything either agent learned.
 
-4. **Conflict detection** — If the same atom was mutated independently by *both* agents (i.e., it appears in Agent A's unique events *and* Agent B's unique events), the merge creates a `conflict` atom flagging the disagreement. This surfaces to `reflect()` for human or automated resolution.
+4. **Conflict detection** — If the *same* atom got changed by both agents independently, the merge creates a `conflict` atom flagging the disagreement. This shows up the next time someone runs cleanup, so a human (or the agent itself) can decide which version to keep.
 
 ### The Filing Cabinet Analogy
 
@@ -706,7 +738,7 @@ Set an environment variable before running:
 # Option 1: 64-character hex key (most secure — use a password manager)
 export MEMORY_ENCRYPTION_KEY="a3f9b2e1d4c7f0a8b3e6d9c2f5a8b1e4d7c0f3a6b9e2d5c8f1a4b7e0d3c6f9a2"
 
-# Option 2: A passphrase (easier to remember — internally converted to a key via PBKDF2)
+# Option 2: A passphrase (easier to remember — the system stretches it into a full key using a standard password-hardening method)
 export MEMORY_ENCRYPTION_KEY="my-super-secret-passphrase"
 ```
 
@@ -731,10 +763,10 @@ This checks that all encrypted atoms can be decrypted with the current key.
 
 ### The Encryption Details (For the Curious)
 
-- **Algorithm:** AES-256-GCM — the same algorithm used in HTTPS, Signal, and most modern security systems
-- **Key derivation:** Short passphrases → PBKDF2 with 100,000 iterations and a fixed salt (`memory-kernel-v1`) → 256-bit key. Long hex strings → used directly.
-- **Scope:** The atom file body is encrypted. The frontmatter (id, type, status) remains readable — so the system can reason about the atom's existence without decrypting it.
-- **Event log:** The `atom_snapshot` in the event log is also encrypted for SECRET atoms. The event log is append-only and readable without the key for non-SECRET events.
+- **The lock itself:** AES-256-GCM — the same encryption used by HTTPS websites, Signal, and most modern banking apps. If you trust your bank's website, you can trust this lock.
+- **Turning a passphrase into a key:** if you give the system a short passphrase instead of a 64-character random string, it runs the passphrase through a hardening function (100,000 rounds of transformation). This makes it very expensive for an attacker to guess your passphrase by trying millions of candidates — each guess costs them the full hardening work.
+- **What's locked and what's not:** the body of the atom (the actual knowledge) is encrypted. The label on top (id, type, status) stays readable — so the system can count and file the cards without needing to unlock them.
+- **The event log:** the snapshot of a SECRET atom stored in the event log is also encrypted. Non-secret events are readable without the key, so you can still audit what happened without exposing private content.
 
 The bottom line: you can keep sensitive knowledge in the same filing cabinet as everything else, with a lock on the drawer that contains it.
 
@@ -803,7 +835,7 @@ You're working with Claude on a backend project. You ask:
 
 > *"What do we know about the authentication module?"*
 
-Claude calls the `recall` tool with `task: "authentication module"`. Memory Kernel searches its FTS5 index, finds 4 relevant atoms, and returns them to Claude. Claude reads them and answers:
+Claude calls the `recall` tool with `task: "authentication module"`. Memory Kernel searches its index, finds 4 relevant atoms, and returns them to Claude. Claude reads them and answers:
 
 > *"Based on memory: the auth module uses JWT tokens (decision from March 10), the token TTL is 24 hours (fact, confidence 1.0), and there's an open question about refresh token rotation that hasn't been resolved."*
 
@@ -854,17 +886,17 @@ mk import --from ARCHITECTURE.md --dir ./my-memory \
 
 Memory Kernel reads the file, chops it into chunks, figures out what type of atom each chunk should be, and creates one atom per chunk. The whole document becomes part of your structured memory.
 
-### Chunk Extraction
+### How It Splits Your File
 
-The file is split into chunks using a cascade of strategies:
+The importer tries three strategies, in order:
 
-1. **H2/H3 headings first** — If your document has `## Section Name` headings, each section becomes one chunk. This works beautifully for design docs and READMEs.
+1. **Section headings first.** If your document has sub-headings like `## Database Choice` or `## Open Questions`, each section becomes one atom. This works beautifully for design docs and READMEs.
 
-2. **Bullet points as fallback** — If there are no headings but there are bullet lists, each bullet becomes a chunk.
+2. **Bullet points as a fallback.** If there are no headings but there are bullet lists, each bullet becomes its own atom.
 
-3. **Whole file as last resort** — If there's no structure at all, the entire file becomes a single atom.
+3. **The whole file as a last resort.** If the file has no structure at all — just flowing prose — the entire file becomes a single atom.
 
-Chunks shorter than 20 characters are dropped — they're too short to be useful ("TODO:", "Notes:", etc.).
+Chunks shorter than 20 characters get dropped. They're too short to carry useful meaning ("TODO:", "Notes:", and similar leftovers).
 
 ### Type Inference
 
@@ -961,10 +993,10 @@ We verify this by replaying the same event log twice in a row and comparing the 
 ```
 replay(events) → result1
 replay(events) → result2
-assert result1 === result2  // byte-identical
+check: result1 and result2 are exactly identical, right down to the last byte
 ```
 
-If there's any non-determinism — a random ordering, a wall-clock timestamp sneaking into content, a set iteration order — this test catches it.
+If anything sneaks in that's not perfectly reproducible — a random ordering, a timestamp from the wall clock, a set whose iteration order varies — this test catches it.
 
 ### Reflect Idempotence
 
@@ -974,11 +1006,12 @@ We verify this explicitly:
 
 ```
 reflect(memory) → views_v1
-reflect(memory) → views_v2  // same memory, second pass
-assert views_v1 === views_v2  // identical output
-assert second_reflect.deduped === 0
-assert second_reflect.expired === 0
-assert second_reflect.promoted === 0
+reflect(memory) → views_v2   (same memory, second pass)
+
+check: views_v1 and views_v2 are identical
+check: second pass deduplicated nothing
+check: second pass expired nothing
+check: second pass promoted nothing
 ```
 
 This matters because reflect runs automatically on a schedule. If each run modified things slightly, the system would drift over time.
@@ -987,7 +1020,7 @@ This matters because reflect runs automatically on a schedule. If each run modif
 
 Normal tests use 3–5 atoms. The stress test suite uses **500 atoms** — 5× the scale that a typical session would accumulate. All the operations run: create, update, archive, merge with a second agent's memory, search, reflect.
 
-At 500 atoms without a SQLite index, the entire reflect cycle completes in under 15 seconds. With the SQLite index, recall p95 is under 100ms.
+At 500 atoms without the speed-cache index, the entire cleanup cycle completes in under 15 seconds. With the index, 95% of recall queries finish in under 100 milliseconds (that's the "p95" number — 95 out of 100 queries are at least that fast).
 
 The stress tests also hammer the error paths: corrupted event log lines, atom files with invalid frontmatter, path traversal attempts (`../evil`), concurrent archive operations. The system must handle all of these gracefully — no crashes, no silent data corruption.
 
@@ -1018,7 +1051,13 @@ Output:
 }
 ```
 
-The PRD target is p95 < 50ms. The actual result is 3ms — **16× better than required**.
+Here's how to read those numbers: `p50` is the typical query (half are faster, half are slower). `p95` is the slower end — 95% of queries finish in under this time. `p99` is the tail — even the slowest 1% of queries finish within this time.
+
+The target we set before shipping was: 95% of queries under 50 milliseconds. The actual result is 3 milliseconds — **16× better than required**.
+
+> **Why the gap matters:** agents query memory 5–20 times per session. At 50ms each, the query budget shows up as a noticeable pause. At 3ms, every query disappears into the noise — recall stops being something the agent has to plan around.
+>
+> For a sense of scale: 3 milliseconds is roughly the time a modern SSD takes to open and close a single file. A fresh keyword query on a cold local database typically takes 10–30ms. Recall is running faster than most systems ever ask the filesystem to serve.
 
 You can pin a baseline for your own machine:
 
@@ -1033,6 +1072,24 @@ If a future change makes recall significantly slower, you'll see it immediately 
 Because memory is load-bearing. An agent that makes decisions based on corrupted facts is worse than an agent with no memory — at least with no memory, you know it's working from scratch. A corrupted fact is invisible damage.
 
 Every test is a promise: *this invariant holds, on every machine, after every change.* The 551 tests are 551 such promises.
+
+---
+
+## The Version Arc — How Memory Kernel Grew Up
+
+The next eight chapters are a development story, not a changelog. Each release solved a specific problem the previous one exposed. Here's the shape of the arc, using the real version numbers you'll find on npm and in `CHANGELOG.md`:
+
+```
+ v1.0  ── v1.0.1 ── v1.4 ── v1.5 ── v1.6 ── v1.7 ── v1.9 ── v1.12 ── v1.15
+ core     docs +    type &  body-   ACT-R   --json  closure  prod-    extract,
+ library  plugin    age-    text    citation across  metric   ready    consoli-
+ shipped  rename    aware   refs    model   the     (self-   infra +  date,
+                    recall                  CLI     ref.     per-     lint
+                                                    index)   agent
+ Ch.1–18  Ch.19     Ch.20   Ch.21   Ch.22   Ch.23   Ch.24    Ch.25–26  Ch.27
+```
+
+v1.0 proved the library worked. v1.0.1 made it approachable. v1.4 taught it what matters most. v1.5 taught it to read its own prose. v1.6 added citation-frequency activation. v1.7 made every command machine-readable. v1.9 gave the store a way to measure its own complexity. v1.12 bolted it to the floor as infrastructure *and* gave each agent its own drawer — the two huge changes shipped in the same release. v1.13 through v1.15 added episode-aware recall, ranking fixes, and the `extract`/`consolidate`/`lint` commands.
 
 ---
 
@@ -1086,48 +1143,46 @@ The problem became obvious in practice. An agent working on a deployment task wo
 
 ### Phase 1: Teaching the System About Time
 
-The first fix was temporal decay. Not expiry — atoms with non-zero TTL already handled the "throw it away" case. This was softer: a continuous score adjustment that made older atoms contribute less to ranking without removing them.
+The first fix was a gentle fading-with-age. Not expiry — the expiry clock already handles the "throw this away" case. This was softer: a continuous nudge that made older atoms contribute less to ranking, without removing them.
 
-The formula is exponential: `decay = 0.5 ^ (age_days / half_life)`. At age zero, the factor is 1.0. At half-life days, it's 0.5. At twice the half-life, it's 0.25. The half-life defaults to 30 days — a month-old atom is half as fresh as a new one — but agents working with longer-lived knowledge can raise it.
+The rule is "half-life thirty days": a fact one month old counts half as much as a fresh one. Two months old, a quarter. Three months, an eighth. Age fades slowly, not suddenly, and agents working with long-lived knowledge can stretch the half-life to whatever suits them.
 
-The decay factor blends with relevance: `score = relevance * (1 - weight) + recency * weight`. The default weight of 0.2 means most of the score is still relevance — decay nudges, it doesn't dominate. An agent that wants pure relevance can set `decay_weight: 0`.
+The fade doesn't overpower relevance — it just nudges it. By default, 80% of an atom's score still comes from how well it matches the query; only 20% comes from how recent it is. An agent that wants pure relevance can turn the fade off entirely.
 
-One edge case took a moment to get right: future-dated atoms. Some atoms have `created_at` set in the future (scheduled decisions, planned constraints). The decay formula would produce a value greater than 1.0 for these. A `Math.max(0, age_days)` clamp fixed it.
+One edge case took a moment to get right: atoms dated in the future (scheduled decisions, planned constraints). The age math would count them as "negatively old," scoring them higher than they should be. A simple "clamp age to zero if negative" fixed it.
 
 ### Phase 2: Types Are Not Peers
 
-The second insight was simpler to state but harder to implement: a constraint is worth more than a belief. Not because of anything the user said — because of what the types *mean*. A constraint is a hard rule. A belief is a guess. When filling a 4000-token context window, you'd rather have the constraint and miss the belief than the other way around.
+The second insight was simpler to state but harder to implement: a constraint is worth more than a belief. Not because a user said so — because of what the types *mean*. A constraint is a hard rule. A belief is a guess. When filling a limited context window, you'd rather have the constraint and miss the belief than the other way around.
 
-The fix was a multiplier table. Constraint gets 1.5×. Decision gets 1.3×. Procedure 1.2×. Fact and preference 1.0×. Open question 0.9×. Belief and entity summary 0.8×. These aren't arbitrary — they reflect the semantic weight of each type in the context of task execution.
+So each type gets a multiplier. Constraints count 1.5×. Decisions 1.3×. Procedures 1.2×. Facts and preferences 1.0×. Open questions 0.9×. Beliefs and entity-summaries 0.8×. These aren't arbitrary — they reflect how much weight each type deserves when the agent is trying to get something done.
 
-The confidence factor is the other half of this: `conf_factor = floor + (1 - floor) * confidence`. With a floor of 0.7, a zero-confidence atom still counts at 70% rather than being zeroed out completely. A zero is a valid data point. You don't want to silently suppress what you don't know.
+Confidence works alongside this. An atom with low confidence doesn't drop to zero — it falls to at worst 70% of its full weight. A low-confidence fact is still a valid data point; you don't want to silently suppress what you're unsure of.
 
-Token reservations complete the picture. If you have 20 constraints in memory and a tight context window, the reservation mechanism guarantees at least 400 tokens of constraint content appears regardless of relevance rank. The second pass fills the remaining budget with everything else in score order.
+One more guarantee: reserved space. If you have twenty constraints in memory and a tight context window, the system reserves at least a small chunk of space for constraint content, no matter what. Only after that reservation is filled does the rest of the budget get packed with everything else by score.
 
 ### Phase 3: Atoms Don't Live in Isolation
 
-The third phase came from a real failure mode: related atoms that should reinforce each other were being treated as independent. A decision that extended another decision — you'd want both, but if only one matched the FTS query, the other would score near zero.
+The third phase came from a real failure: related atoms that should reinforce each other were being treated as independent. A decision that built on another decision — you'd want both — but if only one matched the query's keywords, the other would score near zero.
 
-The solution was relation edges: typed links between atoms stored in the SQLite index. The types — `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `related` — let agents encode the semantic structure of their knowledge graph.
+The solution was to let atoms declare how they're connected. A new `related-to` field lets an agent say things like "this decision extends that one," "this belief contradicts that constraint," "this procedure supersedes that one." Seven relation types cover the common cases: `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `applied_to`, `related`.
 
-Graph-walk recall uses single-hop spreading activation: for each relation edge, the higher-scoring atom partially boosts its neighbour. The boost uses a diminishing-returns formula: `boost += score * factor * (1 / (1 + accumulated_boost))`. The denominator prevents runaway amplification when an atom has many high-scoring neighbours.
-
-The schema implementation required care. Both foreign keys in `atom_relations` use `ON DELETE CASCADE` — when an atom is deleted, both its outbound and inbound edges are automatically cleaned up. The reindex operation uses a two-pass strategy: insert all atoms first, then insert all relations, to avoid FK ordering violations when a relation's target hasn't been indexed yet.
+With those connections in place, recall walks the connections. When one atom scores high, a small amount of that score "spreads" to its directly-connected neighbours — similar to how a vivid memory helps you recall related ones. The system uses a diminishing-returns rule: if a neighbour already got boosted once, a second boost adds less, so no single atom runs away with all the score.
 
 ### The Shape of v1.4.0
 
-What emerged is a coherent scoring pipeline:
+What emerged is a six-step scoring pipeline. In plain English:
 
-1. FTS5 BM25 + optional semantic cosine similarity → relevance score (0–1)
-2. Temporal decay → recency score (0–1)
-3. Blend: `base = relevance * (1 - w) + recency * w`
-4. Per-type multiplier × confidence factor → `final = base * typeWeight * confFactor`
-5. Graph-walk boost → neighbours of high-scoring atoms get a lift
-6. Token budget: reserved types fill first, then greedy fill with remainder
+1. **Find matches.** Score each atom on how well it matches the query — both by shared words and (optionally) by meaning.
+2. **Fade old ones.** Multiply by a recency factor, so a six-month-old atom counts less than a brand-new one.
+3. **Blend the two.** Mostly relevance, with a pinch of recency.
+4. **Weigh by type and confidence.** A high-confidence constraint beats a low-confidence belief, all else equal.
+5. **Spread to neighbours.** Atoms related to a high scorer get a small lift.
+6. **Pack the budget.** Reserved types (like constraints) fill first. The rest of the space gets filled by top score.
 
-Every parameter in this pipeline is configurable. The defaults are designed to work well without tuning, but agents with specific needs — working in a domain where all decisions are long-lived, or where constraint violations are catastrophic — can dial any knob directly per-call or via environment variable.
+Every knob in this pipeline is tunable. The defaults are designed to work well without fiddling, but agents with specific needs — a domain where all decisions stay relevant for years, or where constraint violations are catastrophic — can dial any parameter per-call or via environment variable.
 
-The 690 tests are 690 promises that the pipeline behaves exactly as specified. The scoring is fast enough that adding all three phases barely moved the p95 benchmark — the memoised `finalScoreMap` approach computes each atom's score once before sorting, not once per comparison.
+The 690 tests are 690 promises that the pipeline behaves exactly as specified. The scoring is fast enough that adding all three phases barely moved the speed benchmark — each atom's score gets computed once before sorting, not re-computed on every comparison.
 
 If v1.0.1 was labeling the drawers, v1.4.0 is teaching the system which drawer matters most for what you're doing right now.
 
@@ -1135,7 +1190,7 @@ If v1.0.1 was labeling the drawers, v1.4.0 is teaching the system which drawer m
 
 ## Chapter 21: The System That Reads Its Own Files
 
-Chapter 20 gave us relation edges — typed links between atoms that let the graph-walk recall boost neighbours. But there was a catch: someone had to *create* those edges. The agent had to explicitly say "this decision extends that one" or "this belief contradicts that constraint." If it forgot — or never noticed the connection — the edge didn't exist.
+Chapter 20 gave us connections between atoms — typed links like "this decision extends that one" — that let recall spread score to related atoms. But there was a catch: someone had to *create* those connections. The agent had to remember to write "this extends that." If it forgot — or never noticed the connection — the link didn't exist.
 
 Most connections went unstated. An agent would write a belief about file-first architecture, then three days later write a decision that referenced "the file-first approach" in its body text — without linking the two atoms. The knowledge graph had holes wherever humans (or agents) were imprecise.
 
@@ -1157,6 +1212,11 @@ Now it scans every other atom's body for those concept names. When a belief says
 
 On a 93-atom store, atom-ID references found 46 citations. Concept-name matching found 160. The informal reference layer was 3.5× larger than the explicit one. More than three out of four connections existed only in natural language, invisible to anything that only looked for formal IDs.
 
+```
+Formal atom-ID links:  ██████  46
+Concept-name matches:  ████████████████████████  160  (3.5×)
+```
+
 These concept-name citations become actual graph edges — the same kind that spreading activation traverses in `wander`. Connections that were locked inside prose now participate in the graph walk. An atom that was isolated because nobody linked to it by ID might turn out to be one of the most-referenced concepts in the store.
 
 If v1.4.0 taught the system which drawer matters most, this taught it that the *contents* of the drawers are a map to each other.
@@ -1169,31 +1229,25 @@ Chapter 21 gave the system a way to count how often each atom gets mentioned by 
 
 Think about how your own memory works. You don't remember a fact because you *decided* to — you remember it because you *used* it. The more you reach for an index card, the more worn the edges get, the faster your fingers find it next time. But if you stop reaching for it, it gradually sinks to the back of the drawer.
 
-### The Power Law of Recall
+### Borrowed From How Brains Work
 
-Cognitive science has a model for this. ACT-R — Adaptive Control of Thought-Rational — describes how human memory activation works with a power-law formula:
+Cognitive scientists noticed this pattern in human memory decades ago. Anderson and Schooler published a paper in 1991 describing exactly how memory activation rises with use and fades with time. Their finding was simple: both factors matter, and they combine predictably.
 
-```
-B_i = ln(n) − d · ln(t)
-```
+The intuition, without the math: **frequency fights decay**. A belief that's been cited 28 times stays accessible long after a belief cited zero times would have faded. You can have an old memory that's still vivid — if you've used it a lot — and a recent memory that's barely there, because you haven't.
 
-Where `n` is the number of times you've retrieved the memory (here: citation count + 1), `t` is how old it is in days, and `d` is a decay constant (0.5, the standard ACT-R value).
+The previous version of Memory Kernel only considered how recent an atom was. That turned out to be too aggressive. Knowledge that was important six months ago but still heavily referenced would sink below recently-created trivia. The new approach — borrowed directly from the cognitive science model — fixes this. Age still matters. But being referenced fights against fading.
 
-The `ln(n)` term is the key insight. A belief cited 28 times gets `ln(28) ≈ 3.3` added to its activation. A fact cited once gets `ln(1) = 0`. That 3.3 gap is enormous — it means the foundational belief stays accessible long after a one-off note would have faded.
+### Softening the Scale
 
-The previous activation model used only recency with an effective decay of `d = 1.0` — too aggressive. Knowledge that was important six months ago but still heavily referenced would sink below recently created trivia. The new formula with `d = 0.5` and a frequency term fixes this: age still matters, but being cited fights the decay.
+The raw activation number can range widely — from very low (old, never cited) to very high (recent, heavily cited). That range needs to be squashed into something the rest of the scoring pipeline can use.
 
-### Gentle Compression
+The first attempt was a standard squashing function — the kind commonly used in math and machine learning. It worked, but had a problem: atoms at the low end got pushed very close to zero, effectively silencing them. But a low-activation atom might still be the *only* atom that matches a query. You don't want it scoring 2% just because it's not popular.
 
-Raw activation values can range widely — from deeply negative (old, uncited) to strongly positive (recent, heavily cited). These need to be compressed into a usable range for scoring.
-
-The first attempt used a standard sigmoid: `1 / (1 + exp(-B_i))`. This works but has a problem: the tail end compresses too aggressively. Atoms with low activation get pushed very close to zero, effectively silencing them. A low-activation atom might still be the only one that matches a query — you don't want it scoring 0.02 just because it's not popular.
-
-The fix was a sqrt-sigmoid: `1 / sqrt(1 + exp(-B_i))`. This keeps the compression but softens it. The range becomes roughly [0.7, 1.0] instead of [0.0, 1.0]. An unpopular atom still scores at least 70% of a popular one — it's deprioritised, not erased.
+The fix was to use a softer squash. The low end no longer collapses to zero. An unpopular atom still scores at least 70% of a popular one — it's deprioritised, not erased.
 
 ### The Citation Table
 
-All of this needed a new home in the database. Schema v6 added `atom_citations` — a table tracking which atom cites which, how many times, and whether the citation was found via atom ID or concept name. The table feeds directly into `wander`'s activation calculation.
+All of this needed a new place to live in the speed-cache index. A citations table was added — it tracks which atoms cite which, how many times, and whether the citation was a formal ID reference or an informal concept-name match. That table is what the activation math reads from when it needs to know how "used" each atom has been.
 
 The filing cabinet now has fingerprints on the cards. The more a card has been handled — referenced, extended, cited in passing — the easier it is to find. And the system knows which cards have never been touched.
 
@@ -1201,7 +1255,7 @@ The filing cabinet now has fingerprints on the cards. The more a card has been h
 
 ## Chapter 23: Not All Edges Are Equal
 
-By v1.6, the memory graph had edges (Chapter 20), body-text discovery (Chapter 21), and frequency-weighted activation (Chapter 22). But every edge still carried the same weight during spreading activation. An `extends` edge — the developmental backbone of a belief chain — had the same influence as a `related` edge, which is often a residual catch-all for "these two things are vaguely connected."
+By v1.6, the memory graph had edges (Chapter 20), body-text discovery (Chapter 21), and frequency-weighted activation (Chapter 22). But every edge still carried the same weight during spreading activation — something v1.7 would start to fix. An `extends` edge — the developmental backbone of a belief chain — had the same influence as a `related` edge, which is often a residual catch-all for "these two things are vaguely connected."
 
 That's like saying a bridge and a wall both connect two rooms. Technically true. Not equally useful for getting across.
 
@@ -1209,7 +1263,7 @@ That's like saying a bridge and a wall both connect two rooms. Technically true.
 
 Before tackling edge weights, a smaller change laid groundwork: every CLI command gained a `--json` flag. Human-readable tables are fine for a terminal, but when another program needs to parse the output — a CI pipeline checking closure metrics, a plugin reading recall results — structured JSON is the only sane interface.
 
-The pattern is consistent across all commands: pass `--json`, get `JSON.stringify(result, null, 2)`. Error paths return `{"error": "..."}` with exit code 1. No exceptions.
+The pattern is consistent across all commands: add `--json` to any command and you get structured output instead of a table. If something goes wrong, you get a clean `{"error": "..."}` response and a non-zero exit code. No exceptions, no surprises for the program parsing the output.
 
 ### Surprising Collisions
 
@@ -1217,7 +1271,7 @@ The `wander` command finds collision candidates — pairs of atoms from distant 
 
 This was wrong. In a store where 70% of atoms are beliefs, the type-difference filter discarded roughly 90% of potential collisions. Two beliefs with completely disjoint vocabularies — one about deployment strategy, the other about user research methodology — are genuinely surprising together. Their types are the same but their *content* is worlds apart.
 
-The replacement uses tag Jaccard dissimilarity: `1 − |A∩B| / |A∪B|`. Two atoms with no shared tags score 1.0 (maximally dissimilar). The threshold is 0.7 — only pairs that are at least 70% dissimilar qualify as collision candidates. This surfaces same-type collisions that the old filter would have silently discarded.
+The replacement is simpler: measure how many tags two atoms *share* versus how many tags they have combined. If two atoms share no tags at all, they score as maximally different. Only pairs that are at least 70% different qualify as "surprising collisions." This surfaces same-type collisions the old filter would have silently discarded.
 
 ### Weighted Edges
 
@@ -1239,15 +1293,17 @@ Three presets package these weights for different modes of exploration. The `con
 
 ### Asking for Help
 
-Even with relink and concept-name extraction, many edges still land as `related` — the system found a connection but couldn't determine the specific type. The `mk enrich-relations` command addresses this by asking a local LLM (via Ollama) to reclassify them.
+Even with automatic linking and concept-name extraction, many connections still land as the generic `related` — the system found a link but couldn't tell what *kind*. The `mk enrich-relations` command fixes this by asking a small language model (running on your own machine, no cloud) to reclassify them.
 
-The command reads each `related` edge, sends both atoms' body text to the model, and asks: "Is this `extends`, `supports`, `contradicts`, `caused_by`, or `supersedes`?" The model responds with a type and a confidence score. Only proposals above 0.7 confidence are accepted. A `--dry-run` flag lets you preview the proposals before committing anything.
+For each `related` connection, the command sends both atoms' text to the model and asks: "Is this an `extends`, `supports`, `contradicts`, `caused_by`, or `supersedes` relationship?" The model answers with a type and a confidence number. Only answers above 70% confidence get accepted. A `--dry-run` flag lets you preview everything before any change gets written.
 
-This is the first time Memory Kernel calls an LLM for its own maintenance. Everything else — relink, citations, wander, closure — is pure computation, no model needed. Enrich-relations is an optional enrichment step: the system works fine without it, but the graph gets sharper with it.
+This is the first time Memory Kernel calls an AI model for its own maintenance. Everything else — automatic linking, citation counting, the wandering recall, the closure metric — is pure bookkeeping, no model needed. Enrich-relations is optional: the system works fine without it, but the connection graph gets sharper with it.
 
 ---
 
 ## Chapter 24: The Closure Test
+
+*(v1.9 shipped `mk closure` as its headline feature.)*
 
 When does a journal stop being a collection of notes and start being a *worldview*?
 
@@ -1265,7 +1321,7 @@ The `mk closure` command computes how self-referential a memory store has become
 
 **Entanglement** — how many cross-references exist per atom? Not just explicit relations from the index, but body-text references found by the citation scanner from Chapter 21.
 
-The closure index combines both: `belief_pct × (avg_relations + avg_body_refs) / 100`. A store with 80% beliefs and an average of 3 relations plus 2 body references per atom scores `80 × 5 / 100 = 4.0`.
+The closure index combines both signals into one number, roughly on a scale from 0 to 10. A store that's 80% beliefs with an average of 3 formal connections and 2 informal body-text references per atom scores about 4.0. A store that's mostly isolated facts with few connections stays near 0. The scale is rough on purpose — small changes don't matter, big shifts do.
 
 ### The Three Phases
 
@@ -1283,11 +1339,11 @@ The daily trajectory mode shows this evolution over time — each day's snapshot
 
 Closure isn't good or bad. It's a measurement of structural maturity that predicts specific things:
 
-**Automation resistance** — at closure index below 3, small LLM classifiers work fine on the atoms. They can read a belief and correctly categorise it, extract its key claims, or suggest relations. Above 5, accuracy drops below 55%. The body text is so self-referential — describing concepts in terms of other atoms — that classifiers without access to the full graph get confused.
+**Can a small AI classifier still understand these atoms on its own?** At closure below 3, yes. A small model can read a belief and correctly categorise it, extract its key claims, or suggest connections. Above 5, accuracy drops below 55% in our observational measurements (these are not controlled experiments — the exact threshold depends on which classifier you use). The direction is what matters: the text has become so self-referential — beliefs described in terms of other beliefs — that any classifier looking at one atom in isolation gets confused.
 
-**Transplant resistance** — at low closure, you can copy atoms between agents and they'll make sense in their new home. Above 5, 87% or more of beliefs fail direct transplant. They reference concepts that only exist in the source store. The belief "file-first proved resilient under the deployment-rollback constraint" is meaningless to an agent that has never seen the deployment-rollback constraint.
+**Can you copy a belief to a different project and have it still make sense?** At low closure, yes — atoms can be transplanted between agents and retain their meaning. Above closure 5, 87% or more of beliefs fail direct transplant. They reference concepts that only exist in the source store. *"file-first proved resilient under the deployment-rollback constraint"* is meaningless to an agent that has never seen the deployment-rollback constraint.
 
-**Graph-structural metrics** — degree, betweenness, connectivity — work at any closure level. Pure graph structure is immune to self-reference. This is why `wander`'s spreading activation remains effective regardless of closure: it traverses structure, not semantics.
+**What about pure structural measures — counting connections, mapping reach, spotting hubs?** Those work at any closure level, because they only look at the shape of the connection graph, not the meaning of the text. This is why the wandering recall (which walks connections) remains effective no matter how self-referential the store gets: it traverses structure, not semantics.
 
 The closure index doesn't tell you whether your memory store is good or bad. It tells you whether it has become *its own thing* — and what that means for anything that tries to touch it from the outside.
 
@@ -1295,15 +1351,17 @@ The closure index doesn't tell you whether your memory store is good or bad. It 
 
 ## Chapter 25: Going to Production
 
+*(v1.12 was the "move-in day" release: production infrastructure here in Chapter 25 and per-agent isolation in Chapter 26 — both shipped together.)*
+
 Everything up to Chapter 24 was the library and the CLI: tools you run in a terminal, test with `npm test`, and integrate however you see fit. The system worked. But working and being *production-ready* are different problems.
 
 Building a filing cabinet in a workshop is one thing. Installing it in a busy office where multiple agents need it simultaneously, where secrets can't be inlined in config files, and where the host framework needs to know exactly what happened during bootstrap — that's production.
 
 ### Secrets and Signals
 
-The first production problem was configuration. The OpenClaw plugin needs an encryption key and optionally an embedding API key. In development, you pass these as strings. In production — where a launchd or systemd service file might be version-controlled or visible to other processes — you don't want secrets sitting in plain text.
+The first production problem was configuration. The OpenClaw plugin needs an encryption key and optionally a key to call an external service for semantic search. In development, you write these as plain strings. In production — where the service configuration file might be checked into version control or visible to other processes on the machine — you really don't want the actual secret sitting there in plain text.
 
-SecretRef solves this. Instead of `"embeddingApiKey": "sk-abc123"`, you write:
+SecretRef solves this. Instead of writing `"embeddingApiKey": "sk-abc123"` (the real key, in the config), you write something like: *"the key lives in this file, go fetch it."*
 
 ```json
 {
@@ -1315,7 +1373,7 @@ SecretRef solves this. Instead of `"embeddingApiKey": "sk-abc123"`, you write:
 }
 ```
 
-The plugin resolves the reference at init time, reads the file, and uses the value. The config file never contains the actual secret. The format is a deliberate subset of RFC 6901 — slash-delimited JSON pointers with explicit rejection of arrays and escape sequences. Simple enough to implement correctly, restrictive enough to avoid surprises.
+When the plugin starts, it follows the pointer, reads the actual secret from the target file, and uses it. The config file itself never contains the secret — it only contains a map to where the secret lives. The pointer format is deliberately simple: step into this field, then that one. No fancy paths, no embedded code, nothing that could surprise you.
 
 The second problem was observability. When the plugin bootstraps — loading atoms into the agent's context at session start — the host needs to know what happened. Did it inject 47 atoms? Zero atoms because the store is empty? Did it fail because the directory doesn't exist?
 
@@ -1325,9 +1383,9 @@ Pre-compaction checkpoint signals complete the observability picture. Before the
 
 ### Two Ways to Search
 
-Until now, recall was keyword-based. FTS5 BM25 found atoms where the search terms matched the text. This is fast and predictable, but it misses semantic similarity. A query for "deployment strategy" won't find an atom titled "release pipeline approach" unless the words overlap.
+Until now, recall was keyword-based. It found atoms whose text contained the search words — fast and predictable, but it misses matches by *meaning*. A query for "deployment strategy" won't find an atom titled "release pipeline approach" unless the words happen to overlap.
 
-When the plugin is configured with an embedding provider, recall becomes hybrid: FTS5 for keyword matches, vector cosine similarity for semantic matches. The scores blend. If embeddings aren't available — no API key, no network, provider error — the system falls back gracefully to keyword-only recall. No crash, no degraded state, just slightly less coverage.
+When the plugin is configured with a semantic search provider (a service that can compare two pieces of text for how similar they *mean*, not just what words they share), recall becomes hybrid. Keyword matches and meaning matches combine into one blended score. If the semantic service isn't available — no API key, no network, provider error — the system quietly falls back to keyword-only recall. No crash, no degraded behaviour, just slightly less coverage.
 
 ### The Doctrine
 
@@ -1355,17 +1413,19 @@ One last change made the output *look* different. Beliefs connected by `extends`
 
 Graph-ordered rendering changed this. Beliefs now appear as indented developmental arcs. A root belief sits at the top. The belief that extends it is indented below. The belief that extends *that* sits one level deeper. The developmental history of an idea is visible at a glance — not just what the system believes, but how it got there.
 
-### What v2.0 Represents
+### What v1.12 Represents
 
 v1.0 proved memory-kernel could store and retrieve. v1.4 taught it what matters most. The versions in between taught it to read its own files, count its own citations, weigh its own edges, and measure its own complexity.
 
-v2.0 is the point where it stopped being a library and started being infrastructure. Bolted to the floor, wired into the host, observable from the outside, and governed by a doctrine that says: *this is where knowledge lives.*
+v1.12 is the point where it stopped being a library and started being infrastructure. Bolted to the floor, wired into the host, observable from the outside, and governed by a doctrine that says: *this is where knowledge lives.* (The same v1.12 release also introduced per-agent isolation — see the next chapter.)
 
-The 805 tests are 805 promises that all of this — from the simplest atom creation to the most tangled closure metric — works exactly as described. The filing cabinet is no longer in the workshop. It's in the office, and people are using it.
+The test suite at this release — 983 checks — was 983 promises that all of this, from the simplest atom creation to the most tangled closure metric, worked exactly as described. The filing cabinet was no longer in the workshop. It was in the office, and people were using it.
 
 ---
 
 ## Chapter 26: When Agents Need Their Own Filing Cabinets
+
+The second big feature in v1.12 — shipping in the same release as the production infrastructure from the previous chapter — was per-agent isolation.
 
 Imagine an office with one filing cabinet. Two agents — Alice and Bob — both use it. Alice files a card: "Use Redis for caching." Bob, working a different problem, files: "Use Memcached for caching." Neither knows the other filed anything. Next morning, both cards are in the same drawer, and whoever reads them sees a contradiction that neither agent intended.
 
@@ -1421,7 +1481,7 @@ Each agent section has a `render.yaml` file that controls how CLAUDE.md is gener
 
 ```yaml
 mode: operational        # Alice might use 'constitutive' instead
-max_tokens: 8000
+max_tokens: 16000
 include_shared: true     # Pull in the corkboard
 type_weights:
   belief: 0.5
@@ -1461,4 +1521,46 @@ The mechanics are the same — atoms, events, typed knowledge, confidence scores
 
 This matters because agents aren't interchangeable. A research agent and a deployment agent have different jobs, different knowledge, and different priorities. Giving them separate memory isn't just about preventing collisions — it's about letting each agent develop its own understanding without being overwhelmed by knowledge that belongs to someone else.
 
-The 805 tests are now joined by 1,400 more, covering every path through isolation: config loading, union recall, share and unshare, migration strategies, graph scoping, render preferences, and the security checks that keep agent sections truly separate. The office building is load-tested. The walls are solid.
+The test suite grew to cover every new path through isolation: config loading, union recall, share and unshare, migration strategies, graph scoping, render preferences, and the security checks that keep agent sections truly separate. The office building is load-tested. The walls are solid.
+
+---
+
+## Chapter 27: Coda — What's Happened Since
+
+v1.12 was the big-bang release. After the filing cabinet moved into the office, the next three releases sanded down real edges that showed up in daily use.
+
+**v1.13 — Episodes That Earn Their Space.** Before v1.13, session summaries (episodes) were included in recall bulk-style — every candidate episode got added at roughly 800 tokens each, often crowding atoms out of tight budgets. v1.13 changed this: episodes are now ranked the same way atoms are (match + recency), zero-relevance episodes are dropped when you give a task, and episodes never exceed 20% of the token budget. You get fewer but better session memories, and the atom budget no longer gets silently eaten.
+
+**v1.14 — Fixing a Subtle Ranking Bug.** Memory Kernel's search understands that "running" and "run" are the same word (this is called stemming — the same trick Google uses). But the ranking logic had a bug: it measured how "specific" a word was by looking for the exact word in the atom's body. If the search matched via stemming — "running" in the query, "run" in the body — the specificity check would silently fail and the atom would get a false penalty. v1.14 fixed this by making the specificity check go through the same stemming path as the search itself. Rankings now match intuition.
+
+**v1.15 — Teaching the System to Extract and Consolidate.** The biggest question for users was always: *"how do I get my existing knowledge into Memory Kernel without filing everything by hand?"* v1.15 answered it with three new commands:
+
+- **`mk extract`** reads a conversation log (or any piece of text) and asks a language model — either Claude Code running locally, or Ollama on your own machine — to pull out the facts, decisions, preferences, and beliefs worth remembering. It cross-checks against what's already in your store so you don't end up with duplicates. The atoms it creates are marked as *drafts*, not active — they need a second pass before they count.
+- **`mk consolidate`** is that second pass. It reviews the draft atoms, shows you what's new, flags possible duplicates of existing active atoms, and lets you promote the ones worth keeping to active status. You can do the whole batch in a single command, or filter by type, or cap the size.
+- **`mk lint`** is a health checker. It scans the whole store looking for six categories of trouble: atoms that contradict each other, facts that haven't been updated in months, orphan atoms that nobody links to, near-duplicates, beliefs whose confidence never changes despite repeated updates, and stale `open_question` atoms that should probably be resolved or archived. You get a report grouped by severity. The lint doesn't fix anything — it just tells you where to look.
+
+The pattern across v1.13–v1.15 is clear: v1.12 built the infrastructure; the releases that followed have been about making the infrastructure *easier to live with*. Extract and consolidate close the hardest part of the onboarding loop — getting knowledge *into* the system in the first place. Lint closes the maintenance loop — finding knowledge that's turned stale or redundant. And the episode-ranking fix in v1.13 closes one of the last real-world rough edges in recall itself.
+
+At v1.15, the test suite has grown to around a thousand automated checks across fifty-six test files. Every one of them is a promise: *this works, on every machine, after every change.*
+
+---
+
+## What Next
+
+If you want to **try it in 60 seconds:**
+
+```bash
+npx memory-kernel init ./my-memory
+npx memory-kernel remember -d ./my-memory --type fact "Production runs Debian 13"
+npx memory-kernel recall -d ./my-memory
+```
+
+Three commands. You now have a working filing cabinet.
+
+If you're **deciding whether this fits your project,** read [`docs/when-to-choose-memory-kernel.md`](docs/when-to-choose-memory-kernel.md). It's honest about when Memory Kernel is the right tool — and when a plain markdown file or a vector database would serve you better.
+
+If you're **connecting it to Claude, Cursor, or another AI assistant,** read [`docs/openclaw-mcp.md`](docs/openclaw-mcp.md). Five minutes from install to your first `mk_remember` call.
+
+If you're **importing existing notes** (design docs, READMEs, meeting notes), read [`docs/migration.md`](docs/migration.md). Five different starting points, each with concrete commands.
+
+Questions, ideas, or patches are welcome on the issue tracker. The filing cabinet is yours — open the drawer and start filing.
