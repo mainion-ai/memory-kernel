@@ -6,6 +6,7 @@
 import yaml from 'js-yaml';
 import matter from 'gray-matter';
 import type { Atom, AtomFrontmatter } from './types.js';
+import { renderRelationsSection, stripRelationsSection } from './obsidian.js';
 
 // Stable key order for YAML frontmatter
 const KEY_ORDER: (keyof AtomFrontmatter)[] = [
@@ -34,6 +35,12 @@ export function serializeFrontmatter(fm: AtomFrontmatter): string {
       ordered[key] = fm[key];
     }
   }
+
+  // Promote scope.tags to top-level `tags` for Obsidian native tag search
+  if (fm.scope?.tags && fm.scope.tags.length > 0) {
+    ordered.tags = fm.scope.tags;
+  }
+
   return yaml.dump(ordered, {
     sortKeys: false, // We pre-sorted
     lineWidth: -1, // No wrapping
@@ -48,7 +55,8 @@ export function serializeFrontmatter(fm: AtomFrontmatter): string {
  */
 export function serializeAtom(atom: Atom): string {
   const fm = serializeFrontmatter(atom.frontmatter);
-  return `---\n${fm}\n---\n\n${atom.body.trim()}\n`;
+  const relSection = renderRelationsSection(atom.frontmatter.relations);
+  return `---\n${fm}\n---\n\n${atom.body.trim()}\n${relSection}`;
 }
 
 /**
@@ -70,9 +78,15 @@ export function parseAtom(content: string, filePath?: string): Atom {
     throw new Error(`Missing or invalid 'status' in frontmatter${filePath ? ` (${filePath})` : ''}`);
   }
 
+  // Strip the promoted top-level `tags` — it's a derived view of scope.tags
+  // for Obsidian compatibility, not a canonical frontmatter field.
+  if (data.tags && data.scope?.tags) {
+    delete data.tags;
+  }
+
   return {
     frontmatter: data as AtomFrontmatter,
-    body: parsed.content.trim(),
+    body: stripRelationsSection(parsed.content.trim()),
     filePath,
   };
 }

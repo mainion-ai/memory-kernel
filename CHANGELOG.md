@@ -19,6 +19,17 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.16.0] — 2026-04-25
+
+### Added — Obsidian-native atom compatibility
+
+- **Atom files are now natively Obsidian-compatible.** The ENTITIES/ directory can be opened directly as an Obsidian vault — no export step needed.
+- **`## Relations` wikilink section** appended to every atom file that has `frontmatter.relations[]`. Uses `<!-- mk:relations -->` sentinel to delimit the machine-managed section. Stripped on parse — never pollutes `atom.body`.
+- **`serializeAtom()` / `parseAtom()` hook** — single integration point in `format.ts`. All code paths that write or read atoms (retain, relink, enrich-relations, import, etc.) get wikilinks for free with zero changes.
+- **New module `src/obsidian.ts`** — exports `renderRelationsSection()`, `stripRelationsSection()`, `generateGraphConfig()`, `RELATIONS_SENTINEL`, `TYPE_COLORS`, `TYPE_PREFIXES`.
+- **New CLI command `mk obsidian-init`** — writes `.obsidian/graph.json` with type-based color groups (9 atom types, 4-char path-prefix queries). With `--sync`, rewrites all existing atom files to include `## Relations` sections.
+- **16 new tests** covering render/strip pure functions, round-trip serialize/parse, graph config structure, and integration (atom files on disk).
+
 ## [1.15.0] — 2026-04-22
 
 ### Added — `mk extract` automatic atom extraction
