@@ -26,10 +26,10 @@
 
 ### For agents — install skills
 
-If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`container/skills/`](container/skills/) that handle installation and diagnostics end-to-end — no manual CLI juggling required:
+If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end — no manual CLI juggling required:
 
-- **[`/mk-memory-setup`](container/skills/mk-memory-setup/README.md)** — interactive full setup for agents. Installs the CLI, initializes the memory directory, wires container mounts, seeds identity atoms, renders the first `CLAUDE.md`, and (optionally) configures nightly cron + GitHub backup. Run from the host via Claude Code.
-- **[`/mk-doctor`](container/skills/mk-doctor/SKILL.md)** — self-diagnostic. Auto-detects container vs. native mode and verifies CLI, memory directory, mounts, cron, and CLAUDE.md render. Run it any time memory "feels off" or after changing your setup.
+- **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup for agents. Installs the CLI, initializes the memory directory, wires container mounts, seeds identity atoms, renders the first `CLAUDE.md`, and (optionally) configures nightly cron + GitHub backup. Run from the host via Claude Code.
+- **[`/mk-doctor`](skills/mk-doctor/SKILL.md)** — self-diagnostic. Auto-detects container vs. native mode and verifies CLI, memory directory, mounts, cron, and CLAUDE.md render. Run it any time memory "feels off" or after changing your setup.
 
 ---
 
@@ -109,8 +109,8 @@ Files are truth. Everything else is derived. Delete the SQLite index — rebuild
 - [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render
 - [Container quickref](docs/agent-quickref-container.md) — paths, commands, /tmp workaround
 - [Native / Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
-- [Self-diagnostic](container/skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
-- **NanoClaw setup:** run `/mk-memory-setup` from your channel, or see the [mk-memory-setup skill](container/skills/mk-memory-setup/README.md)
+- [Self-diagnostic](skills/mk-doctor/SKILL.md) — run `/mk-doctor` to verify your setup
+- **NanoClaw setup:** run `/mk-memory-setup` from your channel, or see the [mk-memory-setup skill](skills/mk-memory-setup/README.md)
 
 **OpenClaw / orchestrators:** [CLI integration guide](docs/cli-integration.md) for direct `--json` CLI usage (no MCP required) · [Host integration doctrine](docs/host-integration-doctrine.md) for steering host AGENTS.md, MEMORY.md, and compaction.
 

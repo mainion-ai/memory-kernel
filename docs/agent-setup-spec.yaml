@@ -221,7 +221,7 @@ cron:
 # Format matches NanoClaw skill spec (YAML frontmatter + markdown body).
 # =============================================================================
 skills:
-  # Global skills (shared across all groups — already in container/skills/)
+  # Global skills (shared across all groups — already in skills/)
   # These are auto-synced by NanoClaw. No action needed.
 
   # Group-specific skills (only for this agent)

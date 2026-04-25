@@ -9,6 +9,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — repository layout
+
+- **Renamed `container/skills/` → `skills/`.** Both `mk-memory-setup` and `mk-doctor` are host-side skills (run via Claude Code on the operator's machine, not inside a container), so the old location was misleading; `container/` was empty otherwise. No npm-package impact — the published `memory-kernel` package only ships `dist/`, `README.md`, and `LICENSE`.
+
+### Added — agent lifecycle as typed memory + multi-host setup
+
+- **`mk-memory-setup` now seeds 8 lifecycle atoms** (7 procedure + 1 constraint) so the agent's operating manual lives inside memory-kernel itself and is recallable per task — see `skills/mk-memory-setup/seed-atoms/lifecycle/`. The `seed-atoms/seed-lifecycle.sh` script is the canonical entry point.
+- **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
+- **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
+
 ## [1.15.0] — 2026-04-22
 
 ### Added — `mk extract` automatic atom extraction

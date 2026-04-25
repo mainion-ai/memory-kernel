@@ -65,7 +65,7 @@ cd /path/to/nanoclaw
 
 # Get the skill from memory-kernel
 git fetch https://github.com/mainion-ai/memory-kernel.git main
-git checkout FETCH_HEAD -- container/skills/mk-memory-setup/
+git checkout FETCH_HEAD -- skills/mk-memory-setup/
 
 # Run skill from your messaging app:
 /mk-memmory-setup
@@ -74,14 +74,14 @@ git checkout FETCH_HEAD -- container/skills/mk-memory-setup/
  
 # Install for Claude Code (host-side)
 mkdir -p .claude/skills
-cp -r container/skills/mk-memory-setup .claude/skills/
+cp -r skills/mk-memory-setup .claude/skills/
 
 # Run Claude Code and invoke the skill
 claude
 # then: /mk-memory-setup
 ```
 
-This adds `container/skills/mk-memory-setup/` to your NanoClaw and `.claude/skills/mk-memory-setup/`. The skill is automatically synced to agent containers at session start.
+This adds `skills/mk-memory-setup/` to your NanoClaw and `.claude/skills/mk-memory-setup/`. The skill is automatically synced to agent containers at session start.
 
 ## Usage
 
