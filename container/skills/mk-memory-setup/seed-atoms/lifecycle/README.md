@@ -23,4 +23,40 @@ These eight files are the bodies of the memory-kernel lifecycle atoms that `/mk-
 
 ## Source of truth
 
-These files mirror the corresponding sections of [`docs/agent-session-loop.md`](../../../../docs/agent-session-loop.md). When the doc is updated, update the matching seed file (and vice versa). A pre-publish lint check could be added to verify they don't drift; for now, treat the doc as canonical and re-seed agents after edits via `mk remember --slug <slug>` (overwrites the existing atom).
+These files mirror the corresponding sections of [`docs/agent-session-loop.md`](../../../../docs/agent-session-loop.md). When the doc is updated, update the matching seed file (and vice versa). A pre-publish lint check could be added to verify they don't drift; for now, treat the doc as canonical.
+
+## Seeding
+
+The bundled `../seed-lifecycle.sh` script reads each file in this directory and creates an atom via `npx mk remember`. Run it from anywhere with the memory directory as the only argument:
+
+```bash
+bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory
+```
+
+Verify after seeding:
+
+```bash
+npx mk recall -d ~/mk-memory --tags session-loop --json | jq '.atoms | length'
+# Expected: 8
+```
+
+## Re-seeding after a section edit
+
+Atom IDs include a date and a unique suffix, so re-running `seed-lifecycle.sh` creates *new* atoms rather than overwriting the old ones. To refresh a single lifecycle atom after editing its section file:
+
+```bash
+# 1. Locate the existing atom file (slug appears uppercased in the ID)
+ls ~/mk-memory/ENTITIES/PROC-*-SESSION-START-PROCEDURE-*.md
+
+# 2. Move it to ARCHIVE/ (soft-delete; preserves history)
+mv ~/mk-memory/ENTITIES/PROC-*-SESSION-START-PROCEDURE-*.md ~/mk-memory/ARCHIVE/
+
+# 3. Re-run the seeder — only the missing slug gets re-seeded; others are duplicated
+#    but with byte-identical bodies, so the next 'mk reflect' deduplicates them.
+bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory
+
+# 4. Re-render so the consuming host picks up the new content
+npx mk render ~/mk-memory <path-to-CLAUDE.md-or-equivalent>
+```
+
+If you re-seed without archiving first and the section content actually changed, both versions live in `ENTITIES/` until you archive one — `mk reflect` deduplicates only on byte-identical bodies. Archive the stale file first whenever the content has changed.

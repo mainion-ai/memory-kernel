@@ -289,79 +289,27 @@ npx mk remember "GitHub account: {GITHUB_USER}. Repos: {GITHUB_USER}/memory (pri
 
 Seed the agent's operating manual as typed memory, so the lifecycle is recallable from inside the system itself rather than living only in `docs/agent-session-loop.md`. Without this step, a freshly-bootstrapped agent has no idea when to run `wander`, the order of `citations` → `relink`, that `lint` exists, or the A2A handoff protocol — it has to be told out of band.
 
-The bodies for these eight atoms live alongside this skill at `seed-atoms/lifecycle/` (one markdown file per section). You — the agent running this skill — should resolve `SKILL_DIR` to the directory containing this `SKILL.md` (the path Claude Code is reading right now). Then:
+The bodies for these atoms live alongside this skill at `seed-atoms/lifecycle/` (one markdown file per section). The bundled `seed-atoms/seed-lifecycle.sh` script reads each file and seeds it via `npx mk remember` with a stable `--slug`. Run it with the absolute path of this skill directory:
 
 ```bash
-# SKILL_DIR is the absolute path of this mk-memory-setup skill directory.
-# Set it explicitly to the path you used to read SKILL.md.
-SKILL_DIR="{SKILL_DIR}"
-SEED="$SKILL_DIR/seed-atoms/lifecycle"
-
-# Sanity check
-if [ ! -d "$SEED" ]; then
-  echo "Lifecycle seed directory not found: $SEED" >&2
-  echo "Set SKILL_DIR to the absolute path of the mk-memory-setup skill, then re-run this step." >&2
-  exit 1
-fi
-
-# 7 procedure atoms — the agent's lifecycle, by section
-npx mk remember "$(cat "$SEED/01-session-start.md")" \
-  -d {MEMORY_DIR} -t procedure --slug session-start-procedure \
-  --tags session-loop lifecycle agent-setup
-
-npx mk remember "$(cat "$SEED/02-during-session.md")" \
-  -d {MEMORY_DIR} -t procedure --slug during-session-procedure \
-  --tags session-loop lifecycle agent-setup
-
-npx mk remember "$(cat "$SEED/03-session-end.md")" \
-  -d {MEMORY_DIR} -t procedure --slug session-end-procedure \
-  --tags session-loop lifecycle agent-setup
-
-npx mk remember "$(cat "$SEED/04-every-5-sessions.md")" \
-  -d {MEMORY_DIR} -t procedure --slug every-5-sessions-procedure \
-  --tags session-loop lifecycle agent-setup
-
-npx mk remember "$(cat "$SEED/05-maintenance-cadence.md")" \
-  -d {MEMORY_DIR} -t procedure --slug maintenance-cadence-procedure \
-  --tags session-loop lifecycle agent-setup
-
-npx mk remember "$(cat "$SEED/06-a2a-handoff.md")" \
-  -d {MEMORY_DIR} -t procedure --slug a2a-handoff-procedure \
-  --tags session-loop lifecycle agent-setup
-
-npx mk remember "$(cat "$SEED/07-diagnostics.md")" \
-  -d {MEMORY_DIR} -t procedure --slug diagnostics-procedure \
-  --tags session-loop lifecycle agent-setup
-
-# 1 constraint atom — hard rules ("what not to do")
-# Constraint type carries 1.5x recall weight + reserved budget slot,
-# so these rules surface even on a tight token budget.
-npx mk remember "$(cat "$SEED/08-what-not-to-do.md")" \
-  -d {MEMORY_DIR} -t constraint --slug session-loop-pitfalls \
-  --tags session-loop constraints agent-setup
+# Replace <SKILL_DIR> with the absolute path of the directory containing
+# this SKILL.md — the path Claude Code is reading right now.
+SKILL_DIR="<SKILL_DIR>"
+bash "$SKILL_DIR/seed-atoms/seed-lifecycle.sh" "{MEMORY_DIR}"
 ```
 
-**Verify:** `npx mk status -d {MEMORY_DIR}` should now show 7 procedures and at least 1 constraint. After the next render (Step 9), the agent's `CLAUDE.md` will include the lifecycle as type-weighted memory — `procedure` × 1.2 and `constraint` × 1.5 in recall scoring.
+The script seeds 7 procedure atoms (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics) and 1 constraint atom (Session-Loop Pitfalls). Constraint type carries 1.5× recall weight and reserved token budget, so the hard rules surface even on tight renders.
 
-**Re-seeding after a section edit:** atom IDs include a date and a unique suffix, so re-running `npx mk remember` with the same `--slug` creates a *new* atom rather than overwriting the old one. To refresh a lifecycle atom after editing a section file, move the stale atom out of `ENTITIES/` and re-seed:
+**Verify:**
 
 ```bash
-# 1. Locate the existing atom file (slug appears uppercased in the ID)
-ls {MEMORY_DIR}/ENTITIES/PROC-*-SESSION-START-PROCEDURE-*.md
-
-# 2. Move it to ARCHIVE/ (soft-delete; preserves history)
-mv {MEMORY_DIR}/ENTITIES/PROC-*-SESSION-START-PROCEDURE-*.md {MEMORY_DIR}/ARCHIVE/
-
-# 3. Re-seed from the updated section file
-npx mk remember "$(cat "$SEED/01-session-start.md")" \
-  -d {MEMORY_DIR} -t procedure --slug session-start-procedure \
-  --tags session-loop lifecycle agent-setup
-
-# 4. Re-render so CLAUDE.md picks up the new content
-npx mk render {MEMORY_DIR} {CLAUDE_MD_PATH}
+npx mk recall -d "{MEMORY_DIR}" --tags session-loop --json | jq '.atoms | length'
+# Expected: 8 (7 procedures + 1 constraint)
 ```
 
-If you re-seed without archiving first, both versions live in `ENTITIES/` until the next `mk reflect` — which deduplicates only when bodies are byte-identical. If the section content actually changed, the duplicates persist and inflate recall noise. Move the stale file first.
+After the next render (Step 9), the agent's `CLAUDE.md` will include the lifecycle as type-weighted memory — `procedure` × 1.2 and `constraint` × 1.5 in recall scoring.
+
+**Re-seeding after a section edit:** atom IDs include a date and a unique suffix, so re-running the script creates new atoms rather than overwriting. To refresh a lifecycle atom after editing a section file, move the stale atom out of `ENTITIES/` first, then re-run the script. See `seed-atoms/lifecycle/README.md` for the exact commands.
 
 ## 9. Render CLAUDE.md
 
