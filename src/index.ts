@@ -49,6 +49,7 @@ export {
   serializeFrontmatter,
   parseAtom,
   normalizeTimestamp,
+  normalizeTags,
 } from './format.js';
 
 // Store
@@ -263,3 +264,12 @@ export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom 
 // Consolidate (lifecycle pipeline for promoting draft atoms)
 export { consolidateAtoms } from './consolidate.js';
 export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, ConsolidateAtomStatus } from './types.js';
+
+// Obsidian-native compatibility
+export {
+  RELATIONS_SENTINEL,
+  TYPE_COLORS,
+  renderRelationsSection,
+  stripRelationsSection,
+  generateGraphConfig,
+} from './obsidian.js';

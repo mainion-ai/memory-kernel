@@ -55,6 +55,8 @@ import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { registerLintCommand } from './lint.js';
 import { registerExtractCommand } from './extract.js';
 import { registerConsolidateCommand } from './consolidate.js';
+import { registerExportObsidianCommand } from './export-obsidian.js';
+import { registerObsidianInitCommand } from './obsidian-init.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -1260,5 +1262,7 @@ registerEnrichRelationsCommand(program);
 registerLintCommand(program);
 registerExtractCommand(program);
 registerConsolidateCommand(program);
+registerExportObsidianCommand(program);
+registerObsidianInitCommand(program);
 
 program.parse();
