@@ -1,115 +1,147 @@
 ---
 name: mk-memory-setup
-description: Set up memory-kernel for a NanoClaw agent — persistent memory across sessions. Use when user asks to set up memory, install memory-kernel, add persistent memory, or configure agent memory. Triggers on "setup memory", "memory-kernel", "mk-memory-setup", "add memory", "persistent memory".
+description: Set up memory-kernel — persistent, file-based agent memory — for any host that needs it. Universal core (install CLI, init store, seed identity + lifecycle atoms, schedule reflect) plus host-specific plumbing for NanoClaw container agents (mounts, allowlist, restart), OpenClaw plugin-based agents (plugin install, isolation config, AGENTS.md / MEMORY.md doctrine), or any MCP-capable client (Claude Desktop, Cursor, Continue) that needs an `mk-mcp` server entry. Use when the user asks to "set up memory-kernel", "install mk", "configure agent memory", "add persistent memory to my agent", "wire up memory-kernel for NanoClaw / OpenClaw / Claude Desktop / Cursor", or anything similar where memory-kernel is being introduced to an agent host. Triggers on "mk-memory-setup", "memory-kernel setup", "set up agent memory", "install memory-kernel", "configure mk", "persistent memory across sessions", "add memory to my agent", "memory-kernel for NanoClaw", "memory-kernel for OpenClaw", "memory-kernel MCP server".
 ---
 
 # Memory-Kernel Setup
 
-Set up persistent memory for a NanoClaw agent. This creates a file-based memory system (atoms, events, beliefs) that survives across sessions via CLAUDE.md rendering.
+Set up persistent, typed memory for an AI agent. The skill has a **universal core** that works for every host (install CLI → init store → seed atoms → schedule reflect) and **host-specific extensions** for the three integration paths memory-kernel is designed around:
 
-**Important:** This skill runs on the **host machine** via Claude Code, not inside a container. It configures mounts, databases, and cron jobs that require host-level access.
+| Host | What it consumes | Reference file |
+|------|------------------|----------------|
+| **NanoClaw** (container agent) | Rendered `CLAUDE.md` loaded at session start | `references/nanoclaw.md` |
+| **OpenClaw** (plugin-based agent) | Native `openclaw-memory-kernel` plugin + AGENTS.md / MEMORY.md doctrine | `references/openclaw.md` |
+| **MCP client** (Claude Desktop, Cursor, etc.) | `mk-mcp` server launched by the client over stdio | `references/mcp-client.md` |
+| **Generic / other** | The agent (or operator) wires up memory-kernel themselves using the SDK or CLI | — |
 
-**Principle:** When something is broken or missing, fix it. Don't tell the user to go fix it themselves. Ask for permission when needed, then do the work.
+This skill runs on the **host machine** via Claude Code, not inside a container. It needs host-level access to install software, write config files, and (for NanoClaw) update databases and cron.
 
-**UX Note:** Use `AskUserQuestion` for all user-facing questions.
+**Principle:** when something is broken or missing, fix it. Don't tell the user to go fix it themselves. Ask permission via `AskUserQuestion` for anything that touches their config or installs software, then do the work.
 
-## 0. Preflight Checks
+---
 
-Before anything else, verify the environment. Run each check and report results:
+## Step 0: Preflight
+
+Universal regardless of host:
 
 ```bash
-node --version    # Need >= 20.0.0
-git --version     # Need git
-sqlite3 --version # Need sqlite3 (for NanoClaw DB config)
-docker --version  # Need Docker (NanoClaw container runtime)
+node --version    # need >= 20.0.0
+git --version
 ```
 
-**If any missing:**
-- `node`: Install via nvm or nodesource. Don't proceed without Node 20+.
-- `git`: `sudo apt install git` (Linux) or `brew install git` (macOS)
-- `sqlite3`: `sudo apt install sqlite3` (Linux) or `brew install sqlite3` (macOS)
-- `docker`: Should already be running if NanoClaw works. Just verify.
+NanoClaw and OpenClaw also need:
 
-**Optional checks** (only if user wants GitHub backup):
 ```bash
-gh auth status    # GitHub CLI authenticated
+sqlite3 --version # NanoClaw stores config in SQLite
+docker --version  # NanoClaw container runtime; OpenClaw may use it depending on distribution
 ```
 
-Also verify NanoClaw is running:
+GitHub backup of the memory directory is optional:
+
 ```bash
-# Check the NanoClaw process
-pgrep -f nanoclaw || systemctl --user status nanoclaw 2>/dev/null || launchctl list | grep nanoclaw 2>/dev/null
+gh auth status    # only needed if user wants GitHub backup
 ```
 
-If NanoClaw is not running, warn the user. Memory setup can proceed but the agent won't use it until NanoClaw restarts.
+If anything's missing, install before proceeding (`brew install`, `apt install`, or distribution-appropriate). Don't proceed without `node ≥ 20`.
 
-## 1. Ask Configuration
+---
 
-Use `AskUserQuestion` to gather setup details:
+## Step 1: Detect / select the host
 
-**Question 1: Memory directory**
+Auto-detect first; ask only if ambiguous.
+
+```bash
+HOST_HINTS=()
+
+# NanoClaw
+[ -d /workspace/group ] && [ -f /.dockerenv ] && HOST_HINTS+=("nanoclaw")  # inside the container
+[ -f ~/.config/nanoclaw/mount-allowlist.json ] && HOST_HINTS+=("nanoclaw")
+pgrep -f nanoclaw >/dev/null 2>&1 && HOST_HINTS+=("nanoclaw")
+
+# OpenClaw — package.json deps or dedicated config dir
+[ -f ./package.json ] && grep -q "openclaw-memory-kernel" ./package.json 2>/dev/null && HOST_HINTS+=("openclaw")
+[ -d ~/openclaw ] || [ -d ~/.config/openclaw ] && HOST_HINTS+=("openclaw")
+
+# MCP clients — Claude Desktop config in canonical locations
+[ -f "$HOME/Library/Application Support/Claude/claude_desktop_config.json" ] && HOST_HINTS+=("mcp-client")
+[ -f "$HOME/.config/Claude/claude_desktop_config.json" ] && HOST_HINTS+=("mcp-client")
+
+echo "Detected: ${HOST_HINTS[*]:-none}"
+```
+
+Then run `AskUserQuestion`:
+
+> *"Which host will use this memory?"*
+>
+> - **NanoClaw container agent** *(memory rendered into `CLAUDE.md`)*
+> - **OpenClaw agent** *(loads the `openclaw-memory-kernel` plugin)*
+> - **MCP client** *(Claude Desktop, Cursor, Continue — runs `mk-mcp` over stdio)*
+> - **Other / generic** *(I just want the memory store; I'll wire up consumption myself)*
+
+If exactly one host was auto-detected, propose it as the default (recommended) option and let the user confirm or override. Store the answer as `{HOST}` for use in subsequent steps.
+
+---
+
+## Step 2: Configuration
+
+Use `AskUserQuestion` for these. Some questions only apply to certain hosts.
+
+**Q1: Memory directory** *(all hosts)*
 "Where should the memory data be stored?"
-- `~/mk-memory` (Recommended) — Simple, top-level
-- `~/repos/memory/kernel` — If user prefers repos/ structure
+- `~/mk-memory` *(recommended — simple, top-level)*
+- `~/repos/memory/kernel`
 - Custom path
 
-**Question 2: Agent name**
-"What is the agent's name? (used in commits, cron IDs, and identity)"
-- Free text input
+Store as `{MEMORY_DIR}` (expand to absolute path; do not keep `~`).
 
-**Question 3: Version control**
-"Do you want to back up memory to GitHub?"
-- Yes (Recommended) — Git init + private GitHub repo
-- No — Local only, no git
+**Q2: Agent name** *(all hosts)*
+"What is the agent's name? Used in commits, cron IDs, and as the seed for the identity atom."
+- Free text; alphanumeric + dashes/underscores only (memory-kernel constraint).
 
-**If yes to GitHub:**
+**Q3: Version control** *(all hosts)*
+"Back up the memory directory to GitHub?"
+- **Yes** *(recommended)* — `git init` + private GitHub repo
+- **No** — local only
 
-**Question 3a: GitHub username**
-"What GitHub username should own the memory repo? (e.g., nano-ai-agent)"
-- Free text input
+If yes, also ask **Q3a:** GitHub username.
 
-**Question 4: Identity description**
-"Describe this agent in 1-2 sentences (becomes the identity atom):"
-- Free text input
+**Q4: Identity description** *(all hosts)*
+"Describe this agent in 1–2 sentences. This becomes the identity atom seeded in Step 6."
+- Free text.
 
-**Question 5: NanoClaw directory**
-"Where is NanoClaw installed? I'll try to auto-detect first."
+**Q5: Host-specific config** — load the appropriate reference file:
 
-Run auto-detect:
-```bash
-NANOCLAW_DIR=$(for p in ~/nanoclaw ~/Documents/nanoclaw ~/projects/nanoclaw ~/repos/nanoclaw; do
-  [ -d "$p" ] && echo "$p" && break
-done)
-echo "Found: $NANOCLAW_DIR"
-```
+| `{HOST}` | What to read |
+|----------|--------------|
+| `nanoclaw` | `references/nanoclaw.md` Step N1 (locate NanoClaw, ask for `{NANOCLAW_DIR}`) |
+| `openclaw` | `references/openclaw.md` Step O1–O2 (plugin install + isolation mode) |
+| `mcp-client` | `references/mcp-client.md` Step M1 (locate the client config file) |
+| `other` | Skip — universal flow only |
 
-If found, confirm with user: `"Found NanoClaw at $NANOCLAW_DIR — is this correct?"`
+---
 
-If not found or user says no, ask: `"Please enter the full path to your NanoClaw directory:"` — free text input.
+## Step 3: Install memory-kernel CLI
 
-Store as `{NANOCLAW_DIR}` and use in all subsequent steps.
-
-Store all values for use in subsequent steps.
-
-## 2. Install memory-kernel CLI
+Universal:
 
 ```bash
 npm install -g memory-kernel
+npx mk --version  # verify
 ```
 
-Verify:
-```bash
-npx mk --version
-```
+If install fails with `EACCES`, fix npm prefix:
 
-If the install fails with EACCES, fix npm permissions:
 ```bash
 mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'
-export PATH=~/.npm-global/bin:$PATH
+export PATH=~/.npm-global/bin:$PATH   # add to user's shell profile too
 npm install -g memory-kernel
 ```
 
-## 3. Initialize Memory Directory
+---
+
+## Step 4: Initialise memory directory
+
+Universal:
 
 ```bash
 mkdir -p {MEMORY_DIR}
@@ -117,149 +149,62 @@ cd {MEMORY_DIR}
 npx mk init .
 ```
 
-This creates:
-- `ENTITIES/` — canonical atom storage (beliefs, facts, decisions, etc.)
-- `CONFLICTS/` — merge conflict atoms
-- `ARCHIVE/` — archived/superseded atoms
-- `EVIDENCE/` — supporting evidence files
-- `EPISODES/` — long-form episode notes
-- `events.ndjson` — event log (source of truth for event sourcing)
-- `.memory-index.db` — SQLite index (derived, rebuildable)
+This creates `ENTITIES/`, `CONFLICTS/`, `ARCHIVE/`, `EVIDENCE/`, `EPISODES/`, `events.ndjson`, and `.memory-index.db`. Verify:
 
-Verify the directory structure:
 ```bash
 ls -la {MEMORY_DIR}
 ```
 
-If any directories are missing, create them:
-```bash
-mkdir -p {MEMORY_DIR}/{ENTITIES,CONFLICTS,ARCHIVE,EVIDENCE,EPISODES}
-```
+If anything's missing, `mkdir -p` the missing subdirectories. The init is idempotent — running it again on an existing store is safe.
 
-## 4. Git Init + GitHub Repo (Optional)
+---
 
-**Skip this step entirely if user chose "No" for version control.**
+## Step 5: Optional — Git init + GitHub backup
+
+**Skip entirely if the user said "No" to version control in Step 2.**
 
 ```bash
 cd {MEMORY_DIR}
 git init
 git add -A
 git commit -m "Initial memory-kernel setup"
-```
-
-Create GitHub repo and push:
-```bash
 gh repo create {GITHUB_USER}/memory --private --source=. --remote=origin --push
 ```
 
-**If `gh repo create` fails with "remote origin already exists":**
+If `gh repo create` fails with "remote origin already exists":
+
 ```bash
 git remote set-url origin https://github.com/{GITHUB_USER}/memory.git
 git push -u origin main
 ```
 
-**If repo already exists on GitHub:**
+If the repo already exists on GitHub:
+
 ```bash
 git remote add origin https://github.com/{GITHUB_USER}/memory.git
 git push -u origin main
 ```
 
-Verify:
-```bash
-git remote -v
-gh repo view {GITHUB_USER}/memory
-```
+---
 
-## 5. Create Mount Allowlist
+## Step 6: Host-specific plumbing
 
-NanoClaw silently blocks ALL additional container mounts unless an allowlist exists. This is the #1 gotcha in memory-kernel setup.
+Now the host actually needs different things. Read the appropriate reference file and follow its steps.
 
-```bash
-mkdir -p ~/.config/nanoclaw
-```
+| `{HOST}` | Reference | What it covers |
+|----------|-----------|----------------|
+| `nanoclaw` | [`references/nanoclaw.md`](references/nanoclaw.md) | Mount allowlist, container_config in NanoClaw DB, conversation/impulse symlinks, render-path resolution, restart |
+| `openclaw` | [`references/openclaw.md`](references/openclaw.md) | Plugin install, isolation config, AGENTS.md / MEMORY.md / compaction-prompt doctrine, plugin verification |
+| `mcp-client` | [`references/mcp-client.md`](references/mcp-client.md) | Add `memory-kernel` server entry to `claude_desktop_config.json` (or equivalent), restart client, verify tools appear |
+| `other` | — | Skip — the operator is wiring it up themselves; tell them how `mk render` writes to a path or how `mk-mcp` exposes the same operations over stdio |
 
-Write the allowlist:
-```bash
-cat > ~/.config/nanoclaw/mount-allowlist.json << 'EOF'
-{
-  "allowedRoots": [
-    {
-      "path": "{MEMORY_DIR_PARENT}",
-      "allowReadWrite": true,
-      "description": "Memory-kernel data"
-    }
-  ],
-  "blockedPatterns": [],
-  "nonMainReadOnly": false
-}
-EOF
-```
+After Step 6, the host knows where to find memory-kernel and how to consume it. The remaining steps are universal again.
 
-Where `{MEMORY_DIR_PARENT}` is the parent of the memory directory (e.g., `~` if memory is at `~/mk-memory`, or `~/repos` if at `~/repos/memory/kernel`). Use the expanded absolute path, not `~`.
+---
 
-**Critical:** Without this file, mounts silently fail. No error, no warning — the agent just can't see the memory files.
+## Step 7: Seed initial atoms
 
-## 6. Configure NanoClaw Container Mounts
-
-Locate the NanoClaw database (using `{NANOCLAW_DIR}` from Step 1):
-```bash
-NANOCLAW_DIR="{NANOCLAW_DIR}"
-DB_PATH="$NANOCLAW_DIR/store/messages.db"
-# Fallback for older versions
-[ ! -f "$DB_PATH" ] && DB_PATH="$NANOCLAW_DIR/data/nanoclaw.db"
-echo "DB: $DB_PATH"
-```
-
-Find the registered group:
-```bash
-sqlite3 "$DB_PATH" "SELECT name, folder, container_config FROM registered_groups;"
-```
-
-Update container_config with mount for memory data only. Container paths must be **relative** — NanoClaw prepends `/workspace/extra/`:
-
-```bash
-sqlite3 "$DB_PATH" "UPDATE registered_groups SET container_config = json('{
-  \"additionalMounts\": [
-    {
-      \"hostPath\": \"{MEMORY_DIR_ABSOLUTE}\",
-      \"containerPath\": \"memory\",
-      \"readonly\": false
-    }
-  ]
-}') WHERE is_main = 1;"
-```
-
-**Important paths inside the container:**
-- Memory data: `/workspace/extra/memory`
-- Group folder: `/workspace/group/`
-- CLAUDE.md: `/workspace/group/CLAUDE.md`
-
-Verify the update:
-```bash
-sqlite3 "$DB_PATH" "SELECT container_config FROM registered_groups WHERE is_main = 1;"
-```
-
-## 7. Create Symlinks
-
-Link conversation logs from NanoClaw into the memory directory so they're accessible to the kernel:
-
-```bash
-NANOCLAW_DIR="{NANOCLAW_DIR}"
-GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
-
-# Conversation logs
-ln -sf "$NANOCLAW_DIR/groups/$GROUP_FOLDER/logs" "{MEMORY_DIR}/conversations"
-
-# Impulse queue (for capturing curiosity across sessions)
-touch "$NANOCLAW_DIR/groups/$GROUP_FOLDER/impulses.ndjson"
-ln -sf "$NANOCLAW_DIR/groups/$GROUP_FOLDER/impulses.ndjson" "{MEMORY_DIR}/impulses.ndjson"
-```
-
-## 8. Create Initial Atoms
-
-### 8a. Identity and preference
-
-Add identity and preference atoms so the agent knows who it is from the first session:
+### 7a. Identity and preference
 
 ```bash
 npx mk remember "{IDENTITY_DESCRIPTION}" \
@@ -271,25 +216,18 @@ npx mk remember "Created by {CREATOR_NAME}. Prefers direct communication, values
   --tags communication creator
 ```
 
-**Customize** the preference atom based on what you know about the operator's preferences. Add more atoms as needed:
+Customise the preference body if you know the operator's actual preferences. Add infrastructure facts if useful:
 
 ```bash
-# Example: infrastructure facts
 npx mk remember "Running on {hostname}, {OS}, IP {IP}" \
-  -d {MEMORY_DIR} -t fact \
-  --tags infrastructure
-
-# Example: GitHub setup
-npx mk remember "GitHub account: {GITHUB_USER}. Repos: {GITHUB_USER}/memory (private)" \
-  -d {MEMORY_DIR} -t fact \
-  --tags github setup
+  -d {MEMORY_DIR} -t fact --tags infrastructure
 ```
 
-### 8b. Lifecycle atoms (session loop, maintenance, diagnostics)
+### 7b. Lifecycle atoms (universal — works for every host)
 
-Seed the agent's operating manual as typed memory, so the lifecycle is recallable from inside the system itself rather than living only in `docs/agent-session-loop.md`. Without this step, a freshly-bootstrapped agent has no idea when to run `wander`, the order of `citations` → `relink`, that `lint` exists, or the A2A handoff protocol — it has to be told out of band.
+Seed the agent's operating manual as typed memory so the lifecycle is recallable from inside memory-kernel itself rather than living only in `docs/agent-session-loop.md`. Without this step, a freshly-bootstrapped agent has no idea when to run `wander`, the order of `citations` → `relink`, that `lint` exists, or the A2A handoff protocol — it has to be told out of band.
 
-The bodies for these atoms live alongside this skill at `seed-atoms/lifecycle/` (one markdown file per section). The bundled `seed-atoms/seed-lifecycle.sh` script reads each file and seeds it via `npx mk remember` with a stable `--slug`. Run it with the absolute path of this skill directory:
+The bundled `seed-atoms/seed-lifecycle.sh` script reads each file in `seed-atoms/lifecycle/` and seeds an atom with a stable `--slug`. Run it with the absolute path of this skill directory:
 
 ```bash
 # Replace <SKILL_DIR> with the absolute path of the directory containing
@@ -307,80 +245,94 @@ npx mk recall -d "{MEMORY_DIR}" --tags session-loop --json | jq '.atoms | length
 # Expected: 8 (7 procedures + 1 constraint)
 ```
 
-After the next render (Step 9), the agent's `CLAUDE.md` will include the lifecycle as type-weighted memory — `procedure` × 1.2 and `constraint` × 1.5 in recall scoring.
+These atoms are host-agnostic — the same lifecycle applies whether the agent runs in NanoClaw, OpenClaw, or an MCP client. Re-seed instructions live in [`seed-atoms/lifecycle/README.md`](seed-atoms/lifecycle/README.md).
 
-**Re-seeding after a section edit:** atom IDs include a date and a unique suffix, so re-running the script creates new atoms rather than overwriting. To refresh a lifecycle atom after editing a section file, move the stale atom out of `ENTITIES/` first, then re-run the script. See `seed-atoms/lifecycle/README.md` for the exact commands.
+---
 
-## 9. Render CLAUDE.md
+## Step 8: Render or expose memory
 
-This is the critical step — render atoms into the CLAUDE.md file that NanoClaw loads at every session start:
+How memory reaches the agent depends on the host:
 
-```bash
-NANOCLAW_DIR="{NANOCLAW_DIR}"
-GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
-CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
+| `{HOST}` | What to do | Resulting surface |
+|----------|------------|-------------------|
+| `nanoclaw` | `npx mk render "{MEMORY_DIR}" "$CLAUDE_MD"` (CLAUDE_MD resolved in `references/nanoclaw.md` Step N5) | `/workspace/group/CLAUDE.md` inside the container |
+| `openclaw` | Nothing to render — the plugin's bootstrap hook injects atoms at session start. Just confirm via `mk_recall` returns atoms. | Plugin tool calls |
+| `mcp-client` | Nothing to render — the client launches `mk-mcp` and calls tools. Confirm by asking the agent to recall a seeded atom. | MCP tool calls |
+| `other` | If the operator wants a rendered snapshot: `npx mk render "{MEMORY_DIR}" "<path>"`. Otherwise expose `mk-mcp` or use the SDK directly. | Operator's choice |
 
-npx mk render "{MEMORY_DIR}" "$CLAUDE_MD"
-```
+Verify the render (NanoClaw / generic):
 
-Verify:
 ```bash
 head -20 "$CLAUDE_MD"
-# Should show: # Memory
+# Should start with:
+# # Memory
 # > Auto-generated from memory-kernel. X atoms, Y events.
 ```
 
-If the render fails:
-- `No atoms found` → Check `ls {MEMORY_DIR}/ENTITIES/` has .md files
+Confirm the lifecycle atoms made it in:
 
-## 10. Set Up Cron (Nightly Sync)
-
-Create a nightly cron job that runs reflect → render → optionally git push:
-
-**With git backup:**
 ```bash
-NANOCLAW_DIR="{NANOCLAW_DIR}"
-GROUP_FOLDER=$(sqlite3 "$NANOCLAW_DIR/store/messages.db" "SELECT folder FROM registered_groups WHERE is_main = 1;")
-CLAUDE_MD="$NANOCLAW_DIR/groups/$GROUP_FOLDER/CLAUDE.md"
-
-# Add to crontab (preserving existing entries)
-(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} $CLAUDE_MD && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
+grep -c session-loop "$CLAUDE_MD"
+# Expect ≥ 1 (at least the constraint atom should always surface).
 ```
 
-**Without git (local only):**
+---
+
+## Step 9: Schedule periodic reflect + render (universal command, host-aware paths)
+
+A nightly cron keeps memory consolidated and (for NanoClaw / generic) keeps the rendered file fresh.
+
+**With git backup** (replace `<CLAUDE_MD>` with the host-appropriate render target, or omit `&& mk render ...` for OpenClaw / MCP-only setups):
+
 ```bash
-(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} $CLAUDE_MD 2>&1 | logger -t memory-sync") | crontab -
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} <CLAUDE_MD> && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
 ```
 
-Verify:
+**Without git:**
+
+```bash
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} <CLAUDE_MD> 2>&1 | logger -t memory-sync") | crontab -
+```
+
+Verify the line is in place and matches what `/mk-doctor` will look for later:
+
 ```bash
 crontab -l | grep memory
 ```
 
-## 11. Restart NanoClaw
-
-Restart so the new mounts and CLAUDE.md take effect:
+If the cron doesn't run, common causes: the user's PATH doesn't include the global `npx`. Add it explicitly to the cron line:
 
 ```bash
-# Linux (systemd)
-systemctl --user restart nanoclaw
-
-# macOS (launchd)
-# launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+0 23 * * * PATH=/usr/local/bin:/usr/bin:$HOME/.nvm/versions/node/v22.*/bin cd {MEMORY_DIR} && ...
 ```
 
-Wait a moment, then verify:
+---
+
+## Step 10: Verify
+
+Universal verification — runs for every host:
+
 ```bash
-# Linux
-systemctl --user status nanoclaw
-
-# macOS
-# launchctl list | grep nanoclaw
+npx mk status -d {MEMORY_DIR}
+npx mk doctor -d {MEMORY_DIR}
+npx mk lint -d {MEMORY_DIR} --json | jq '.warnings | length'
 ```
 
-## 12. Commit, Push, and Verify
+Expected:
+- `mk status` reports atom counts by type (≥ 7 procedure, ≥ 1 constraint, ≥ 1 fact, ≥ 1 preference).
+- `mk doctor` reports no issues.
+- `mk lint` warnings count ≥ 0 (zero is best; small numbers on a fresh store are normal).
 
-**If using git:**
+For host-specific verification, run the verify step from the appropriate reference file (Step N6 in `nanoclaw.md`, Step O4 in `openclaw.md`, Step M4 in `mcp-client.md`).
+
+If any verification fails, run the `/mk-doctor` skill — it has a triage flow that maps symptoms to remediation steps.
+
+---
+
+## Step 11: Commit and finish
+
+If using git, commit the final state:
+
 ```bash
 cd {MEMORY_DIR}
 git add -A
@@ -388,116 +340,45 @@ git commit -m "Memory-kernel setup complete"
 git push
 ```
 
-Run verification regardless:
-```bash
-npx mk status -d {MEMORY_DIR}
-npx mk doctor -d {MEMORY_DIR}
-```
-
-Expected output:
-- `mk status`: shows atom counts by type, event count
-- `mk doctor`: reports no issues (or only warnings)
-
-## Post-Setup Summary
-
-Print a summary of what was set up:
+Then print a host-aware summary. The shape:
 
 ```
 ✅ Memory-Kernel Setup Complete
 
+  Host:         {HOST}
   Agent:        {AGENT_NAME}
   Memory dir:   {MEMORY_DIR}
   GitHub repo:  {GITHUB_USER}/memory (private)  [or "Local only"]
-  CLAUDE.md:    {CLAUDE_MD}
-  Mount allow:  ~/.config/nanoclaw/mount-allowlist.json
   Cron:         Nightly sync at 23:00
-
-  Container paths:
-    /workspace/extra/memory              (read-write)
-    /workspace/group/CLAUDE.md           (auto-loaded)
-
-  The agent can now use these commands inside the container:
-
-    npx mk remember "text" -d /workspace/extra/memory -t fact
-    npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
 ```
 
-## Optional: Enable Drift Pre-Filter (Wander)
+Plus host-specific lines:
 
-If NanoClaw has drift enabled (`DRIFT_ENABLED=true`), you can add a cheap pre-filter that skips expensive LLM drift sessions when there's nothing interesting to explore. Add `MEMORY_DIR` to the NanoClaw `.env` file:
+- **NanoClaw:** mount allowlist path, container_config status, render target path inside the container, "/workspace/extra/memory (read-write)" + "/workspace/group/CLAUDE.md (auto-loaded)".
+- **OpenClaw:** plugin loaded confirmation, isolation mode in use, AGENTS.md / MEMORY.md / compaction-prompt status.
+- **MCP client:** which client config was edited, the agent ID set in `MCP_AGENT_ID`, "restart your client to pick up the new server".
+- **Other:** the absolute path to the memory directory and how to call `mk render` or `mk-mcp` later.
 
-```bash
-# In the NanoClaw .env file (NOT the memory directory — this tells NanoClaw where to find it)
-MEMORY_DIR={MEMORY_DIR}
-```
+Close the summary with:
 
-When set, NanoClaw runs `mk wander --json` (~30ms, no LLM) before each drift session. If no high-dissimilarity collisions are found, drift is skipped entirely. If collisions are found (atom pairs with Jaccard tag dissimilarity > 0.7), their context is injected into the drift prompt for directed exploration.
+> Verify health any time with the `/mk-doctor` skill. The agent's full operating loop is already inside memory as 8 typed atoms (`mk recall --tags session-loop`).
 
-See the [drift integration docs](../../../docs/nanoclaw-integration.md#drift-integration-wander-pre-filter) for details.
+---
 
-## Agent Documentation
+## Generic troubleshooting
 
-After setup, the agent's operating manual lives **inside** memory-kernel as 7 procedure atoms + 1 constraint atom (seeded in Step 8b). The agent retrieves its own lifecycle via `mk recall` like any other typed knowledge — no external doc reading required. Quickly check it landed:
+Host-specific troubleshooting lives in each reference file. The items below are universal.
 
-```bash
-npx mk recall -d {MEMORY_DIR} --task "session loop lifecycle" --json | jq '.atoms[] | {id, type, slug: .slug // .id}'
-# Expect 8 atoms tagged session-loop: 7 procedure, 1 constraint.
-```
+**`npm install -g` fails with `EACCES`:** fix npm prefix as in Step 3.
 
-Reference docs (for humans, or for the agent if a section needs richer context than the seeded atom carries):
-- [Session loop](../../../docs/agent-session-loop.md) — canonical source the seed atoms mirror
-- [Container quickref](../../../docs/agent-quickref-container.md) — container paths, commands, /tmp workaround
-- [Native quickref](../../../docs/agent-quickref-native.md) — host-side workflow
-- `/mk-doctor` — self-diagnostic skill to verify setup health
+**`npx mk init -d .` fails:** the correct syntax is `npx mk init .` (positional argument, not a `-d` flag).
 
-## Memory-Kernel Container Usage
+**`npx mk retain` "unknown command":** the CLI command is `remember`, not `retain`. (`retain` is the SDK API name; the CLI uses verbs that read like English commands.)
 
-Once set up, the agent can use these commands **inside the container** (e.g. after a mid-session `mk remember`):
+**`npx mk remember` "too many arguments":** memory dir is the `-d` flag, not a positional. `npx mk remember "text" -d {MEMORY_DIR} -t fact`.
 
-**Primary** (requires memory-kernel ≥ 1.1.0 published on npm):
-```bash
-npx mk render /workspace/extra/memory /workspace/group/CLAUDE.md
-```
+**Git push fails:** ensure `gh repo create` was run (Step 5) or that the remote exists: `git remote -v`. If the user is unauthenticated, `gh auth login` first.
 
-> `npx mk render` requires memory-kernel ≥ 1.1.0 to be published on npm. Until then, use the legacy fallback if your agent has the `memory-kernel-code` mount.
+**Lifecycle atoms didn't seed:** confirm `seed-lifecycle.sh` is executable (`chmod +x`), confirm `seed-atoms/lifecycle/` exists alongside it, then re-run with `bash` explicitly. Verify with `mk recall --tags session-loop --json | jq '.atoms | length'` — expect 8.
 
-**Legacy fallback** (works with mounted source at any version):
-```bash
-npx tsx /workspace/extra/memory-kernel-code/scripts/render-claude-md.ts \
-  /workspace/extra/memory /workspace/group/CLAUDE.md
-```
-
-**If CLI behaviour doesn't match docs:** Check `npx mk --version` against the latest release. Ask your operator to run `npm update memory-kernel` globally or update the mount source.
-
-## Troubleshooting
-
-**Mounts not working (agent can't see /workspace/extra/memory):**
-1. Check mount allowlist exists: `cat ~/.config/nanoclaw/mount-allowlist.json`
-2. Check DB has mounts: `sqlite3 {DB_PATH} "SELECT container_config FROM registered_groups WHERE is_main = 1;"`
-3. Check container paths are RELATIVE (not starting with `/`). NanoClaw prepends `/workspace/extra/`.
-4. Restart NanoClaw after changing mounts.
-
-**CLAUDE.md empty or not updating:**
-1. Check atoms exist: `ls {MEMORY_DIR}/ENTITIES/`
-2. Re-render manually: `npx mk render {MEMORY_DIR} {CLAUDE_MD}`
-3. Check render output for errors.
-
-**`npm install -g` fails with EACCES:**
-Fix npm prefix: `mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'`
-Then add `export PATH=~/.npm-global/bin:$PATH` to your shell profile.
-
-**`npx mk init -d .` fails** — The correct syntax is `npx mk init .` (positional argument, not `-d` flag).
-
-**`npx mk retain` unknown command** — The CLI command is `remember`, not `retain`. (`retain` is the SDK API name.)
-
-**`npx mk remember` too many arguments** — Memory dir is the `-d` flag: `npx mk remember "text" -d {DIR} -t {TYPE}`
-
-**Git push fails** — Ensure `gh repo create` was run, or that the remote exists: `git remote -v`
-
-**Nightly cron not running** — Check `crontab -l`, verify PATH includes node/npx. Add full paths if needed:
-```bash
-0 23 * * * PATH=/usr/local/bin:/usr/bin:$HOME/.nvm/versions/node/v22.*/bin cd {MEMORY_DIR} && ...
-```
-
-**Agent uses `npx tsx` instead of `mk` (old setup):**
-If the agent was set up before `mk render` existed (pre-v1.1.0), update its memory-kernel-code mount and re-render, or just `npm install -g memory-kernel` on the host and update the cron to use `mk render`.
+**`/mk-doctor` reports lifecycle missing on a previously-set-up agent:** that agent was bootstrapped before the lifecycle-seed step existed. Run `bash "$SKILL_DIR/seed-atoms/seed-lifecycle.sh" "{MEMORY_DIR}"` to seed them now.
