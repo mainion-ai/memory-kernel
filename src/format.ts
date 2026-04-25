@@ -25,6 +25,23 @@ const KEY_ORDER: (keyof AtomFrontmatter)[] = [
 ];
 
 /**
+ * Normalize tags: split comma-separated strings into individual tags,
+ * trim whitespace, deduplicate, and sort.
+ * Handles the common case where CLI users pass --tags "tag1,tag2,tag3"
+ * as a single string instead of separate arguments.
+ */
+export function normalizeTags(tags: string[]): string[] {
+  const result = new Set<string>();
+  for (const t of tags) {
+    for (const part of t.split(',')) {
+      const trimmed = part.trim();
+      if (trimmed) result.add(trimmed);
+    }
+  }
+  return [...result].sort();
+}
+
+/**
  * Serialize atom frontmatter to YAML with stable key ordering.
  */
 export function serializeFrontmatter(fm: AtomFrontmatter): string {
@@ -34,7 +51,7 @@ export function serializeFrontmatter(fm: AtomFrontmatter): string {
   for (const key of KEY_ORDER) {
     // Insert promoted tags right before scope in YAML output
     if (key === 'scope' && fm.scope?.tags && fm.scope.tags.length > 0) {
-      ordered.tags = fm.scope.tags;
+      ordered.tags = normalizeTags(fm.scope.tags);
     }
     if (fm[key] !== undefined) {
       ordered[key] = fm[key];
@@ -84,13 +101,19 @@ export function parseAtom(content: string, filePath?: string): Atom {
   if (data.tags) {
     if (Array.isArray(data.tags) && data.tags.length > 0) {
       if (!data.scope) data.scope = {};
-      const existing = new Set(data.scope.tags ?? []);
-      for (const t of data.tags) {
-        if (typeof t === 'string') existing.add(t);
-      }
-      data.scope.tags = [...existing].sort();
+      // Normalize both existing and incoming tags (splits comma-separated strings)
+      const allTags = [
+        ...normalizeTags(data.scope.tags ?? []),
+        ...normalizeTags(data.tags.filter((t: unknown) => typeof t === 'string') as string[]),
+      ];
+      data.scope.tags = [...new Set(allTags)].sort();
     }
     delete data.tags;
+  }
+
+  // Normalize scope.tags even without promoted tags (fixes comma-separated strings)
+  if (data.scope?.tags && Array.isArray(data.scope.tags)) {
+    data.scope.tags = normalizeTags(data.scope.tags);
   }
 
   return {

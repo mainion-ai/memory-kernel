@@ -21,7 +21,7 @@ import {
   generateGraphConfig,
   TYPE_COLORS,
 } from '../src/obsidian.js';
-import { serializeAtom, parseAtom } from '../src/format.js';
+import { serializeAtom, parseAtom, normalizeTags } from '../src/format.js';
 import { initMemoryDir, listAtoms } from '../src/store.js';
 import { createAtom } from '../src/retain.js';
 import { closeAllIndexes } from '../src/index-db.js';
@@ -324,6 +324,30 @@ describe('tag promotion and stripping', () => {
     expect(parsed.frontmatter.scope?.tags).toContain('philosophy');
     expect(parsed.frontmatter.scope?.tags).toContain('identity');
     expect((parsed.frontmatter as Record<string, unknown>).tags).toBeUndefined();
+  });
+
+  it('normalizes comma-separated tags into individual items', () => {
+    const yaml = [
+      '---',
+      'id: BELI-2026-01-01-COMMA-TAGS-abc',
+      'type: belief',
+      'status: active',
+      'scope:',
+      '  tags:',
+      '    - "storytelling,amvf,memory-validation"',
+      '---',
+      '',
+      'Body text.',
+    ].join('\n');
+    const parsed = parseAtom(yaml);
+    expect(parsed.frontmatter.scope?.tags).toEqual(['amvf', 'memory-validation', 'storytelling']);
+  });
+
+  it('normalizeTags splits comma-separated and deduplicates', () => {
+    expect(normalizeTags(['a,b,c'])).toEqual(['a', 'b', 'c']);
+    expect(normalizeTags(['a', 'b,c', 'a'])).toEqual(['a', 'b', 'c']);
+    expect(normalizeTags(['  x , y '])).toEqual(['x', 'y']);
+    expect(normalizeTags([])).toEqual([]);
   });
 
   it('does not add tags field when scope.tags is empty', () => {

@@ -49,6 +49,7 @@ export {
   serializeFrontmatter,
   parseAtom,
   normalizeTimestamp,
+  normalizeTags,
 } from './format.js';
 
 // Store
