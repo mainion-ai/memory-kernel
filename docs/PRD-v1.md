@@ -40,10 +40,6 @@ Maximal Marginal Relevance reranking prevents redundant atoms from filling the t
 
 LongMemEval impact: negligible on benchmark accuracy (+/- 1.4pp), but improves result diversity in dense stores where type-weight dominance was observed.
 
-### Episode Scoring (#30)
-
-Session episodes scored through the FTS pipeline with relevance and decay, replacing earlier bulk-include approach. Episodes participate in the same token budget as atoms.
-
 ### Per-Agent Isolation (#40)
 
 Multi-agent memory isolation with per-agent recall. Agents have separate memory stores within a shared namespace. Implemented across PRs #9-#13 with isolation config, per-agent recall, shared atom support, and bootstrap caching.

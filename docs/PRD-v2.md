@@ -7,7 +7,7 @@ All v2 changes must meet the following gates before merge:
 | Gate | Threshold | Source |
 |------|-----------|--------|
 | LongMemEval overall | >= 66.8% (R8d baseline) | #42 |
-| All tests pass | 1091+ tests green | CI |
+| All tests pass | 1095+ tests green | CI |
 | knowledge-update | >= 79.5% | R8d |
 | multi-session | >= 76.7% | R8d |
 | single-session-user | >= 74.3% | R8d |
@@ -179,10 +179,11 @@ No per-type regression beyond 2pp is acceptable. Any change that improves one ty
 4. Quality gates checked: overall >= 66.8%, no per-type regression > 2pp, all tests pass
 5. PR merged to main
 
-### Priority Order
+### Priority Labels
 
-1. **Ingestion fixes** (#46, #47) — highest impact. single-session-assistant and single-session-preference are the weakest types. Fixing write-end gaps should yield the largest accuracy gains.
-2. **Recall improvements** (#44, #45) — medium impact. Episode scoring and content-type decay improve result quality without changing what gets stored.
-3. **Testing infrastructure** (#48, #53) — enables confident iteration. Answer health check prevents misattribution. Additional framework covers write-end blind spots.
-4. **CLI & automation** (#51, #52) — quality of life. Consolidation automation reduces manual overhead.
-5. **Infrastructure** (#49, #50) — cost optimization and constitution quality.
+| Priority | Issues | Rationale |
+|----------|--------|-----------|
+| **P0** — Critical | #44 (episode FTS), #45 (content-type decay), #46 (assistant utterances) | Direct LongMemEval/production impact. Addresses the three weakest recall areas. |
+| **P1** — High | #47 (preference ingestion) | Daily usage impact. Preference recall is 0% across all runs. |
+| **P2** — Medium | #48 (answer health check), #49 (model/effort config), #50 (constitution pipeline), #51 (citations), #52 (consolidation automation) | Infrastructure and tooling. Enables confident iteration and cost optimization. |
+| **P3** — Research | #53 (additional test framework) | Research task. Identify complementary evaluation coverage for write-end blind spots. |
