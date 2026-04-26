@@ -56,11 +56,9 @@ describe('renderRelationsSection', () => {
 
     expect(result).toContain(RELATIONS_SENTINEL);
     expect(result).toContain('## Relations');
-    expect(result).toContain('**extends**');
-    expect(result).toContain('- [[BELI-2026-01-01-FOO-abc]]');
-    expect(result).toContain('- [[BELI-2026-01-01-BAZ-ghi]]');
-    expect(result).toContain('**supports**');
-    expect(result).toContain('- [[FACT-2026-01-01-BAR-def]]');
+    expect(result).toContain('- extends [[BELI-2026-01-01-FOO-abc]]');
+    expect(result).toContain('- extends [[BELI-2026-01-01-BAZ-ghi]]');
+    expect(result).toContain('- supports [[FACT-2026-01-01-BAR-def]]');
   });
 
   it('deduplicates targets within the same type', () => {

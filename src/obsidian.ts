@@ -73,12 +73,14 @@ export function renderRelationsSection(relations: Relation[] | undefined): strin
   ];
 
   for (const [type, targets] of grouped) {
-    lines.push(`**${type}**`);
+    // Juggl-compatible typed links: "- type [[target]]"
+    // Juggl requires single-word type labels, so replace underscores
+    const jugglType = type.replace(/_/g, '');
     for (const target of targets.sort()) {
-      lines.push(`- [[${target}]]`);
+      lines.push(`- ${jugglType} [[${target}]]`);
     }
-    lines.push('');
   }
+  lines.push('');
 
   return lines.join('\n');
 }
