@@ -42,6 +42,17 @@ export function normalizeTags(tags: string[]): string[] {
 }
 
 /**
+ * Legacy Juggl typed-link frontmatter keys (no longer generated).
+ * Stripped on parse for backward compatibility with atoms serialized
+ * before Juggl support was removed.
+ */
+const LEGACY_TYPED_LINK_KEYS = new Set([
+  'extends', 'supports', 'contradicts', 'caused-by',
+  'related', 'applied-to',
+  'causedby', 'appliedto',
+]);
+
+/**
  * Serialize atom frontmatter to YAML with stable key ordering.
  */
 export function serializeFrontmatter(fm: AtomFrontmatter): string {
@@ -93,6 +104,12 @@ export function parseAtom(content: string, filePath?: string): Atom {
   }
   if (typeof data.status !== 'string' || !data.status) {
     throw new Error(`Missing or invalid 'status' in frontmatter${filePath ? ` (${filePath})` : ''}`);
+  }
+
+  // Strip legacy Juggl typed-link frontmatter keys (no longer generated,
+  // but may exist in atoms serialized before Juggl support was removed)
+  for (const key of LEGACY_TYPED_LINK_KEYS) {
+    delete data[key];
   }
 
   // Handle promoted top-level `tags` — it's a derived view of scope.tags

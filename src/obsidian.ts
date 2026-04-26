@@ -72,12 +72,16 @@ export function renderRelationsSection(relations: Relation[] | undefined): strin
     '',
   ];
 
+  let first = true;
   for (const [type, targets] of grouped) {
-    // Juggl-compatible typed links: "- type [[target]]"
-    // Juggl requires single-word type labels, so replace underscores
-    const jugglType = type.replace(/_/g, '');
+    // Blank line between type groups for readability
+    if (!first) lines.push('');
+    first = false;
+    // Typed relation links: "- type [[target]]"
+    // Replace underscores with hyphens for readability (caused-by > caused_by).
+    const displayType = type.replace(/_/g, '-');
     for (const target of targets.sort()) {
-      lines.push(`- ${jugglType} [[${target}]]`);
+      lines.push(`- ${displayType} [[${target}]]`);
     }
   }
   lines.push('');
