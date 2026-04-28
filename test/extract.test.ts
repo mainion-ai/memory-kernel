@@ -243,4 +243,33 @@ describe('extractFromLog', () => {
       }),
     ).rejects.toThrow(/log file not found/i);
   });
+
+  it('extraction prompt includes assistant-content capture instructions', async () => {
+    writeLog('User: What should I use?\nAssistant: I recommend TypeScript for type safety.');
+
+    let capturedPrompt = '';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, opts) => {
+      const body = JSON.parse((opts?.body as string) ?? '{}');
+      capturedPrompt = body.prompt ?? '';
+      return {
+        ok: true,
+        json: async () => ({ response: '[]' }),
+      } as Response;
+    });
+
+    await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: true,
+    });
+
+    // Verify the prompt instructs the LLM to capture assistant-generated content
+    expect(capturedPrompt).toContain('assistant-generated content');
+    expect(capturedPrompt).toContain('role:assistant');
+    expect(capturedPrompt).toContain('Recommendations and suggestions the assistant made');
+    expect(capturedPrompt).toContain('Advice or explanations the assistant provided');
+    expect(capturedPrompt).toContain('For assistant responses');
+    expect(capturedPrompt).toContain('Tag assistant-generated atoms with "role:assistant"');
+  });
 });

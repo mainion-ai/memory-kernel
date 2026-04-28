@@ -28,14 +28,23 @@ const DEFAULT_MAX_ATOMS = 20;
 // A rank < -2.0 indicates a strong match.
 const DUPLICATE_RANK_THRESHOLD = -2.0;
 
-const SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, and beliefs worth remembering long-term.
+const SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, beliefs, and assistant-generated content worth remembering long-term.
+
+Pay special attention to the assistant's contributions:
+- Recommendations and suggestions the assistant made
+- Advice or explanations the assistant provided
+- Facts, data, or information the assistant shared
+- Creative outputs or solutions the assistant generated
+- Specific answers to user questions
+
+These should be extracted as "fact" type atoms with a tag "role:assistant" to distinguish them from user-provided information.
 
 For each item, output a JSON object with:
 - type: "fact" | "decision" | "preference" | "belief" | "open_question"
 - slug: kebab-case unique identifier (e.g. "api-rate-limit-1000-rpm")
 - title: short human-readable title
 - body: markdown content (use ## Fact / ## Decision / ## Preference / ## Belief / ## Open Question heading, then the content)
-- tags: string[] of relevant tags
+- tags: string[] of relevant tags (use "role:assistant" for assistant-generated content, "role:user" for user-provided content)
 - confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions)
 - rationale: one sentence explaining why this is worth remembering
 
@@ -45,6 +54,8 @@ Rules:
 - Prefer specific, actionable facts over vague observations
 - For facts: include the specific value/detail
 - For decisions: include why the decision was made
+- For assistant responses: capture the specific recommendation, advice, or information shared
+- Tag assistant-generated atoms with "role:assistant"
 - Max {{max_atoms}} atoms
 
 Output a JSON array of atom objects. If nothing is worth extracting, output [].`;
