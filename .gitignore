@@ -1,6 +1,9 @@
 # Local Claude config (never commit)
 .claude/
 
+# superpowers brainstorm sessions (browser companion screens, transient)
+.superpowers/
+
 # Node modules
 node_modules/
 dist/
