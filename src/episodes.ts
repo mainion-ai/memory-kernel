@@ -12,6 +12,7 @@ import matter from 'gray-matter';
 import { writeFileAtomic, assertWithinDir } from './store.js';
 import { normalizeTimestamp } from './format.js';
 import { appendEvent } from './event-log.js';
+import { indexEpisode } from './index-db.js';
 import type { Episode } from './types.js';
 
 export type { Episode } from './types.js';
@@ -98,6 +99,9 @@ export function writeEpisode(
 
   const content = `---\n${fm}\n---\n\n${summary.trim()}\n`;
   writeFileAtomic(filePath, content);
+
+  // Index episode body for FTS search (best-effort — non-critical)
+  try { indexEpisode(memoryDir, episodeId, summary.trim()); } catch { /* best-effort */ }
 
   // Emit a session_ended event so the episode is traceable in the event log.
   appendEvent(memoryDir, 'session_ended', {

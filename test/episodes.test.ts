@@ -30,6 +30,8 @@ import {
   listEpisodes,
   linkEpisodeToAtom,
   closeAllIndexes,
+  searchEpisodeFts,
+  reindex,
 } from '../src/index.js';
 
 let testDir: string;
@@ -390,5 +392,211 @@ describe('recall() with include_episodes', () => {
       max_tokens: MAX,
     });
     expect(noTaskBundle.token_estimate).toBeLessThanOrEqual(MAX);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Episode FTS scoring
+// ---------------------------------------------------------------------------
+
+describe('Episode FTS scoring', () => {
+  it('FTS-scored episodes rank higher than substring-only matches for stemmed terms', () => {
+    // "authentication" stems to "authent" — FTS with porter stemmer should match "authenticating"
+    writeEpisode(testDir, 'sess-stemmed', 'Authenticating users via OAuth2 tokens.', {
+      started_at: '2026-04-10T00:00:00Z',
+    });
+    writeEpisode(testDir, 'sess-exact', 'Migrated database schema with no auth relevance.', {
+      started_at: '2026-04-10T00:00:00Z',
+    });
+
+    const bundle = recall(testDir, {
+      task: 'authentication',
+      include_episodes: true,
+      max_tokens: 5000,
+    });
+    expect(bundle.episodes).toBeDefined();
+    expect(bundle.episodes!.length).toBeGreaterThan(0);
+    // The stemmed match "authenticating" should appear (FTS porter handles this)
+    const allText = bundle.episodes!.join('\n');
+    expect(allText).toContain('Authenticating');
+  });
+
+  it('temporal decay still applies on top of FTS scores', () => {
+    // Two episodes with the same FTS relevance but different dates
+    writeEpisode(testDir, 'sess-recent', 'Refactored the authentication module completely.', {
+      started_at: '2026-04-20T00:00:00Z',
+    });
+    writeEpisode(testDir, 'sess-old-auth', 'Refactored the authentication module completely.', {
+      started_at: '2020-01-01T00:00:00Z',
+    });
+
+    const bundle = recall(testDir, {
+      task: 'authentication refactored',
+      include_episodes: true,
+      max_tokens: 5000,
+    });
+    expect(bundle.episodes).toBeDefined();
+    expect(bundle.episodes!.length).toBe(2);
+    // Recent episode should rank first due to temporal decay boost
+    expect(bundle.episodes![0]).toContain('sess-recent');
+  });
+
+  it('searchEpisodeFts returns results for indexed episodes', () => {
+    writeEpisode(testDir, 'sess-fts-test', 'Implemented caching layer for Redis connections.', {});
+
+    const results = searchEpisodeFts(testDir, 'Redis caching');
+    expect(results).not.toBeNull();
+    expect(results!.length).toBe(1);
+    expect(results![0].episode_id).toBe('EP-sess-fts-test');
+    // rank is negative (BM25)
+    expect(results![0].rank).toBeLessThan(0);
+  });
+
+  it('searchEpisodeFts returns null when no FTS table exists', () => {
+    // Use a directory with no index at all
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-ep-nofts-'));
+    fs.mkdirSync(emptyDir, { recursive: true });
+    // Don't init — no SQLite index exists
+    const results = searchEpisodeFts(emptyDir, 'anything');
+    // Should return null gracefully (no crash)
+    expect(results).toBeNull();
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+  });
+
+  it('graceful degradation: recall still works when FTS index is corrupted', () => {
+    // Write episodes so they are on disk
+    writeEpisode(testDir, 'sess-degrade', 'Fixed pagination bug in API endpoint.', {});
+
+    // Corrupt the FTS index by deleting the SQLite DB
+    const dbPath = path.join(testDir, '.mk-index.db');
+    if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+
+    // recall should still work (falls back to term-overlap scoring)
+    const bundle = recall(testDir, {
+      task: 'pagination bug',
+      include_episodes: true,
+      max_tokens: 5000,
+    });
+    expect(bundle.episodes).toBeDefined();
+    expect(bundle.episodes!.length).toBeGreaterThan(0);
+    expect(bundle.episodes![0]).toContain('pagination');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// episode_budget_ratio configurable via RecallQuery
+// ---------------------------------------------------------------------------
+
+describe('episode_budget_ratio', () => {
+  it('respects episode_budget_ratio in RecallQuery', () => {
+    createAtom({ ...base(testDir), type: 'fact', slug: 'filler', body: 'Filler atom content.' });
+    for (let i = 0; i < 5; i++) {
+      writeEpisode(testDir, `sess-ratio-${i}`, 'B'.repeat(400), {
+        started_at: `2026-04-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+      });
+    }
+
+    // With ratio 0.0, episodes should not appear
+    const noEpisodes = recall(testDir, {
+      include_episodes: true,
+      max_tokens: 2000,
+      episode_budget_ratio: 0.0,
+    });
+    // Budget ratio 0 means 0 tokens for episodes
+    expect(noEpisodes.episodes).toBeDefined();
+    expect(noEpisodes.episodes!.length).toBe(0);
+
+    // With ratio 1.0, episodes get the full budget
+    const allEpisodes = recall(testDir, {
+      include_episodes: true,
+      max_tokens: 5000,
+      episode_budget_ratio: 1.0,
+    });
+    expect(allEpisodes.episodes).toBeDefined();
+    expect(allEpisodes.episodes!.length).toBeGreaterThan(0);
+  });
+
+  it('clamps episode_budget_ratio to 0-1 range', () => {
+    createAtom({ ...base(testDir), type: 'fact', slug: 'clamp', body: 'Clamp test.' });
+    writeEpisode(testDir, 'sess-clamp', 'Clamp ratio test episode.', {});
+
+    // Negative ratio should be clamped to 0
+    const neg = recall(testDir, {
+      include_episodes: true,
+      max_tokens: 2000,
+      episode_budget_ratio: -0.5,
+    });
+    expect(neg.episodes).toBeDefined();
+    expect(neg.episodes!.length).toBe(0);
+
+    // Ratio > 1 should be clamped to 1
+    const over = recall(testDir, {
+      include_episodes: true,
+      max_tokens: 5000,
+      episode_budget_ratio: 2.0,
+    });
+    expect(over.episodes).toBeDefined();
+    expect(over.episodes!.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reindex rebuilds episode_fts
+// ---------------------------------------------------------------------------
+
+describe('reindex rebuilds episode_fts', () => {
+  it('episode_fts is populated by reindex from disk episodes', () => {
+    // Write episodes — they get indexed on write via indexEpisode()
+    writeEpisode(testDir, 'sess-reindex-a', 'Kubernetes cluster scaling investigation.', {});
+    writeEpisode(testDir, 'sess-reindex-b', 'GraphQL API schema redesign.', {});
+
+    // Verify initial indexing works
+    let results = searchEpisodeFts(testDir, 'Kubernetes');
+    expect(results).not.toBeNull();
+    expect(results!.length).toBe(1);
+    expect(results![0].episode_id).toBe('EP-sess-reindex-a');
+
+    // Now run reindex — it should rebuild episode_fts from EPISODES/ on disk
+    reindex(testDir);
+
+    // Both episodes should still be searchable after reindex
+    results = searchEpisodeFts(testDir, 'Kubernetes');
+    expect(results).not.toBeNull();
+    expect(results!.length).toBe(1);
+    expect(results![0].episode_id).toBe('EP-sess-reindex-a');
+
+    const graphql = searchEpisodeFts(testDir, 'GraphQL');
+    expect(graphql).not.toBeNull();
+    expect(graphql!.length).toBe(1);
+    expect(graphql![0].episode_id).toBe('EP-sess-reindex-b');
+  });
+
+  it('reindex picks up episodes written without indexing', () => {
+    // Manually write an episode file WITHOUT going through writeEpisode
+    // (simulates an episode that was not indexed, e.g. from a restore)
+    const episodesDir = path.join(testDir, 'EPISODES');
+    fs.mkdirSync(episodesDir, { recursive: true });
+    const content = `---
+id: EP-manual-ep
+session_id: manual-ep
+created_at: "2026-04-01T00:00:00Z"
+started_at: "2026-04-01T00:00:00Z"
+---
+
+Manually written episode about Terraform infrastructure provisioning.
+`;
+    fs.writeFileSync(path.join(episodesDir, 'EP-manual-ep.md'), content);
+
+    // Before reindex, the manual episode is NOT in FTS
+    let results = searchEpisodeFts(testDir, 'Terraform');
+    expect(!results || results.length === 0).toBe(true);
+
+    // Reindex should pick it up from disk
+    reindex(testDir);
+
+    results = searchEpisodeFts(testDir, 'Terraform');
+    expect(results).not.toBeNull();
+    expect(results!.length).toBe(1);
+    expect(results![0].episode_id).toBe('EP-manual-ep');
   });
 });

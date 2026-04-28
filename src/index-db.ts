@@ -11,9 +11,10 @@ import path from 'path';
 import fs from 'fs';
 import type { Atom, AtomType, AtomStatus, Classification, RecallQuery } from './types.js';
 import { listAtoms } from './store.js';
+import { listEpisodes } from './episodes.js';
 
 const DB_FILENAME = '.memory-index.db';
-const SCHEMA_VERSION = 6; // Bump when schema changes to trigger auto-rebuild
+const SCHEMA_VERSION = 7; // Bump when schema changes to trigger auto-rebuild
 
 // --- Schema ---
 
@@ -63,6 +64,15 @@ const CREATE_FTS_TABLE = `
 CREATE VIRTUAL TABLE IF NOT EXISTS atom_fts USING fts5(
   atom_id UNINDEXED,
   title,
+  body,
+  tokenize='porter unicode61'
+)`;
+
+// FTS5 virtual table for full-text search over episode summaries.
+// Same tokenizer as atom_fts (porter stemming + unicode61).
+const CREATE_EPISODE_FTS_TABLE = `
+CREATE VIRTUAL TABLE IF NOT EXISTS episode_fts USING fts5(
+  episode_id UNINDEXED,
   body,
   tokenize='porter unicode61'
 )`;
@@ -188,6 +198,7 @@ function openIndexRaw(resolvedDir: string): Database.Database {
     db.exec('DROP TABLE IF EXISTS atom_citations');
     db.exec('DROP TABLE IF EXISTS atom_relations');
     db.exec('DROP TABLE IF EXISTS atom_embeddings');
+    db.exec('DROP TABLE IF EXISTS episode_fts');
     db.exec('DROP TABLE IF EXISTS atom_fts');
     db.exec('DROP TABLE IF EXISTS atom_paths');
     db.exec('DROP TABLE IF EXISTS atom_tags');
@@ -202,6 +213,7 @@ function openIndexRaw(resolvedDir: string): Database.Database {
     db.exec(idx);
   }
   db.exec(CREATE_FTS_TABLE);
+  db.exec(CREATE_EPISODE_FTS_TABLE);
   db.exec(CREATE_EMBEDDINGS_TABLE);
   db.exec(CREATE_RELATIONS_TABLE);
   for (const idx of CREATE_RELATIONS_INDEXES) {
@@ -290,6 +302,7 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
       // Clear existing data
       db.exec('DELETE FROM atom_citations');
       db.exec('DELETE FROM atom_relations');
+      db.exec('DELETE FROM episode_fts');
       db.exec('DELETE FROM atom_fts');
       db.exec('DELETE FROM atom_paths');
       db.exec('DELETE FROM atom_tags');
@@ -366,6 +379,15 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
           }
         }
       }
+    }
+
+    // Index episodes into episode_fts
+    const insertEpisodeFts = db.prepare(
+      'INSERT INTO episode_fts(episode_id, body) VALUES (?, ?)',
+    );
+    const episodes = listEpisodes(memoryDir);
+    for (const ep of episodes) {
+      insertEpisodeFts.run(ep.id, ep.summary);
     }
 
     // Restore preserved embeddings (only for atoms that still exist)
@@ -882,6 +904,75 @@ export function getCorpusSize(memoryDir: string): number {
     return row.cnt;
   } catch {
     return 0;
+  }
+}
+
+// --- Episode FTS operations ---
+
+/**
+ * Upsert a single episode into the episode_fts index.
+ * Call after writeEpisode().
+ */
+export function indexEpisode(memoryDir: string, episodeId: string, body: string): void {
+  try {
+    const db = openIndex(memoryDir);
+    db.prepare('DELETE FROM episode_fts WHERE episode_id = ?').run(episodeId);
+    db.prepare('INSERT INTO episode_fts(episode_id, body) VALUES (?, ?)').run(episodeId, body);
+  } catch {
+    // Best-effort — episode FTS is an optimization, not critical
+  }
+}
+
+/**
+ * Remove an episode from the FTS index.
+ */
+export function removeEpisodeFromIndex(memoryDir: string, episodeId: string): void {
+  try {
+    const db = openIndex(memoryDir);
+    db.prepare('DELETE FROM episode_fts WHERE episode_id = ?').run(episodeId);
+  } catch {
+    // Best-effort
+  }
+}
+
+/**
+ * Full-text search over episode summaries using SQLite FTS5 + BM25 ranking.
+ *
+ * Returns episode IDs ordered by relevance (best match first).
+ * Returns null if the FTS table is unavailable (caller should fall back to term-overlap).
+ *
+ * Uses the same sanitisation as searchFts for atoms.
+ */
+export function searchEpisodeFts(
+  memoryDir: string,
+  queryText: string,
+  limit = 50,
+): { episode_id: string; rank: number }[] | null {
+  if (!indexExists(memoryDir)) return null;
+
+  try {
+    const db = openIndex(memoryDir);
+
+    // Same sanitisation as searchFts for atoms
+    const sanitised = queryText
+      .replace(/["*()^:\-]/g, ' ')
+      .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!sanitised) return [];
+
+    const tokens = sanitised.split(/\s+/).filter(Boolean);
+    const ftsQuery = tokens.length > 1 ? tokens.join(' OR ') : sanitised;
+
+    const rows = db.prepare(
+      `SELECT episode_id, rank FROM episode_fts WHERE episode_fts MATCH ? ORDER BY rank LIMIT ?`,
+    ).all(ftsQuery, limit) as { episode_id: string; rank: number }[];
+
+    return rows;
+  } catch {
+    // FTS table missing or query error — degrade gracefully
+    return null;
   }
 }
 

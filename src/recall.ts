@@ -9,7 +9,7 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex, searchFts, getAllEmbeddings, getAllRelations, getTermDocumentFrequencies, getCorpusSize, getAtomsMatchingTerm } from './index-db.js';
+import { queryIndex, searchFts, searchEpisodeFts, getAllEmbeddings, getAllRelations, getTermDocumentFrequencies, getCorpusSize, getAtomsMatchingTerm } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
 import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
@@ -28,8 +28,19 @@ const DEFAULT_DECAY_HALF_LIFE = 30;
 const DEFAULT_DECAY_WEIGHT = 0.2;
 /** Default neighbor boost factor for graph-walk spreading activation. */
 const DEFAULT_NEIGHBOR_BOOST = 0.15;
-/** Maximum fraction of total token budget that episodes may consume. */
-const MAX_EPISODE_BUDGET_RATIO = 0.2;
+/** Default fraction of total token budget that episodes may consume. */
+const DEFAULT_EPISODE_BUDGET_RATIO = 0.2;
+
+function getEpisodeBudgetRatio(query: RecallQueryInternal): number {
+  // Per-call override takes precedence
+  if (query.episode_budget_ratio !== undefined && Number.isFinite(query.episode_budget_ratio)) {
+    return Math.max(0, Math.min(1, query.episode_budget_ratio));
+  }
+  // Env var override
+  const v = parseFloat(process.env.EPISODE_BUDGET_RATIO || '');
+  if (Number.isFinite(v) && v >= 0 && v <= 1) return v;
+  return DEFAULT_EPISODE_BUDGET_RATIO;
+}
 
 function getSemanticWeight(): number {
   const v = parseFloat(process.env.SEMANTIC_WEIGHT || '');
@@ -496,6 +507,7 @@ interface ScoredEpisode {
 }
 
 function scoreEpisodes(
+  memoryDir: string,
   episodes: Episode[],
   task: string | undefined,
   halfLifeDays: number,
@@ -503,7 +515,25 @@ function scoreEpisodes(
 ): ScoredEpisode[] {
   const scored: ScoredEpisode[] = [];
 
-  // Tokenize query once
+  // Try FTS-based scoring first (BM25 with porter stemming)
+  let ftsScores: Map<string, number> | null = null;
+  if (task) {
+    const ftsResults = searchEpisodeFts(memoryDir, task, 50);
+    if (ftsResults && ftsResults.length > 0) {
+      ftsScores = new Map<string, number>();
+      // FTS5 rank is negative (more negative = better match). Normalize to 0-1.
+      const minRank = Math.min(...ftsResults.map(r => r.rank));
+      const maxRank = Math.max(...ftsResults.map(r => r.rank));
+      const range = maxRank - minRank;
+      for (const r of ftsResults) {
+        // Normalize: best match → 1.0, worst → close to 0
+        const normalized = range > 0 ? (maxRank - r.rank) / range : 1.0;
+        ftsScores.set(r.episode_id, Math.max(0.01, normalized)); // Floor at 0.01 to distinguish from zero-match
+      }
+    }
+  }
+
+  // Tokenize query for fallback term-overlap scoring
   const queryTerms = task
     ? task.toLowerCase().split(/\s+/).filter(t => t.length > 1)
     : [];
@@ -521,14 +551,20 @@ function scoreEpisodes(
       continue;
     }
 
-    // Term-overlap relevance: fraction of query terms found in the summary.
-    // Case-insensitive substring match (same behaviour as before, but normalized).
-    const summaryLower = ep.summary.toLowerCase();
-    let hits = 0;
-    for (const term of queryTerms) {
-      if (summaryLower.includes(term)) hits++;
+    let relevance: number;
+
+    if (ftsScores !== null) {
+      // FTS-based scoring (BM25 with stemming)
+      relevance = ftsScores.get(ep.id) ?? 0;
+    } else {
+      // Fallback: naive term-overlap scoring (graceful degradation)
+      const summaryLower = ep.summary.toLowerCase();
+      let hits = 0;
+      for (const term of queryTerms) {
+        if (summaryLower.includes(term)) hits++;
+      }
+      relevance = hits / queryTerms.length;
     }
-    const relevance = hits / queryTerms.length;
 
     // Temporal decay
     const recency = ep.metadata.started_at
@@ -737,7 +773,7 @@ export function recall(
       const baseTokens = estimateTokens(index + handoff + constraints);
       // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
       const episodeReservation = query.include_episodes
-        ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+        ? Math.floor(query.max_tokens * getEpisodeBudgetRatio(query))
         : 0;
       const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
       filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
@@ -776,7 +812,7 @@ export function recall(
   if (query.max_tokens && !(query.task && query.task.trim().length > 0)) {
     // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
     const episodeReservation = query.include_episodes
-      ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+      ? Math.floor(query.max_tokens * getEpisodeBudgetRatio(query))
       : 0;
     const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
     filtered = applyTokenBudget(filtered, atomBudget, query, new Map());
@@ -796,12 +832,12 @@ export function recall(
     const episodes = listEpisodes(memoryDir, { limit: 20 });
     const halfLife = getDecayHalfLife(query);
     const dw = getDecayWeight(query);
-    const scored = scoreEpisodes(episodes, query.task, halfLife, dw);
+    const scored = scoreEpisodes(memoryDir, episodes, query.task, halfLife, dw);
 
-    // Budget-aware greedy fill: episodes get at most MAX_EPISODE_BUDGET_RATIO of total budget.
+    // Budget-aware greedy fill: episodes get at most episode_budget_ratio of total budget.
     // When no max_tokens is set, include all scored episodes (backward-compatible).
     if (query.max_tokens) {
-      const episodeBudget = Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO);
+      const episodeBudget = Math.floor(query.max_tokens * getEpisodeBudgetRatio(query));
       const selected: ScoredEpisode[] = [];
       let used = 0;
       for (const ep of scored) {

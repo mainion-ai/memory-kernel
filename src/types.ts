@@ -171,6 +171,8 @@ export interface RecallQuery {
   coverage_boost?: number; // Exponent P: 0 = disabled, 0.5 = moderate (default), 2.0 = aggressive
   // Phase 8: MMR result diversity — re-ranks to prevent redundant atoms filling token budget
   mmr_lambda?: number; // 0 = pure diversity, 0.7 = moderate (default), 1.0 = disabled (pure relevance)
+  // Episode budget ratio — fraction of max_tokens reserved for episodes (default 0.2)
+  episode_budget_ratio?: number; // 0 = no episodes, 0.2 = default, 1.0 = all episodes
 }
 
 // --- Episode types ---
