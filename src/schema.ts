@@ -159,7 +159,7 @@ export const DEFAULT_TYPE_WEIGHTS: Record<AtomType, number> = {
   procedure:      1.2, // Operational knowledge
   conflict:       1.1, // Active conflicts need attention
   fact:           1.0, // Baseline
-  preference:     1.0, // Baseline
+  preference:     1.2, // User preferences — boost for preference-style queries
   open_question:  0.9, // Less urgent
   belief:         0.8, // High volume, exploratory — slight discount
   entity_summary: 0.8, // Reference material
@@ -171,6 +171,7 @@ export const DEFAULT_CONFIDENCE_FLOOR = 0.7;
 /** Minimum token reservations per type — guarantee these atoms appear in context. */
 export const DEFAULT_TYPE_RESERVATIONS: Partial<Record<AtomType, number>> = {
   decision:   800, // ~2–3 decisions always present
-  constraint: 400, // Constraints always visible
-  conflict:   400, // Active conflicts always surfaced
+  constraint:  400, // Constraints always visible
+  conflict:    400, // Active conflicts always surfaced
+  preference:  300, // User preferences always surfaced for recommendation queries
 };

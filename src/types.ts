@@ -156,6 +156,7 @@ export interface RecallQuery {
   // Phase 1: Temporal decay (overrides RECALL_DECAY_HALF_LIFE / RECALL_DECAY_WEIGHT env vars)
   decay_half_life?: number; // Half-life in days (default 30)
   decay_weight?: number; // Weight of recency in final score 0-1 (default 0.2)
+  decay_weights?: Partial<Record<AtomType, number>>; // Per-type decay weight overrides (0-1)
   // Phase 2: Type-aware weighting (overrides RECALL_TYPE_WEIGHTS / RECALL_TYPE_RESERVATIONS env vars)
   type_weights?: Partial<Record<AtomType, number>>; // Per-type score multipliers
   type_reservations?: Partial<Record<AtomType, number>>; // Min token slots per type
@@ -171,6 +172,8 @@ export interface RecallQuery {
   coverage_boost?: number; // Exponent P: 0 = disabled, 0.5 = moderate (default), 2.0 = aggressive
   // Phase 8: MMR result diversity — re-ranks to prevent redundant atoms filling token budget
   mmr_lambda?: number; // 0 = pure diversity, 0.7 = moderate (default), 1.0 = disabled (pure relevance)
+  // Episode budget ratio — fraction of max_tokens reserved for episodes (default 0.2)
+  episode_budget_ratio?: number; // 0 = no episodes, 0.2 = default, 1.0 = all episodes
 }
 
 // --- Episode types ---

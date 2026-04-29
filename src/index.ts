@@ -100,6 +100,9 @@ export {
   getTermDocumentFrequencies,
   getCorpusSize,
   getAtomsMatchingTerm,
+  indexEpisode,
+  removeEpisodeFromIndex,
+  searchEpisodeFts,
 } from './index-db.js';
 export type { IndexQueryResult, AtomRelation } from './index-db.js';
 
