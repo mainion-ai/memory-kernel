@@ -4,7 +4,8 @@ import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
 
-import { initMemoryDir, createAtom, closeAllIndexes } from '../src/index.js';
+import { initMemoryDir, createAtom, updateAtom, closeAllIndexes } from '../src/index.js';
+import { initIsolatedBase } from '../src/isolation.js';
 import { wanderFromAtoms } from '../src/wander.js';
 import type { Atom } from '../src/types.js';
 
@@ -90,5 +91,68 @@ describe('mk wander --as-of', () => {
     const r = JSON.parse(out);
 
     expect(r.activated).toEqual([]);
+  });
+
+  it('includes atoms in their pre-update form when an update happened after the as-of timestamp', () => {
+    if (!fs.existsSync(MK_BIN)) return;
+
+    // T1: create A. T2: as-of timestamp. T3: update A.
+    // wander --as-of T2 must include A in its T1 form, not drop it.
+    const a = createAtom({
+      memoryDir: testDir, agent_id: 'a', session_id: 's',
+      type: 'fact', slug: 'pre-update', body: 'pre-update body',
+      scope: { tags: ['snapshot-tag'] },
+    });
+    // Capture asOf BEFORE the update so the update lands strictly after.
+    // normalizeTimestamp() truncates to second precision (src/format.ts), so the
+    // gap between asOf and the post-update event must cross a full second boundary
+    // for the comparison to be meaningful. We use 1.1s slack to absorb scheduler
+    // jitter on slow CI runners.
+    const asOf = new Date(Date.now() + 1100).toISOString();
+    const waitUntil = Date.now() + 1300;
+    while (Date.now() < waitUntil) { /* spin briefly */ }
+
+    // Re-write the atom with new body — produces an atom_updated event after asOf.
+    updateAtom({
+      memoryDir: testDir, agent_id: 'a', session_id: 's',
+      filePath: a.filePath!,
+      updates: {},
+      body: 'POST-UPDATE body that should NOT be visible at as-of',
+    });
+
+    const out = execFileSync(
+      'node',
+      [MK_BIN, 'wander', '-d', testDir, '--as-of', asOf, '--json', '--seed', a.frontmatter.id, '--steps', '1'],
+      { encoding: 'utf-8' },
+    );
+    const r = JSON.parse(out);
+
+    // The seed must have been resolved — i.e. atom A is present in the as-of graph.
+    expect(r.seeds_used).toContain(a.frontmatter.id);
+  });
+
+  it('includes shared-namespace atoms when --as-of is used in isolated mode', () => {
+    if (!fs.existsSync(MK_BIN)) return;
+
+    // Set up isolated layout via the canonical helper.
+    initIsolatedBase(testDir, 'a1');
+    const sharedDir = path.join(testDir, 'shared');
+
+    // One atom in shared namespace, none in agent namespace.
+    const sharedAtom = createAtom({
+      memoryDir: sharedDir, agent_id: 'sys', session_id: 's',
+      type: 'fact', slug: 'shared-only', body: 'shared content',
+      scope: { tags: ['shared-tag'] },
+    });
+
+    const asOf = new Date(Date.now() + 60_000).toISOString();
+    const out = execFileSync(
+      'node',
+      [MK_BIN, '-a', 'a1', 'wander', '-d', testDir, '--as-of', asOf, '--json', '--seed', sharedAtom.frontmatter.id, '--steps', '1'],
+      { encoding: 'utf-8' },
+    );
+    const r = JSON.parse(out);
+
+    expect(r.seeds_used).toContain(sharedAtom.frontmatter.id);
   });
 });
