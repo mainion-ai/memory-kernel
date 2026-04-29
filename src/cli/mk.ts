@@ -45,7 +45,7 @@ import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
 import { importFromFile, previewImport } from '../import.js';
 import { renderClaudeMd, renderAgentClaudeMd } from '../render.js';
-import { wander, wanderFromFiles, WEIGHT_PRESETS } from '../wander.js';
+import { wander, wanderFromFiles, wanderFromAtoms, WEIGHT_PRESETS } from '../wander.js';
 import { embedAtom, embedAllAtoms } from '../embed-sync.js';
 import type { Classification } from '../types.js';
 import { registerRelateCommand, registerRelationsCommand } from './relate.js';
@@ -973,6 +973,7 @@ program
   .option('--relation-weight <n>', 'Activation weight for explicit relation edges (default: 2.0)', parseFloat)
   .option('--type-weights <json>', 'Per-relation-type weights as JSON, e.g. \'{"extends":1.5,"related":0.3}\'')
   .option('--weight-preset <name>', 'Use a named weight preset: constitution, tension, narrative')
+  .option('--as-of <iso>', 'Run wander against state reconstructed as of this ISO8601 timestamp')
   .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
@@ -986,6 +987,7 @@ program
     relationWeight?: number;
     typeWeights?: string;
     weightPreset?: string;
+    asOf?: string;
     json?: boolean;
   }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
@@ -1020,21 +1022,57 @@ program
       ? path.join(baseResolvedDir, 'shared')
       : undefined;
 
-    const wanderFn = useFiles ? wanderFromFiles : wander;
-    const result = wanderFn({
-      memoryDir,
-      sharedMemoryDir,
-      baseDir: sharedMemoryDir ? baseResolvedDir : undefined,
-      seeds: opts.seed,
-      seedTags: opts.tags,
-      steps: opts.steps,
-      threshold: opts.threshold,
-      topK: opts.topK,
-      decay: opts.decay,
-      maxCollisions: opts.maxCollisions,
-      relationWeight: opts.relationWeight,
-      typeWeights,
-    });
+    let result;
+    if (opts.asOf) {
+      // Validate timestamp
+      const asOfMs = new Date(opts.asOf).getTime();
+      if (Number.isNaN(asOfMs)) {
+        exitWithError(`Invalid --as-of timestamp: ${opts.asOf}`, opts.json);
+      }
+
+      // Replay events up to the timestamp to reconstruct atoms-as-of-T
+      const eventsFile = path.join(memoryDir, 'events.ndjson');
+      if (!fs.existsSync(eventsFile)) {
+        exitWithError(`No events.ndjson at ${memoryDir}`, opts.json);
+      }
+      const replayResult = replayFromFile(eventsFile, {
+        evidenceDir: path.join(memoryDir, 'evidence'),
+      });
+      // Filter atoms whose updated_at is at or before --as-of
+      const atomsAsOf = [...replayResult.atoms.values()].filter(
+        (a) => a.frontmatter.updated_at <= opts.asOf!,
+      );
+      result = wanderFromAtoms(atomsAsOf, {
+        memoryDir,
+        sharedMemoryDir,
+        baseDir: sharedMemoryDir ? baseResolvedDir : undefined,
+        seeds: opts.seed,
+        seedTags: opts.tags,
+        steps: opts.steps,
+        threshold: opts.threshold,
+        topK: opts.topK,
+        decay: opts.decay,
+        maxCollisions: opts.maxCollisions,
+        relationWeight: opts.relationWeight,
+        typeWeights,
+      });
+    } else {
+      const wanderFn = useFiles ? wanderFromFiles : wander;
+      result = wanderFn({
+        memoryDir,
+        sharedMemoryDir,
+        baseDir: sharedMemoryDir ? baseResolvedDir : undefined,
+        seeds: opts.seed,
+        seedTags: opts.tags,
+        steps: opts.steps,
+        threshold: opts.threshold,
+        topK: opts.topK,
+        decay: opts.decay,
+        maxCollisions: opts.maxCollisions,
+        relationWeight: opts.relationWeight,
+        typeWeights,
+      });
+    }
 
     if (opts.json) {
       console.log(JSON.stringify(result, null, 2));
