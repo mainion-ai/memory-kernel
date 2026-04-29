@@ -324,3 +324,85 @@ describe('graph-walk boost in recall', () => {
     expect(() => recall(testDir, { task: 'no relations', graph_boost: true })).not.toThrow();
   });
 });
+
+describe('Phase 1 plugin: auto-relink populates source and created_at', () => {
+  it('marks auto-extracted relations with source=extracted and a created_at', () => {
+    // First, create a target atom that will be referenced
+    const target = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'fact', slug: 'target-of-relink',
+      body: 'A target fact.',
+    });
+
+    // Now create an atom whose body references the target by ID
+    const source = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'belief', slug: 'has-relink',
+      body: `This belief references ${target.frontmatter.id} explicitly.`,
+    });
+
+    expect(source.frontmatter.relations).toBeDefined();
+    expect(source.frontmatter.relations!.length).toBeGreaterThan(0);
+    const rel = source.frontmatter.relations!.find(r => r.target === target.frontmatter.id);
+    expect(rel).toBeDefined();
+    expect(rel!.source).toBe('extracted');
+    expect(rel!.created_at).toBeDefined();
+    // Created_at should be a valid ISO8601 within the last minute
+    const ts = new Date(rel!.created_at!).getTime();
+    expect(Date.now() - ts).toBeLessThan(60_000);
+  });
+
+  it('explicit caller-supplied relations default to source=manual when source is missing', () => {
+    const target = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'fact', slug: 'manual-target',
+      body: 'Manual target.',
+    });
+
+    const source = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'belief', slug: 'has-manual-relation',
+      body: 'No body references; explicit relations only.',
+      relations: [{ target: target.frontmatter.id, type: 'extends' }],
+    });
+
+    expect(source.frontmatter.relations).toEqual([
+      expect.objectContaining({
+        target: target.frontmatter.id,
+        type: 'extends',
+        source: 'manual',
+        created_at: expect.any(String),
+      }),
+    ]);
+  });
+
+  it('explicit caller-supplied source is preserved when set', () => {
+    const target = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'fact', slug: 'enriched-target',
+      body: 'Target.',
+    });
+
+    const source = createAtom({
+      memoryDir: testDir,
+      agent_id: 'a', session_id: 's',
+      type: 'belief', slug: 'has-enriched-relation',
+      body: 'Body.',
+      relations: [{
+        target: target.frontmatter.id,
+        type: 'supports',
+        source: 'enriched',
+        confidence: 0.72,
+      }],
+    });
+
+    const rel = source.frontmatter.relations![0];
+    expect(rel.source).toBe('enriched');
+    expect(rel.confidence).toBe(0.72);
+  });
+});

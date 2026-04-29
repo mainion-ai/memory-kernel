@@ -114,9 +114,27 @@ export function createAtom(
     if (allRefs.length > 0) {
       atom.frontmatter.relations = [
         ...(atom.frontmatter.relations ?? []),
-        ...allRefs.map((r) => ({ target: r.targetId, type: r.type })),
+        ...allRefs.map((r) => ({
+          target: r.targetId,
+          type: r.type,
+          source: 'extracted' as const,
+          created_at: now,
+        })),
       ];
       writeAtom(atom, fp);
+      indexAtom(opts.memoryDir, atom);
+    }
+  }
+
+  // Caller-supplied relations: default source='manual' and created_at if missing
+  if (opts.relations?.length) {
+    atom.frontmatter.relations = opts.relations.map((r) => ({
+      ...r,
+      source: r.source ?? ('manual' as const),
+      created_at: r.created_at ?? now,
+    }));
+    writeAtom(atom, fp);
+    if (indexExists(opts.memoryDir)) {
       indexAtom(opts.memoryDir, atom);
     }
   }
