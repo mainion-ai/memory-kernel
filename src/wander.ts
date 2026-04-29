@@ -19,6 +19,7 @@
 import path from 'path';
 import { openIndex, indexExists } from './index-db.js';
 import { listAtoms, assertWithinDir } from './store.js';
+import type { Atom } from './types.js';
 
 // --- Types ---
 
@@ -732,6 +733,97 @@ export function wanderFromFiles(options: WanderOptions): WanderResult {
     };
   }
 
+  return wanderWithGraph(graph, options, start);
+}
+
+/**
+ * Build an in-memory graph from a pre-built atom array. Mirrors
+ * buildGraphFromFiles but skips disk I/O. Used by wanderFromAtoms() to
+ * support replay-aware queries (e.g. wander against state-as-of-T).
+ *
+ * Same filtering rules as buildGraphFromFiles: skips archived, expired,
+ * conflict, SECRET, and PERSONAL atoms.
+ */
+function buildGraphFromAtomList(
+  atoms: Atom[],
+  now: number,
+  options: WanderOptions,
+): Map<string, GraphNode> {
+  const graph = new Map<string, GraphNode>();
+
+  for (const atom of atoms) {
+    const fm = atom.frontmatter;
+    if (!fm.id) continue;
+    if (fm.status === 'archived' || fm.status === 'expired') continue;
+    if (fm.type === 'conflict') continue;
+    if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
+
+    graph.set(fm.id, {
+      tags: [...new Set(fm.scope?.tags ?? [])],
+      type: fm.type,
+      updated_at: fm.updated_at,
+      base_activation: baseLevelActivation(fm.updated_at, now, 0),
+      neighbors: new Map(),
+      citation_count: 0,
+    });
+  }
+
+  // Populate relation neighbors from frontmatter (bidirectional, strongest typed edge wins)
+  const twLookup = options.typeWeights ?? DEFAULT_TYPE_WEIGHTS;
+  for (const atom of atoms) {
+    const fm = atom.frontmatter;
+    if (!fm.id || !fm.relations) continue;
+    const sourceNode = graph.get(fm.id);
+    if (!sourceNode) continue;
+    for (const rel of fm.relations) {
+      const targetNode = graph.get(rel.target);
+      if (!targetNode) continue;
+      const relType = rel.type || 'related';
+      const newWeight = twLookup[relType] ?? 0.3;
+
+      const existingSrc = sourceNode.neighbors.get(rel.target);
+      if (!existingSrc || newWeight > (twLookup[existingSrc] ?? 0.3)) {
+        sourceNode.neighbors.set(rel.target, relType);
+      }
+      const existingTgt = targetNode.neighbors.get(fm.id);
+      if (!existingTgt || newWeight > (twLookup[existingTgt] ?? 0.3)) {
+        targetNode.neighbors.set(fm.id, relType);
+      }
+    }
+  }
+
+  return graph;
+}
+
+/**
+ * Run spreading activation against a pre-built atom array.
+ * No SQLite, no disk I/O — pure in-memory computation.
+ *
+ * Used by `mk wander --as-of <iso>` after reconstructing past state via replay().
+ *
+ * @example
+ * ```ts
+ * import { replayFromFile, wanderFromAtoms } from 'memory-kernel';
+ * const result = replayFromFile('events.ndjson', { timestamp: '2026-04-15T00:00:00Z' });
+ * const atoms = [...result.atoms.values()];
+ * const wander = wanderFromAtoms(atoms, { memoryDir: dir, seeds: ['FACT-...'] });
+ * ```
+ */
+export function wanderFromAtoms(atoms: Atom[], options: WanderOptions): WanderResult {
+  const start = Date.now();
+
+  if (atoms.length === 0) {
+    return {
+      collisions: [],
+      activated: [],
+      steps_taken: 0,
+      duration_ms: Date.now() - start,
+      seeds_used: [],
+    };
+  }
+
+  const now = Date.now();
+  const graph = buildGraphFromAtomList(atoms, now, options);
   return wanderWithGraph(graph, options, start);
 }
 

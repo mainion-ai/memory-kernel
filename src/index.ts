@@ -181,7 +181,7 @@ export { renderClaudeMd, renderAgentClaudeMd } from './render.js';
 export type { RenderClaudeMdOptions } from './render.js';
 
 // Wander (spreading activation)
-export { wander, wanderFromFiles } from './wander.js';
+export { wander, wanderFromFiles, wanderFromAtoms, WEIGHT_PRESETS } from './wander.js';
 export type { WanderOptions, WanderResult, Collision, ActivatedAtom } from './wander.js';
 
 // Embeddings
