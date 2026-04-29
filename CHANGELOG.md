@@ -9,6 +9,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-04-29
+
+### Added — visualization plugin foundations (Phase 1 of obsidian-mk-graph)
+
+- **`Relation` schema extension.** Five new optional fields on every relation: `created_at` (ISO8601, when the edge was created), `confidence` (0..1, belief in the relation), `weight` (per-edge wander weight, overrides type default), `source` (`'manual' | 'extracted' | 'enriched' | 'unknown'`, edge provenance), and `evidence` (string[] of supporting atom/episode/hash refs). All fields are optional; legacy `{target, type}` relations parse unchanged.
+- **`mk timeline --json` CLI command.** Emits replay-ready event streams: snapshots inline, `atom_snapshot_hash` resolved via the evidence dir, SECRET atoms decrypted when `MEMORY_ENCRYPTION_KEY` is set (otherwise marked `redacted: true`), filtered by `--from <iso>` / `--to <iso>`. Used by the obsidian-mk-graph plugin's replay engine.
+- **`mk wander --as-of <iso>` flag.** Runs spreading activation against state reconstructed via `replay()` to the specified timestamp instead of current state. Enables historical "what would the agent have surfaced then?" queries.
+- **New library exports:** `getTimeline`, `wanderFromAtoms`, `WEIGHT_PRESETS`, `RELATION_SOURCES`, `RelationSource`, `TimelineEvent`, `TimelineOptions`, `TimelineResult`.
+- **Write-time provenance.** `createAtom` auto-relink path now stamps extracted relations with `source='extracted'` + `created_at`; explicit caller-supplied relations default to `source='manual'`. `enrich-relations.ts` apply path stamps `source='enriched'` and `confidence` from the LLM proposal.
+
+### Behavior unchanged
+
+- The PR #28 `LEGACY_TYPED_LINK_KEYS` stripper is retained — atoms serialised before Juggl support was removed continue to parse correctly. New fields live inside the `relations[]` array, not as top-level Juggl-style keys. New regression test locks this in.
+- SQLite `atom_relations` index schema is unchanged. Wander does not yet consume the new per-edge fields. (Out of scope for Phase 1.)
+
 ### Changed — repository layout
 
 - **Renamed `container/skills/` → `skills/`.** Both `mk-memory-setup` and `mk-doctor` are host-side skills (run via Claude Code on the operator's machine, not inside a container), so the old location was misleading; `container/` was empty otherwise. No npm-package impact — the published `memory-kernel` package only ships `dist/`, `README.md`, and `LICENSE`.
