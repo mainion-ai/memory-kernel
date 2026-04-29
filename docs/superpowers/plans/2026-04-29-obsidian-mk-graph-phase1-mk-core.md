@@ -792,10 +792,13 @@ describe('getTimeline', () => {
     expect(empty.events).toHaveLength(0);
   });
 
-  it('emits redacted snapshot for SECRET atoms when key is unavailable', () => {
-    // Create a SECRET atom with no MEMORY_ENCRYPTION_KEY set
+  it('emits redacted snapshot for SECRET atoms when key is unavailable at read time', () => {
+    // SECRET atoms are only encrypted when a key is present at WRITE time
+    // (see snapshotAtom() in src/retain.ts). To exercise the redaction path,
+    // we set a key during create (encrypts the snapshot), then unset it before
+    // calling getTimeline (forces the decryption-failure → redacted=true path).
     const previousKey = process.env.MEMORY_ENCRYPTION_KEY;
-    delete process.env.MEMORY_ENCRYPTION_KEY;
+    process.env.MEMORY_ENCRYPTION_KEY = 'test-key-32-bytes-aaaaaaaaaaaaaa';
 
     try {
       createAtom({
@@ -806,13 +809,16 @@ describe('getTimeline', () => {
         classification: 'SECRET',
       });
 
+      // Now unset the key — getTimeline will see encrypted snapshots it cannot decrypt
+      delete process.env.MEMORY_ENCRYPTION_KEY;
+
       const result = getTimeline({ memoryDir: testDir });
       const created = result.events.find(e => e.action === 'atom_created');
-      // Without a key, the snapshot stays encrypted but is flagged
       expect(created!.redacted).toBe(true);
       expect(created!.atom_snapshot).toBeUndefined();
     } finally {
       if (previousKey !== undefined) process.env.MEMORY_ENCRYPTION_KEY = previousKey;
+      else delete process.env.MEMORY_ENCRYPTION_KEY;
     }
   });
 
@@ -1371,7 +1377,6 @@ Append to `test/wander-as-of.test.ts`:
 
 ```typescript
 import { execFileSync } from 'child_process';
-import { replayFromFile } from '../src/replay.js';
 
 const MK_BIN = path.resolve('dist/cli/mk.js');
 
