@@ -39,6 +39,7 @@ import { reflect } from '../reflect.js';
 import { checkpoint } from '../checkpoint.js';
 import { bootstrapEvents } from '../bootstrap.js';
 import { replayFromFile } from '../replay.js';
+import { getTimeline } from '../timeline.js';
 import { compactLog } from '../event-log.js';
 import { writeEpisode, listEpisodes } from '../episodes.js';
 import { mergeEventLogs } from '../merge.js';
@@ -754,6 +755,27 @@ program
     if (opts.outputDir) {
       console.log(`  Output written to: ${path.resolve(opts.outputDir)}`);
     }
+  });
+
+// --- mk timeline ---
+program
+  .command('timeline')
+  .description('Emit replay-ready event stream (denormalised, decrypted, time-filtered)')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('--from <iso>', 'Inclusive lower bound on event.timestamp (ISO8601)')
+  .option('--to <iso>', 'Inclusive upper bound on event.timestamp (ISO8601)')
+  .option('--json', 'Output as JSON (default and currently the only format)')
+  .action((opts: { dir: string; from?: string; to?: string; json?: boolean }) => {
+    const memoryDir = resolveDir(opts.dir, getAgent());
+    if (!fs.existsSync(memoryDir)) {
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, true);
+    }
+    const result = getTimeline({
+      memoryDir,
+      from: opts.from,
+      to: opts.to,
+    });
+    console.log(JSON.stringify(result, null, 2));
   });
 
 // --- mk episode ---
