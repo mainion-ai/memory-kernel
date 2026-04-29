@@ -10,6 +10,7 @@ import {
   ATOM_TYPES,
   CLASSIFICATIONS,
   EVENT_ACTIONS,
+  RELATION_SOURCES,
   RELATION_TYPES,
 } from './types.js';
 
@@ -49,6 +50,11 @@ export const AtomFrontmatterSchema = z.object({
       z.object({
         target: z.string().min(1),
         type: z.enum(RELATION_TYPES),
+        created_at: z.string().datetime().optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        weight: z.number().optional(),
+        source: z.enum(RELATION_SOURCES).optional(),
+        evidence: z.array(z.string()).optional(),
       }),
     )
     .optional(),

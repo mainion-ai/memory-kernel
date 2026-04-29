@@ -86,9 +86,32 @@ export const RELATION_TYPES = [
 
 export type RelationType = (typeof RELATION_TYPES)[number];
 
+/** How a relation came into existence. Used for visualization (manual=solid,
+ *  extracted=dashed, enriched=dotted) and audit. */
+export const RELATION_SOURCES = [
+  'manual',
+  'extracted',
+  'enriched',
+  'unknown',
+] as const;
+
+export type RelationSource = (typeof RELATION_SOURCES)[number];
+
 export interface Relation {
   target: string; // Atom ID
   type: RelationType;
+  /** ISO8601 — when the edge was created. Optional; consumers fall back to
+   *  the source atom's created_at for legacy edges. */
+  created_at?: string;
+  /** 0..1 — belief in the relation. Defaults to 1.0 at consumption time. */
+  confidence?: number;
+  /** Per-edge wander weight. When undefined, falls back to the type-level
+   *  default in DEFAULT_TYPE_WEIGHTS. */
+  weight?: number;
+  /** Provenance of the edge. */
+  source?: RelationSource;
+  /** Pointers to supporting atoms / episodes / evidence hashes. */
+  evidence?: string[];
 }
 
 // --- Atom (frontmatter + body) ---
