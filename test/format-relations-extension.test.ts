@@ -95,3 +95,69 @@ Body.
     expect(reparsed.frontmatter.relations).toEqual(original.frontmatter.relations);
   });
 });
+
+describe('PR #28 LEGACY_TYPED_LINK_KEYS regression', () => {
+  it('strips legacy Juggl keys on parse and never re-emits them on serialise', () => {
+    const mdWithLegacyJugglKeys = `---
+id: FACT-2026-04-29-LEG-aa00
+type: fact
+status: active
+confidence: 0.9
+created_at: "2026-04-29T10:00:00Z"
+updated_at: "2026-04-29T10:00:00Z"
+ttl_days: null
+extends:
+  - "[[FACT-OLD-1]]"
+supports:
+  - "[[FACT-OLD-2]]"
+caused-by:
+  - "[[FACT-OLD-3]]"
+relations:
+  - target: FACT-2026-04-28-NEW-bb01
+    type: extends
+    source: manual
+---
+
+Body.
+`;
+    const atom = parseAtom(mdWithLegacyJugglKeys);
+    // Legacy keys must be stripped from the parsed frontmatter
+    const fm = atom.frontmatter as unknown as Record<string, unknown>;
+    expect(fm.extends).toBeUndefined();
+    expect(fm.supports).toBeUndefined();
+    expect(fm['caused-by']).toBeUndefined();
+
+    // Round-trip must not re-emit them
+    const reSerialised = serializeAtom(atom);
+    expect(reSerialised).not.toMatch(/^extends:/m);
+    expect(reSerialised).not.toMatch(/^supports:/m);
+    expect(reSerialised).not.toMatch(/^caused-by:/m);
+    // The new relations[] array must be preserved
+    expect(reSerialised).toMatch(/^relations:/m);
+  });
+
+  it('canonical relations[] array does not get confused with legacy top-level keys', () => {
+    const md = `---
+id: FACT-2026-04-29-CAN-aa00
+type: fact
+status: active
+confidence: 0.9
+created_at: "2026-04-29T10:00:00Z"
+updated_at: "2026-04-29T10:00:00Z"
+ttl_days: null
+relations:
+  - target: FACT-2026-04-28-OTHER-bb01
+    type: extends
+    source: extracted
+    created_at: "2026-04-29T10:30:00Z"
+---
+
+Body.
+`;
+    const atom = parseAtom(md);
+    expect(atom.frontmatter.relations).toHaveLength(1);
+    const out = serializeAtom(atom);
+    // Ensure no legacy form is emitted
+    expect(out).not.toMatch(/^extends:\s*\n\s*-\s*"\[\[/m);
+  });
+});
