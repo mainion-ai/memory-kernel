@@ -38,7 +38,7 @@ import { recall } from '../recall.js';
 import { reflect } from '../reflect.js';
 import { checkpoint } from '../checkpoint.js';
 import { bootstrapEvents } from '../bootstrap.js';
-import { replayFromFile } from '../replay.js';
+import { replay, replayFromFile } from '../replay.js';
 import { getTimeline } from '../timeline.js';
 import { compactLog } from '../event-log.js';
 import { writeEpisode, listEpisodes } from '../episodes.js';
@@ -47,7 +47,7 @@ import { importFromFile, previewImport } from '../import.js';
 import { renderClaudeMd, renderAgentClaudeMd } from '../render.js';
 import { wander, wanderFromFiles, wanderFromAtoms, WEIGHT_PRESETS } from '../wander.js';
 import { embedAtom, embedAllAtoms } from '../embed-sync.js';
-import type { Classification } from '../types.js';
+import type { Atom, Classification, MemoryEvent } from '../types.js';
 import { registerRelateCommand, registerRelationsCommand } from './relate.js';
 import { registerMigrateRelationsCommand } from './migrate-relations.js';
 import { registerRelinkCommand } from './relink.js';
@@ -1024,24 +1024,65 @@ program
 
     let result;
     if (opts.asOf) {
-      // Validate timestamp
+      // Validate timestamp.
       const asOfMs = new Date(opts.asOf).getTime();
       if (Number.isNaN(asOfMs)) {
-        exitWithError(`Invalid --as-of timestamp: ${opts.asOf}`, opts.json);
+        exitWithError(`Invalid --as-of timestamp: ${opts.asOf}`, opts.json ?? false);
       }
 
-      // Replay events up to the timestamp to reconstruct atoms-as-of-T
-      const eventsFile = path.join(memoryDir, 'events.ndjson');
-      if (!fs.existsSync(eventsFile)) {
-        exitWithError(`No events.ndjson at ${memoryDir}`, opts.json);
+      // Helper: read events.ndjson, drop lines whose event.timestamp > asOf,
+      // return parsed events. Numeric comparison is critical because
+      // normalizeTimestamp() truncates frontmatter timestamps to second
+      // precision while --as-of often has millisecond precision; lexicographic
+      // string comparison would be unsafe ('Z' > '.').
+      const eventsAsOf = (eventsFile: string): MemoryEvent[] => {
+        if (!fs.existsSync(eventsFile)) return [];
+        const raw = fs.readFileSync(eventsFile, 'utf-8').trim();
+        if (!raw) return [];
+        const out: MemoryEvent[] = [];
+        for (const line of raw.split('\n')) {
+          if (!line.trim()) continue;
+          let ev: MemoryEvent;
+          try {
+            ev = JSON.parse(line) as MemoryEvent;
+          } catch {
+            continue;
+          }
+          const evMs = new Date(ev.timestamp).getTime();
+          if (!Number.isNaN(evMs) && evMs <= asOfMs) out.push(ev);
+        }
+        return out;
+      };
+
+      // Replay agent events (required — no events file means empty graph).
+      const agentEventsFile = path.join(memoryDir, 'events.ndjson');
+      if (!fs.existsSync(agentEventsFile)) {
+        exitWithError(`No events.ndjson at ${memoryDir}`, opts.json ?? false);
       }
-      const replayResult = replayFromFile(eventsFile, {
+      const agentEvents = eventsAsOf(agentEventsFile);
+      const agentReplay = replay(agentEvents, {
         evidenceDir: path.join(memoryDir, 'evidence'),
       });
-      // Filter atoms whose updated_at is at or before --as-of
-      const atomsAsOf = [...replayResult.atoms.values()].filter(
-        (a) => a.frontmatter.updated_at <= opts.asOf!,
-      );
+      const agentAtoms = [...agentReplay.atoms.values()];
+
+      // Replay shared events too when isolated-mode shared dir is in play.
+      let sharedAtoms: Atom[] = [];
+      if (sharedMemoryDir && fs.existsSync(sharedMemoryDir)) {
+        const sharedEventsFile = path.join(sharedMemoryDir, 'events.ndjson');
+        const sharedEvents = eventsAsOf(sharedEventsFile);
+        const sharedReplay = replay(sharedEvents, {
+          evidenceDir: path.join(sharedMemoryDir, 'evidence'),
+        });
+        sharedAtoms = [...sharedReplay.atoms.values()];
+      }
+
+      // Concat agent first, then shared atoms whose IDs aren't already in the
+      // agent set. Agent wins on collision — mirrors wanderFromFiles precedence
+      // at src/wander.ts:718-723.
+      const agentIdSet = new Set(agentAtoms.map((a) => a.frontmatter.id));
+      const sharedFiltered = sharedAtoms.filter((a) => !agentIdSet.has(a.frontmatter.id));
+      const atomsAsOf = [...agentAtoms, ...sharedFiltered];
+
       result = wanderFromAtoms(atomsAsOf, {
         memoryDir,
         sharedMemoryDir,
@@ -1055,6 +1096,7 @@ program
         maxCollisions: opts.maxCollisions,
         relationWeight: opts.relationWeight,
         typeWeights,
+        now: asOfMs,
       });
     } else {
       const wanderFn = useFiles ? wanderFromFiles : wander;

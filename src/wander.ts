@@ -90,6 +90,11 @@ export interface WanderOptions {
   sharedMemoryDir?: string;
   /** Root memory directory (used for path validation when sharedMemoryDir is set). */
   baseDir?: string;
+  /** Override the wall-clock "now" used for base-level activation decay.
+   *  Used by `mk wander --as-of <iso>` so decay is anchored to the as-of
+   *  timestamp instead of the actual current time. Milliseconds since epoch.
+   *  Defaults to `Date.now()`. */
+  now?: number;
 }
 
 export interface ActivatedAtom {
@@ -822,7 +827,7 @@ export function wanderFromAtoms(atoms: Atom[], options: WanderOptions): WanderRe
     };
   }
 
-  const now = Date.now();
+  const now = options.now ?? Date.now();
   const graph = buildGraphFromAtomList(atoms, now, options);
   return wanderWithGraph(graph, options, start);
 }
