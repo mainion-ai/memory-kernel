@@ -19,7 +19,7 @@ Run before tagging `obsidian-mk-graph@0.1.0`. All steps must pass.
    mkdir -p .mk
    cp -r <repo>/packages/obsidian-mk-graph/test/fixtures/small-vault/* .mk/
    ```
-4. Symlink the plugin into the vault:
+4. Symlink the plugin into the vault (Unix shell). On Windows, copy `main.js`, `manifest.json`, and `styles.css` into the plugin folder instead, or use `mklink /H` (hardlink) from an Administrator cmd:
    ```bash
    mkdir -p .obsidian/plugins/obsidian-mk-graph
    ln -sf <repo>/packages/obsidian-mk-graph/main.js .obsidian/plugins/obsidian-mk-graph/main.js
@@ -36,7 +36,7 @@ Run before tagging `obsidian-mk-graph@0.1.0`. All steps must pass.
 - [ ] **S4: F2 border = classification.** SECRET atoms (the orange-red border with 🔒 glyph) are visually distinct from TEAM (blue border) and PUBLIC (green).
 - [ ] **S5: F2 opacity = status.** Rejected/archived atoms appear dimmer than active ones.
 - [ ] **S6: F2 size = log-citations.** Atoms with more inbound edges appear larger.
-- [ ] **S7: Edges encode type/source/confidence.** Different edge colors visible; some edges dashed (extracted) or dotted (enriched). Hover an edge — no crash even if force-graph doesn't show a tooltip on edges.
+- [ ] **S7: Edges encode type / source / confidence.** Different edge colors visible (one per relation type). Confirm the source-dash mapping by inspecting the fixture: at least one edge with `source: extracted` should render dashed, at least one with `source: enriched` should render dotted, and edges with `source: manual` should be solid. Edges with no `source` field also render solid. Hover an edge — no crash even if force-graph doesn't show a tooltip on edges.
 - [ ] **S8: Click opens atom file.** Click any node — the atom .md file opens in the main pane.
 - [ ] **S9: Settings persist.** Open settings, toggle "Border = classification" off, close + reopen Obsidian — toggle remains off, borders stay hidden.
 - [ ] **S10: Live mode picks up changes.** With the view open, edit one atom file from disk (`echo >> .mk/ENTITIES/<one>.md`), save — within ~1 second, the graph re-renders.

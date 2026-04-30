@@ -26,17 +26,19 @@ Read-only. Click a node to open its atom file. Hover for a tooltip with id, type
 ## Install (manual, build from source)
 
 ```bash
-git clone git@github.com:mainion-ai/memory-kernel.git
+git clone https://github.com/mainion-ai/memory-kernel.git
 cd memory-kernel/packages/obsidian-mk-graph
 npm install
 npm run build
 
-# Symlink into your vault
+# Symlink into your vault (Unix shell)
 mkdir -p <vault>/.obsidian/plugins/obsidian-mk-graph
 ln -sf "$PWD/main.js"        <vault>/.obsidian/plugins/obsidian-mk-graph/main.js
 ln -sf "$PWD/manifest.json"  <vault>/.obsidian/plugins/obsidian-mk-graph/manifest.json
 ln -sf "$PWD/styles.css"     <vault>/.obsidian/plugins/obsidian-mk-graph/styles.css
 ```
+
+On Windows, copy `main.js`, `manifest.json`, and `styles.css` into `<vault>\.obsidian\plugins\obsidian-mk-graph\` instead of symlinking.
 
 Reload Obsidian and enable the plugin.
 
