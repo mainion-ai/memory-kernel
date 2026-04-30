@@ -53,6 +53,13 @@ describe('node encoding', () => {
     expect(nodeOpacity(makeAtom({ status: 'expired' }))).toBe(0.0);
     expect(nodeOpacity(makeAtom({ status: 'unknown_status' }))).toBe(1.0);
   });
+
+  it('nodeSize collapses non-finite inputs to the 4px floor', () => {
+    expect(nodeSize(NaN)).toBeCloseTo(4, 5);
+    expect(nodeSize(Infinity)).toBeCloseTo(4, 5);
+    expect(nodeSize(-Infinity)).toBeCloseTo(4, 5);
+    expect(nodeSize(-1)).toBeCloseTo(4, 5); // negative also clamped to 0
+  });
 });
 
 describe('edge encoding', () => {
@@ -95,5 +102,20 @@ describe('edge encoding', () => {
     expect(edgeOpacity(makeRel({ confidence: 0.5 }))).toBeCloseTo(0.65, 5);
     expect(edgeOpacity(makeRel({ confidence: 0 }))).toBeCloseTo(0.3, 5);
     expect(edgeOpacity(makeRel())).toBeCloseTo(1.0, 5); // undefined -> 1.0
+  });
+
+  it('edgeWidth falls back when weight is non-finite', () => {
+    // NaN weight → fallback (0.3) → width = 1.6
+    expect(edgeWidth(makeRel({ type: 'related', weight: NaN }))).toBeCloseTo(1.6, 5);
+    expect(edgeWidth(makeRel({ type: 'related', weight: Infinity }))).toBeCloseTo(1.6, 5);
+  });
+
+  it('edgeOpacity falls back to 1.0 when confidence is non-finite', () => {
+    expect(edgeOpacity(makeRel({ confidence: NaN }))).toBeCloseTo(1.0, 5);
+    expect(edgeOpacity(makeRel({ confidence: Infinity }))).toBeCloseTo(1.0, 5);
+  });
+
+  it('edgeDash returns [] for the known `unknown` source', () => {
+    expect(edgeDash(makeRel({ source: 'unknown' }))).toEqual([]);
   });
 });
