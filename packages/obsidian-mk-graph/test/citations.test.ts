@@ -42,4 +42,40 @@ describe('countIncomingCitations', () => {
     const counts = countIncomingCitations(atoms);
     expect(counts.get('MISSING')).toBeUndefined();
   });
+
+  it('does not count self-references', () => {
+    const atoms: ParsedAtom[] = [atom('A', ['A', 'B']), atom('B', [])];
+    const counts = countIncomingCitations(atoms);
+    expect(counts.get('A')).toBeUndefined();
+    expect(counts.get('B')).toBe(1);
+  });
+
+  it('counts duplicate edges (A→B twice) as 2', () => {
+    const atoms: ParsedAtom[] = [
+      {
+        id: 'A',
+        type: 'fact',
+        status: 'active',
+        classification: 'TEAM',
+        confidence: 1.0,
+        createdAt: '2026-04-29T10:00:00Z',
+        updatedAt: '2026-04-29T10:00:00Z',
+        ttlDays: null,
+        tags: [],
+        relations: [
+          { target: 'B', type: 'extends' },
+          { target: 'B', type: 'supports' },
+        ],
+        body: '',
+      },
+      atom('B', []),
+    ];
+    const counts = countIncomingCitations(atoms);
+    expect(counts.get('B')).toBe(2);
+  });
+
+  it('returns an empty map for an empty input array', () => {
+    const counts = countIncomingCitations([]);
+    expect(counts.size).toBe(0);
+  });
 });
