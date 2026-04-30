@@ -31,17 +31,6 @@ const DUPLICATE_RANK_THRESHOLD = -2.0;
 const SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, beliefs, and assistant-generated content worth remembering long-term.
 
 Pay special attention to the assistant's contributions:
-Pay special attention to user preferences:
-- Tools, software, brands, or platforms the user prefers or regularly uses
-- Stated preferences ("I prefer", "I like", "I enjoy", "my favorite")
-- Implied preferences from repeated usage patterns or detailed interest in specific topics
-- Dietary preferences, lifestyle choices, hobbies, and personal tastes
-- Communication or work style preferences
-
-For each preference, use type "preference" and write the body as a declarative statement:
-"## Preference\\nThe user prefers {specific thing}. {supporting detail from conversation}."
-
-Also pay attention to the assistant's contributions:
 - Recommendations and suggestions the assistant made
 - Advice or explanations the assistant provided
 - Facts, data, or information the assistant shared
@@ -57,7 +46,6 @@ For each item, output a JSON object with:
 - body: markdown content (use ## Fact / ## Decision / ## Preference / ## Belief / ## Open Question heading, then the content)
 - tags: string[] of relevant tags (use "role:assistant" for assistant-generated content, "role:user" for user-provided content)
 - confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions)
-- confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions/preferences)
 - rationale: one sentence explaining why this is worth remembering
 
 Rules:
@@ -66,7 +54,6 @@ Rules:
 - Prefer specific, actionable facts over vague observations
 - For facts: include the specific value/detail
 - For decisions: include why the decision was made
-- For preferences: state what the user prefers and why, in declarative form
 - For assistant responses: capture the specific recommendation, advice, or information shared
 - Tag assistant-generated atoms with "role:assistant"
 - Max {{max_atoms}} atoms
