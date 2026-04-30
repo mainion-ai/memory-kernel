@@ -70,15 +70,23 @@ export class MkGraphView extends ItemView {
     }
   }
 
-  /** Public so the plugin entry can call it from the "Reload" command. */
+  /** Public so the plugin entry can call it from the "Reload" command.
+   *  Catches directory-level read errors so a watcher-fired reload after
+   *  the user deletes the memory dir doesn't surface as an unhandled
+   *  promise rejection. Per-file errors are already swallowed by readVault. */
   async reloadFromDisk(): Promise<void> {
-    const memDir = this.resolveMemoryDirAbsolute();
-    if (!memDir) {
+    try {
+      const memDir = this.resolveMemoryDirAbsolute();
+      if (!memDir) {
+        this.state.replace([]);
+        return;
+      }
+      const atoms = await readVault(memDir);
+      this.state.replace(atoms);
+    } catch (err) {
+      console.warn('mk-graph: reloadFromDisk failed', err);
       this.state.replace([]);
-      return;
     }
-    const atoms = await readVault(memDir);
-    this.state.replace(atoms);
   }
 
   private resolveMemoryDirAbsolute(): string | null {
@@ -114,6 +122,7 @@ export class MkGraphView extends ItemView {
     if (rel.startsWith(vaultRoot)) {
       rel = rel.slice(vaultRoot.length).replace(/^[/\\]+/, '');
     }
-    await this.host.app.workspace.openLinkText(normalizePath(rel), '', false);
+    // Open in a new tab so the graph view stays visible alongside the atom.
+    await this.host.app.workspace.openLinkText(normalizePath(rel), '', 'tab');
   }
 }
