@@ -5,14 +5,23 @@ import { parseAtomFile, type ParsedAtom } from './atom-parser.js';
 const ENTITIES_DIR = 'ENTITIES';
 const AGENTS_DIR = 'agents';
 
+/** Reject agent IDs that contain path separators or `..` segments — these
+ *  would let `path.join` escape the `agents/` namespace and route reads
+ *  outside the intended store. */
+function isSafeAgentId(agentId: string): boolean {
+  if (agentId.length === 0) return false;
+  if (agentId.includes('/') || agentId.includes('\\')) return false;
+  if (agentId === '.' || agentId === '..') return false;
+  return true;
+}
+
 /**
  * Resolve the effective memory dir for a given agent. Mirrors mk-core's
  * resolveAgentDir(): agents/<id>/ if it exists, else the base dir. Empty
- * agentId means shared mode. Plugin treats unknown agent IDs as a fallback
- * to base, never throws.
+ * or path-traversal-shaped agentId falls back to base. Never throws.
  */
 export function resolveMemoryDir(baseDir: string, agentId?: string): string {
-  if (!agentId) return baseDir;
+  if (!agentId || !isSafeAgentId(agentId)) return baseDir;
   const agentDir = path.join(baseDir, AGENTS_DIR, agentId);
   return existsSync(agentDir) ? agentDir : baseDir;
 }
@@ -73,6 +82,10 @@ export function watchVault(memoryDir: string, onChange: () => void): Watcher {
         onChange();
       }, 150);
     });
+    // Swallow watcher-level errors (e.g. mid-session directory deletion)
+    // so they don't surface as uncaught exceptions in Electron's renderer.
+    // Caller can re-init via close() + watchVault() if needed.
+    watcher.on('error', () => {});
   } catch {
     return { close: () => {} };
   }
