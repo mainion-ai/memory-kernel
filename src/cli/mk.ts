@@ -764,18 +764,46 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--from <iso>', 'Inclusive lower bound on event.timestamp (ISO8601)')
   .option('--to <iso>', 'Inclusive upper bound on event.timestamp (ISO8601)')
-  .option('--json', 'Output as JSON (default and currently the only format)')
+  .option('--json', 'Emit full event stream as JSON (default: human-readable summary)')
   .action((opts: { dir: string; from?: string; to?: string; json?: boolean }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, true);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json ?? false);
     }
+
+    if (opts.from !== undefined && Number.isNaN(new Date(opts.from).getTime())) {
+      exitWithError(`Invalid --from timestamp: ${opts.from}`, opts.json ?? false);
+    }
+    if (opts.to !== undefined && Number.isNaN(new Date(opts.to).getTime())) {
+      exitWithError(`Invalid --to timestamp: ${opts.to}`, opts.json ?? false);
+    }
+
     const result = getTimeline({
       memoryDir,
       from: opts.from,
       to: opts.to,
     });
-    console.log(JSON.stringify(result, null, 2));
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    // Human-readable summary
+    if (result.events.length === 0) {
+      console.log('Timeline: 0 events');
+      return;
+    }
+    const first = result.events[0].timestamp;
+    const last = result.events[result.events.length - 1].timestamp;
+    console.log(`Timeline: ${result.events.length} events from ${first} to ${last}`);
+    const byAction = new Map<string, number>();
+    for (const e of result.events) {
+      byAction.set(e.action, (byAction.get(e.action) ?? 0) + 1);
+    }
+    for (const [action, count] of [...byAction.entries()].sort()) {
+      console.log(`  ${action}: ${count}`);
+    }
   });
 
 // --- mk episode ---

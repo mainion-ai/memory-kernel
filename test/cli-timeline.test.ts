@@ -56,4 +56,32 @@ describe('mk timeline --json', () => {
     const parsed = JSON.parse(out);
     expect(parsed.events).toEqual([]);
   });
+
+  it('outputs a human-readable summary when --json is omitted', () => {
+    if (!fs.existsSync(MK_BIN)) return;
+    const out = execFileSync('node', [MK_BIN, 'timeline', '-d', testDir], { encoding: 'utf-8' });
+    // Must NOT be JSON (no leading `{`)
+    expect(out.trim().startsWith('{')).toBe(false);
+    // Must mention event count
+    expect(out).toMatch(/\d+ event/);
+  });
+
+  it('rejects an invalid --from timestamp', () => {
+    if (!fs.existsSync(MK_BIN)) return;
+    let threw = false;
+    try {
+      execFileSync(
+        'node',
+        [MK_BIN, 'timeline', '-d', testDir, '--from', 'not-a-date', '--json'],
+        { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+    } catch (e) {
+      threw = true;
+      const err = e as { stdout?: Buffer; stderr?: Buffer };
+      // With --json, exitWithError writes the JSON error to stdout; without, to stderr.
+      const msg = String(err.stdout ?? '') + String(err.stderr ?? '');
+      expect(msg).toMatch(/--from/);
+    }
+    expect(threw).toBe(true);
+  });
 });
