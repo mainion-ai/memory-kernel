@@ -70,7 +70,11 @@ export function createAtom(
     classification: opts.classification ?? 'TEAM',
     provenance: opts.provenance,
     links: opts.links,
-    relations: opts.relations,
+    relations: opts.relations?.map((r) => ({
+      ...r,
+      source: r.source ?? ('manual' as const),
+      created_at: r.created_at ?? now,
+    })),
   };
 
   // Validate
@@ -122,19 +126,6 @@ export function createAtom(
         })),
       ];
       writeAtom(atom, fp);
-      indexAtom(opts.memoryDir, atom);
-    }
-  }
-
-  // Caller-supplied relations: default source='manual' and created_at if missing
-  if (opts.relations?.length) {
-    atom.frontmatter.relations = opts.relations.map((r) => ({
-      ...r,
-      source: r.source ?? ('manual' as const),
-      created_at: r.created_at ?? now,
-    }));
-    writeAtom(atom, fp);
-    if (indexExists(opts.memoryDir)) {
       indexAtom(opts.memoryDir, atom);
     }
   }
