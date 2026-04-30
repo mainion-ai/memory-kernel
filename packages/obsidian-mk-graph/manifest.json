@@ -1,0 +1,11 @@
+{
+  "id": "obsidian-mk-graph",
+  "name": "Memory Kernel Graph",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Typed event-sourced graph view for memory-kernel atoms — colors by type, borders by classification, opacity by status. Read-only.",
+  "author": "mainion-ai",
+  "authorUrl": "https://github.com/mainion-ai/memory-kernel",
+  "fundingUrl": "",
+  "isDesktopOnly": true
+}

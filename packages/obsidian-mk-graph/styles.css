@@ -1,0 +1,43 @@
+/* obsidian-mk-graph — see src/tooltip.ts and src/view.ts for what gets styled here */
+
+.mk-graph-view-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: var(--background-primary);
+}
+
+.mk-graph-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  max-width: 320px;
+  z-index: 10;
+  display: none;
+}
+
+.mk-graph-tooltip.is-visible {
+  display: block;
+}
+
+.mk-graph-tooltip-id {
+  font-family: var(--font-monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.mk-graph-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mk-graph-tooltip-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+}
