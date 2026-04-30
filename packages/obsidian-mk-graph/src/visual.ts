@@ -45,8 +45,10 @@ export const CLASSIFICATION_BORDERS: Record<string, string> = {
 
 export const CLASSIFICATION_BORDER_FALLBACK = '#3498DB';
 
-/** Status → opacity (F2 spec §5.2). 'expired' is hidden via 0; the
- *  renderer should filter expired atoms before passing to force-graph. */
+/** Status → opacity (F2 spec §5.2). The renderer should filter expired
+ *  atoms before passing to force-graph; the `expired: 0` entry here is
+ *  defense-in-depth so a missed filter still hides the node rather than
+ *  drawing it visibly. */
 export const STATUS_OPACITY: Record<string, number> = {
   draft:      0.5,
   active:     1.0,
@@ -61,28 +63,32 @@ export const STATUS_OPACITY: Record<string, number> = {
 export const STATUS_OPACITY_FALLBACK = 1.0;
 
 /** Edge-source dash patterns (F2 spec §5.2). [] = solid. */
-export const SOURCE_DASH: Record<string, number[]> = {
-  manual:    [],
-  extracted: [5, 3],
-  enriched:  [2, 3],
-  unknown:   [],
+export const SOURCE_DASH: Record<string, ReadonlyArray<number>> = {
+  manual:    Object.freeze([]),
+  extracted: Object.freeze([5, 3]),
+  enriched:  Object.freeze([2, 3]),
+  unknown:   Object.freeze([]),
 };
 
-export const SOURCE_DASH_FALLBACK: number[] = [];
+export const SOURCE_DASH_FALLBACK: ReadonlyArray<number> = Object.freeze([]);
 
 /** SECRET classification gets a 🔒 glyph badge per spec §5.2. */
 export const SECRET_GLYPH = '🔒';
 
-/** Default per-relation-type weight when relation.weight is undefined.
- *  Mirrors mk-core DEFAULT_TYPE_WEIGHTS (constitution preset shape). */
+/** Per-relation-type wander weights. Mirrors mk-core's
+ *  WEIGHT_PRESETS.constitution from src/wander.ts:51-54 (the plugin's
+ *  default wander preset). Used by F2 edge width when the relation has
+ *  no explicit `weight` set. Keep in sync with src/wander.ts. */
 export const DEFAULT_RELATION_WEIGHT: Record<string, number> = {
-  extends:    1.0,
-  contradicts:1.5,
-  supports:   1.0,
-  caused_by:  1.2,
-  supersedes: 1.3,
-  applied_to: 0.8,
-  related:    0.6,
+  extends:     1.5,
+  supports:    0.7,
+  contradicts: 0.3,
+  caused_by:   0.5,
+  supersedes:  0.2,
+  applied_to:  0.6,
+  related:     0.2,
 };
 
-export const DEFAULT_RELATION_WEIGHT_FALLBACK = 1.0;
+/** Fallback weight for unknown relation types. Matches mk-core's runtime
+ *  fallback (DEFAULT_TYPE_WEIGHTS.related = 0.3 in src/wander.ts:46). */
+export const DEFAULT_RELATION_WEIGHT_FALLBACK = 0.3;
