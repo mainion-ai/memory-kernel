@@ -26,6 +26,27 @@ export interface RendererHandle {
   destroy(): void;
 }
 
+/** Convert "#RRGGBB" / "#RGB" + alpha into "rgba(r,g,b,a)" for force-graph's
+ *  linkColor (which accepts CSS color strings including rgba). */
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex; // unparseable — return as-is; force-graph treats as opaque
+  const h = m[1];
+  let r: number;
+  let g: number;
+  let b: number;
+  if (h.length === 3) {
+    r = parseInt(h[0] + h[0], 16);
+    g = parseInt(h[1] + h[1], 16);
+    b = parseInt(h[2] + h[2], 16);
+  } else {
+    r = parseInt(h.slice(0, 2), 16);
+    g = parseInt(h.slice(2, 4), 16);
+    b = parseInt(h.slice(4, 6), 16);
+  }
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 /**
  * Mount a force-graph renderer into `container`. Returns a handle that
  * cleans up the subscription, the resize observer, and the force-graph
@@ -34,6 +55,7 @@ export interface RendererHandle {
  */
 export function createRenderer(container: HTMLElement, opts: RendererOpts): RendererHandle {
   const tooltip: TooltipHandle = createTooltip(container);
+  const containerStyle = getComputedStyle(container);
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const fg: any = (ForceGraph as any)()(container);
@@ -94,7 +116,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
     if (globalScale > 1.5) {
       const labelSize = 10 / globalScale;
       ctx.font = `${labelSize}px sans-serif`;
-      ctx.fillStyle = '#FFFFFF';
+      ctx.fillStyle = containerStyle.getPropertyValue('--text-normal').trim() || '#FFFFFF';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillText(node.id, node.x ?? 0, (node.y ?? 0) + baseRadius + 2);
@@ -102,11 +124,13 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
     ctx.restore();
   });
 
-  fg.linkColor((link: GraphLink) => f2EdgeColor(linkAsRelation(link)));
+  fg.linkColor((link: GraphLink) => {
+    const rel = linkAsRelation(link);
+    return hexToRgba(f2EdgeColor(rel), f2EdgeOpacity(rel));
+  });
   fg.linkWidth((link: GraphLink) => f2EdgeWidth(linkAsRelation(link)));
   fg.linkLineDash((link: GraphLink) => [...f2EdgeDash(linkAsRelation(link))]);
-  // linkOpacity may or may not be a real method — see Task 10 note.
-  fg.linkOpacity((link: GraphLink) => f2EdgeOpacity(linkAsRelation(link)));
+  // No linkOpacity — force-graph 1.x doesn't expose one; alpha baked into linkColor's rgba.
 
   fg.onNodeHover((node: GraphNode | null, _prev: GraphNode | null) => {
     if (!node) {
