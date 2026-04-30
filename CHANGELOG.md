@@ -9,6 +9,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-04-30
+
+### Fixed — PR #60 follow-up correctness
+
+- **`mk wander --as-of <iso>` correctness.** Events are now pre-filtered by `event.timestamp <= asOf` before replay, producing true point-in-time atom state. Previously the CLI replayed all events and post-filtered atoms by `updated_at <= asOf`, dropping atoms updated after as-of (instead of returning their pre-update form) and silently keeping archive/expire effects from after as-of. Comparison uses numeric timestamps (`Date.parse`) rather than lexicographic strings — `normalizeTimestamp()` truncates frontmatter timestamps to second precision while `--as-of` is typically ms-precision, and `'Z' > '.'` in ASCII would break string ordering.
+- **Shared-namespace inclusion in `mk wander --as-of`.** In isolated mode, shared `events.ndjson` is now replayed and merged with agent atoms (agent wins on ID collision, mirroring `wanderFromFiles` precedence). Previously shared atoms were silently absent from `--as-of` results.
+- **`wanderFromAtoms` decay anchor.** Accepts an optional `now` field on `WanderOptions`; when present, base-level activation decay is anchored to that timestamp instead of `Date.now()`. The CLI threads the as-of millisecond timestamp through, making `--as-of` results stable across wall-clock-distant invocations.
+- **`createAtom` write count.** Caller-supplied `relations` defaults (`source='manual'`, `created_at=now`) are now applied in the initial frontmatter literal, restoring the single-write behaviour. v1.17.0 regressed to two writes (and two `indexAtom` calls) per `createAtom` with explicit relations.
+- **`mk timeline --json` flag honoured.** Default output is now a human-readable summary (event count, time range, action breakdown). Pass `--json` for the full event stream. Previously the flag was advertised but ignored.
+- **`mk timeline` error JSON gating.** `exitWithError(...)` now respects `opts.json` instead of hard-coding JSON output.
+- **`mk timeline --from` / `--to` validation.** Invalid ISO8601 inputs fail fast with a clear message instead of silently producing wrong results from string comparison.
+- **`relations[].weight` schema bounds.** Bounded to `[0, 10]` (`z.number().min(0).max(10)`). Was unbounded in v1.17.0; no existing data affected because the field is brand-new.
+
+### Refactor (no user-visible change)
+
+- **`TimelineEvent` construction.** Built via spread of the source `MemoryEvent` so newly-added event fields automatically flow through to timeline consumers.
+
 ## [1.17.0] — 2026-04-29
 
 ### Added — visualization plugin foundations (Phase 1 of obsidian-mk-graph)
