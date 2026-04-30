@@ -68,35 +68,6 @@ function getDecayWeight(query: RecallQueryInternal): number {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_DECAY_WEIGHT;
 }
 
-function getDecayWeights(query: RecallQueryInternal): Partial<Record<AtomType, number>> {
-  const result: Partial<Record<AtomType, number>> = {};
-  // Layer 1: env var (JSON object mapping AtomType → number)
-  const envRaw = process.env.RECALL_DECAY_WEIGHTS;
-  if (envRaw) {
-    try {
-      const parsed = JSON.parse(envRaw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        for (const [k, v] of Object.entries(parsed)) {
-          if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1) {
-            result[k as AtomType] = v;
-          }
-        }
-      }
-    } catch {
-      process.stderr.write('memory-kernel: RECALL_DECAY_WEIGHTS is not valid JSON, ignoring\n');
-    }
-  }
-  // Layer 2: per-call override (takes precedence over env)
-  if (query.decay_weights) {
-    for (const [k, v] of Object.entries(query.decay_weights)) {
-      if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1) {
-        result[k as AtomType] = v;
-      }
-    }
-  }
-  return result;
-}
-
 function getTypeWeights(query: RecallQueryInternal): Record<AtomType, number> {
   const base = { ...DEFAULT_TYPE_WEIGHTS };
   const envRaw = process.env.RECALL_TYPE_WEIGHTS;
@@ -660,7 +631,6 @@ export function recall(
   // --- Scoring setup (phases 1 + 2) ---
   const halfLife = getDecayHalfLife(query);
   const decayWeight = getDecayWeight(query);
-  const perTypeDecayWeights = getDecayWeights(query);
   const typeWeights = getTypeWeights(query);
   const confFloor = getConfidenceFloor();
 
@@ -746,8 +716,7 @@ export function recall(
         const sem = semanticScoreMap.get(id) ?? 0;
         const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
         const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
-        const atomDecayWeight = perTypeDecayWeights[atom.frontmatter.type] ?? decayWeight;
-        const baseScore = relevance * (1 - atomDecayWeight) + recency * atomDecayWeight;
+        const baseScore = relevance * (1 - decayWeight) + recency * decayWeight;
         const typeWeight = typeWeights[atom.frontmatter.type] ?? 1.0;
         // conf_factor: floor + (1-floor)*confidence — ensures even 0-confidence atoms
         // still contribute at `floor` level rather than being zeroed out
@@ -811,17 +780,14 @@ export function recall(
     }
   } else {
     // No task: status priority first, then temporal decay (or updated_at when decay_weight=0).
-    // Per-type decay weights apply here too: each atom uses its type-specific weight if set.
     filtered.sort((a, b) => {
       const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
       if (statusOrder !== 0) return statusOrder;
-      const dwA = perTypeDecayWeights[a.frontmatter.type] ?? decayWeight;
-      const dwB = perTypeDecayWeights[b.frontmatter.type] ?? decayWeight;
-      if (dwA === 0 && dwB === 0) {
+      if (decayWeight === 0) {
         return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
       }
-      const decayA = dwA === 0 ? 0 : temporalDecay(a.frontmatter.created_at, halfLife) * dwA;
-      const decayB = dwB === 0 ? 0 : temporalDecay(b.frontmatter.created_at, halfLife) * dwB;
+      const decayA = temporalDecay(a.frontmatter.created_at, halfLife);
+      const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
       return decayB - decayA;
     });
 

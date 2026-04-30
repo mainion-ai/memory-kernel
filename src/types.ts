@@ -156,7 +156,6 @@ export interface RecallQuery {
   // Phase 1: Temporal decay (overrides RECALL_DECAY_HALF_LIFE / RECALL_DECAY_WEIGHT env vars)
   decay_half_life?: number; // Half-life in days (default 30)
   decay_weight?: number; // Weight of recency in final score 0-1 (default 0.2)
-  decay_weights?: Partial<Record<AtomType, number>>; // Per-type decay weight overrides (0-1)
   // Phase 2: Type-aware weighting (overrides RECALL_TYPE_WEIGHTS / RECALL_TYPE_RESERVATIONS env vars)
   type_weights?: Partial<Record<AtomType, number>>; // Per-type score multipliers
   type_reservations?: Partial<Record<AtomType, number>>; // Min token slots per type
