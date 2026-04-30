@@ -52,7 +52,7 @@ export const AtomFrontmatterSchema = z.object({
         type: z.enum(RELATION_TYPES),
         created_at: z.string().datetime().optional(),
         confidence: z.number().min(0).max(1).optional(),
-        weight: z.number().optional(),
+        weight: z.number().min(0).max(10).optional(),
         source: z.enum(RELATION_SOURCES).optional(),
         evidence: z.array(z.string()).optional(),
       }),

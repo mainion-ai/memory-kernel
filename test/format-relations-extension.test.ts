@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseAtom, serializeAtom } from '../src/format.js';
+import { validateAtomFrontmatter } from '../src/schema.js';
 import type { Atom } from '../src/types.js';
 
 describe('Relation schema extension', () => {
@@ -159,5 +160,37 @@ Body.
     const out = serializeAtom(atom);
     // Ensure no legacy form is emitted
     expect(out).not.toMatch(/^extends:\s*\n\s*-\s*"\[\[/m);
+  });
+});
+
+describe('Relation weight bounds', () => {
+  const baseFrontmatter = {
+    id: 'FACT-2026-04-29-WEIGHT-aa00',
+    type: 'fact',
+    status: 'active',
+    confidence: 0.9,
+    created_at: '2026-04-29T10:00:00Z',
+    updated_at: '2026-04-29T10:00:00Z',
+    ttl_days: null,
+  };
+
+  const withWeight = (weight: number) => ({
+    ...baseFrontmatter,
+    relations: [{ target: 'FACT-2026-04-28-OTHER-bb01', type: 'extends', weight }],
+  });
+
+  it('rejects a relation with negative weight', () => {
+    const result = validateAtomFrontmatter(withWeight(-1));
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a relation with weight > 10', () => {
+    const result = validateAtomFrontmatter(withWeight(99));
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts boundary values 0 and 10', () => {
+    expect(validateAtomFrontmatter(withWeight(0)).success).toBe(true);
+    expect(validateAtomFrontmatter(withWeight(10)).success).toBe(true);
   });
 });
