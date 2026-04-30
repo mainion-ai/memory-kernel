@@ -1,0 +1,146 @@
+import { App, PluginSettingTab, Setting, type Plugin } from 'obsidian';
+
+export interface NodeChannels {
+  /** Toggle the F2 border-by-classification ring. */
+  border: boolean;
+  /** Toggle the F2 status-driven opacity. */
+  opacity: boolean;
+  /** Toggle the F2 log-citations sizing. */
+  size: boolean;
+}
+
+export interface MkGraphSettings {
+  /** Path to memory-kernel root dir. Relative paths resolve under the vault. */
+  memoryDir: string;
+  /** When true, memoryDir may be an absolute path outside the vault. */
+  memoryDirOutsideVault: boolean;
+  /** Empty string = shared mode. Otherwise routed via agents/<id>/. */
+  agentId: string;
+  /** Phase 2 always force; Phase 3 adds `timeline`, Phase 4 adds `radial-wander`. */
+  defaultLayout: 'force';
+  /** F2 channel toggles — fill (color by type) is always on. */
+  nodeChannels: NodeChannels;
+  /** Hard cap on nodes rendered before graceful degrade kicks in. */
+  maxNodesShown: number;
+}
+
+export const DEFAULT_SETTINGS: MkGraphSettings = {
+  memoryDir: '.mk',
+  memoryDirOutsideVault: false,
+  agentId: '',
+  defaultLayout: 'force',
+  nodeChannels: { border: true, opacity: true, size: true },
+  maxNodesShown: 5000,
+};
+
+/**
+ * Subset of `Plugin` we depend on — keeps this file decoupled from the
+ * concrete plugin class so it can be imported without circular deps.
+ */
+export interface SettingsHost extends Plugin {
+  settings: MkGraphSettings;
+  saveSettings(): Promise<void>;
+}
+
+export class MkGraphSettingTab extends PluginSettingTab {
+  constructor(
+    app: App,
+    private readonly host: SettingsHost,
+  ) {
+    super(app, host);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl('h2', { text: 'Memory Kernel Graph — Settings' });
+
+    new Setting(containerEl)
+      .setName('Memory directory')
+      .setDesc('Path to the memory-kernel store. Relative paths resolve under the vault root.')
+      .addText((t) =>
+        t
+          .setPlaceholder('.mk')
+          .setValue(this.host.settings.memoryDir)
+          .onChange(async (value) => {
+            this.host.settings.memoryDir = value.trim() || '.mk';
+            await this.host.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Memory dir outside vault')
+      .setDesc('Allow an absolute path outside the current Obsidian vault.')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.memoryDirOutsideVault).onChange(async (value) => {
+          this.host.settings.memoryDirOutsideVault = value;
+          await this.host.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Agent ID')
+      .setDesc(
+        'Per-agent isolation. Leave empty for shared mode. When set and agents/<id>/ exists, the plugin reads from that subdirectory.',
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder('(shared)')
+          .setValue(this.host.settings.agentId)
+          .onChange(async (value) => {
+            this.host.settings.agentId = value.trim();
+            await this.host.saveSettings();
+          }),
+      );
+
+    containerEl.createEl('h3', { text: 'F2 visual encoding' });
+
+    new Setting(containerEl)
+      .setName('Border = classification')
+      .setDesc('Show the classification ring (PUBLIC=green, TEAM=blue, PERSONAL=orange, SECRET=red).')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.nodeChannels.border).onChange(async (value) => {
+          this.host.settings.nodeChannels.border = value;
+          await this.host.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Opacity = status')
+      .setDesc('Dim non-active atoms (rejected, archived, superseded).')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.nodeChannels.opacity).onChange(async (value) => {
+          this.host.settings.nodeChannels.opacity = value;
+          await this.host.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Size = log(citations)')
+      .setDesc('Scale node radius by inbound citation count.')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.nodeChannels.size).onChange(async (value) => {
+          this.host.settings.nodeChannels.size = value;
+          await this.host.saveSettings();
+        }),
+      );
+
+    containerEl.createEl('h3', { text: 'Performance' });
+
+    new Setting(containerEl)
+      .setName('Max nodes shown')
+      .setDesc('Cap to keep the graph responsive. Default 5000; raise carefully.')
+      .addText((t) =>
+        t
+          .setPlaceholder('5000')
+          .setValue(String(this.host.settings.maxNodesShown))
+          .onChange(async (value) => {
+            const n = Number(value);
+            if (Number.isFinite(n) && n > 0) {
+              this.host.settings.maxNodesShown = Math.floor(n);
+              await this.host.saveSettings();
+            }
+          }),
+      );
+  }
+}
