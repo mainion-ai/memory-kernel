@@ -70,7 +70,11 @@ export function createAtom(
     classification: opts.classification ?? 'TEAM',
     provenance: opts.provenance,
     links: opts.links,
-    relations: opts.relations,
+    relations: opts.relations?.map((r) => ({
+      ...r,
+      source: r.source ?? ('manual' as const),
+      created_at: r.created_at ?? now,
+    })),
   };
 
   // Validate
@@ -114,7 +118,12 @@ export function createAtom(
     if (allRefs.length > 0) {
       atom.frontmatter.relations = [
         ...(atom.frontmatter.relations ?? []),
-        ...allRefs.map((r) => ({ target: r.targetId, type: r.type })),
+        ...allRefs.map((r) => ({
+          target: r.targetId,
+          type: r.type,
+          source: 'extracted' as const,
+          created_at: now,
+        })),
       ];
       writeAtom(atom, fp);
       indexAtom(opts.memoryDir, atom);

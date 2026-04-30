@@ -316,6 +316,10 @@ export async function enrichRelations(
         );
         if (rel) {
           rel.type = proposal.newType;
+          rel.source = 'enriched';
+          rel.confidence = proposal.confidence;
+          // created_at intentionally unchanged — the underlying edge predates
+          // the reclassification; only its classification changed.
           assertWithinDir(memoryDir, atom.filePath);
           writeAtom(atom, atom.filePath);
           if (indexExists(memoryDir)) {

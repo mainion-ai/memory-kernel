@@ -133,6 +133,14 @@ export type { CheckpointOptions, CheckpointResult } from './checkpoint.js';
 // Replay
 export { replay, replayFromFile } from './replay.js';
 
+// Timeline (denormalised replay-ready event stream)
+export { getTimeline } from './timeline.js';
+export type { TimelineEvent, TimelineOptions, TimelineResult } from './timeline.js';
+
+// Relation source enum (for visualization plugins)
+export { RELATION_SOURCES } from './types.js';
+export type { RelationSource } from './types.js';
+
 // Bootstrap
 export { bootstrapEvents } from './bootstrap.js';
 
@@ -173,7 +181,7 @@ export { renderClaudeMd, renderAgentClaudeMd } from './render.js';
 export type { RenderClaudeMdOptions } from './render.js';
 
 // Wander (spreading activation)
-export { wander, wanderFromFiles } from './wander.js';
+export { wander, wanderFromFiles, wanderFromAtoms, WEIGHT_PRESETS } from './wander.js';
 export type { WanderOptions, WanderResult, Collision, ActivatedAtom } from './wander.js';
 
 // Embeddings

@@ -312,3 +312,33 @@ describe('enrichRelations', () => {
     }
   });
 });
+
+describe('Phase 1 plugin: applied proposals carry source and confidence', () => {
+  it('mutates source=enriched and confidence on apply', async () => {
+    const { sourceId, targetId } = createRelatedPair('phase1-source-confidence');
+
+    mockFetch(JSON.stringify({
+      type: 'extends',
+      confidence: 0.83,
+      reasoning: 'source builds on target',
+    }));
+
+    const result = await enrichRelations(testDir, {
+      dryRun: false,
+      ollamaUrl: 'http://mock:11434',
+      model: 'test-model',
+    });
+
+    expect(result.applied).toBe(1);
+
+    // Re-read the source atom from disk and check the mutated relation
+    const allAtoms = listAtoms(testDir);
+    const reloaded = allAtoms.find((a) => a.frontmatter.id === sourceId);
+    expect(reloaded).toBeDefined();
+    const rel = reloaded!.frontmatter.relations!.find((r) => r.target === targetId);
+    expect(rel).toBeDefined();
+    expect(rel!.type).toBe('extends');
+    expect(rel!.source).toBe('enriched');
+    expect(rel!.confidence).toBe(0.83);
+  });
+});

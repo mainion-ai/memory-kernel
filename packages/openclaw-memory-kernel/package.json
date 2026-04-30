@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
-    "memory-kernel": "^1.16.0"
+    "memory-kernel": "^1.17.1"
   },
   "peerDependencies": {
     "openclaw": ">=2026.3.7"
