@@ -92,17 +92,13 @@ export function getTimeline(opts: TimelineOptions): TimelineResult {
       }
     }
 
+    // Spread the source event, drop atom_snapshot_hash (TimelineEvent is
+    // Omit<MemoryEvent, 'atom_snapshot_hash'>), then override atom_snapshot
+    // with the resolved/decrypted value and attach redacted when applicable.
+    const { atom_snapshot_hash: _hash, ...rest } = ev;
+    void _hash;
     const tEvent: TimelineEvent = {
-      event_id: ev.event_id,
-      timestamp: ev.timestamp,
-      agent_id: ev.agent_id,
-      session_id: ev.session_id,
-      action: ev.action,
-      atom_refs: ev.atom_refs,
-      touched_paths: ev.touched_paths,
-      evidence: ev.evidence,
-      meta: ev.meta,
-      schema_version: ev.schema_version,
+      ...rest,
       atom_snapshot: snapshot,
       ...(redacted ? { redacted: true } : {}),
     };
