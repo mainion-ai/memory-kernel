@@ -78,4 +78,57 @@ describe('GraphState', () => {
     const data = s.toGraphData();
     expect(data.links).toHaveLength(0);
   });
+
+  it('outbound() returns [] for an unknown id even after populate', () => {
+    const s = new GraphState();
+    s.replace([atom('A', ['B']), atom('B')]);
+    expect(s.outbound('C')).toEqual([]);
+  });
+
+  it('subscribe() fires every registered subscriber', () => {
+    const s = new GraphState();
+    const fn1 = vi.fn();
+    const fn2 = vi.fn();
+    s.subscribe(fn1);
+    s.subscribe(fn2);
+    s.replace([atom('A')]);
+    expect(fn1).toHaveBeenCalledTimes(1);
+    expect(fn2).toHaveBeenCalledTimes(1);
+  });
+
+  it('toGraphData() carries relation metadata onto links', () => {
+    const s = new GraphState();
+    const aWithRichRel: ParsedAtom = {
+      id: 'A',
+      type: 'fact',
+      status: 'active',
+      classification: 'TEAM',
+      confidence: 1.0,
+      createdAt: '2026-04-29T10:00:00Z',
+      updatedAt: '2026-04-29T10:00:00Z',
+      ttlDays: null,
+      tags: [],
+      relations: [
+        {
+          target: 'B',
+          type: 'extends',
+          confidence: 0.85,
+          weight: 1.6,
+          source: 'manual',
+        },
+      ],
+      body: '',
+    };
+    s.replace([aWithRichRel, atom('B')]);
+    const data = s.toGraphData();
+    expect(data.links).toHaveLength(1);
+    expect(data.links[0]).toEqual({
+      source: 'A',
+      target: 'B',
+      type: 'extends',
+      confidence: 0.85,
+      weight: 1.6,
+      source_kind: 'manual', // NOT 'source' — provenance is renamed
+    });
+  });
 });

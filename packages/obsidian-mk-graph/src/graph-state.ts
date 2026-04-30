@@ -9,13 +9,19 @@ export interface GraphNode extends ParsedAtom {
   vy?: number;
 }
 
+/** Force-graph link shape. `source` and `target` are atom IDs in the
+ *  input we hand to force-graph; force-graph mutates them to node-object
+ *  references on the first simulation tick, so post-tick consumers should
+ *  treat them as `string | GraphNode`. The provenance (manual / extracted /
+ *  enriched) is carried in `source_kind` because force-graph already owns
+ *  the field name `source`. */
 export interface GraphLink {
   source: string;
   target: string;
   type: string;
   confidence?: number;
   weight?: number;
-  source_kind?: string;   // renamed to avoid colliding with force-graph's `source` field semantics
+  source_kind?: string;
 }
 
 export interface GraphData {
@@ -67,6 +73,8 @@ export class GraphState {
    * synthesizing phantom nodes for dangling references.
    */
   toGraphData(): GraphData {
+    // Shallow spread: force-graph only mutates x/y/vx/vy on the node, never
+    // walks `relations`, so sharing the relation array reference is safe.
     const nodes: GraphNode[] = Array.from(this.atoms.values()).map((a) => ({ ...a }));
     const links: GraphLink[] = [];
     for (const [sourceId, rels] of this.outboundIndex) {
