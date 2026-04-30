@@ -26,7 +26,7 @@ export interface ParsedRelation {
   evidence?: string[];
 }
 
-const RELATIONS_SECTION_RE = /\n##\s+Relations\s*\n[\s\S]*$/m;
+const RELATIONS_SECTION_RE = /(?:^|\n)##\s+Relations\s*\n[\s\S]*$/m;
 
 /**
  * Parse a memory-kernel atom markdown file into a renderer-friendly shape.
@@ -77,12 +77,7 @@ export function parseAtomFile(content: string, filePath?: string): ParsedAtom | 
     confidence: typeof fm.confidence === 'number' ? fm.confidence : 1.0,
     createdAt: typeof fm.created_at === 'string' ? fm.created_at : '',
     updatedAt: typeof fm.updated_at === 'string' ? fm.updated_at : '',
-    ttlDays:
-      fm.ttl_days === null
-        ? null
-        : typeof fm.ttl_days === 'number'
-        ? fm.ttl_days
-        : null,
+    ttlDays: typeof fm.ttl_days === 'number' ? fm.ttl_days : null,
     tags,
     relations,
     body,

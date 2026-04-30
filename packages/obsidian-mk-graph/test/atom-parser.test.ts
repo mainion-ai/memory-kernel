@@ -67,28 +67,65 @@ Body.
     });
   });
 
-  it('defaults missing optional fields gracefully', () => {
+  it('defaults missing optional fields gracefully (id/type/status only)', () => {
     const md = `---
 id: BELI-2026-04-29-MIN-aa00
 type: belief
 status: active
-created_at: "2026-04-29T10:00:00Z"
-updated_at: "2026-04-29T10:00:00Z"
-ttl_days: null
+---
+
+Body content.
+`;
+    const atom = parseAtomFile(md);
+    expect(atom).not.toBeNull();
+    expect(atom!.classification).toBe('TEAM'); // F2 default per spec §5.2
+    expect(atom!.tags).toEqual([]);
+    expect(atom!.relations).toEqual([]);
+    expect(atom!.confidence).toBe(1.0);
+    expect(atom!.ttlDays).toBeNull();
+    expect(atom!.createdAt).toBe('');
+    expect(atom!.updatedAt).toBe('');
+    expect(atom!.body.trim()).toBe('Body content.');
+  });
+
+  it('preserves numeric ttl_days', () => {
+    const md = `---
+id: FACT-2026-04-29-TTL-aa00
+type: fact
+status: active
+ttl_days: 30
 ---
 
 Body.
 `;
     const atom = parseAtomFile(md);
-    expect(atom!.classification).toBe('TEAM'); // F2 default per spec §5.2
-    expect(atom!.tags).toEqual([]);
-    expect(atom!.relations).toEqual([]);
+    expect(atom!.ttlDays).toBe(30);
   });
 
-  it('returns null for missing required fields (id/type/status) instead of throwing', () => {
+  it('returns null when `id` is missing', () => {
     const md = `---
 type: fact
 status: active
+---
+Body.
+`;
+    expect(parseAtomFile(md)).toBeNull();
+  });
+
+  it('returns null when `type` is missing', () => {
+    const md = `---
+id: FACT-2026-04-29-NOTYPE-aa00
+status: active
+---
+Body.
+`;
+    expect(parseAtomFile(md)).toBeNull();
+  });
+
+  it('returns null when `status` is missing', () => {
+    const md = `---
+id: FACT-2026-04-29-NOSTATUS-aa00
+type: fact
 ---
 Body.
 `;
@@ -122,5 +159,27 @@ Real body content.
 `;
     const atom = parseAtomFile(md);
     expect(atom!.body.trim()).toBe('Real body content.');
+  });
+
+  it('drops relations whose target or type is not a string', () => {
+    const md = `---
+id: FACT-2026-04-29-BAD-aa00
+type: fact
+status: active
+relations:
+  - target: 12345
+    type: extends
+  - target: FACT-2026-04-28-OK-bb01
+    type: 7
+  - target: FACT-2026-04-28-KEEP-cc02
+    type: supports
+---
+
+Body.
+`;
+    const atom = parseAtomFile(md);
+    expect(atom!.relations).toEqual([
+      { target: 'FACT-2026-04-28-KEEP-cc02', type: 'supports' },
+    ]);
   });
 });
