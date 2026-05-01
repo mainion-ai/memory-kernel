@@ -2,6 +2,17 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.1] — 2026-04-30
+
+### Changed
+- **`loadSettings` now survives a corrupt/unreadable `data.json`.** Falls back to defaults and logs a `console.warn` instead of failing plugin onload.
+- **Click on an atom outside the vault now shows a Notice** explaining why Obsidian can't open it (was a silent no-op, common when `memoryDirOutsideVault: true`).
+- **Documented:** changing `agentId` in settings requires closing and reopening the graph view (the file watcher binds at view-open time).
+
+### Internal
+- Extracted `hexToRgba` from `renderer.ts` into `src/color.ts` with unit tests.
+- Dropped unused `js-yaml` / `@types/js-yaml` deps; gray-matter handles YAML parsing.
+
 ## [0.1.0] — 2026-04-30
 
 ### Added
