@@ -14,6 +14,7 @@ import { countIncomingCitations } from './citations.js';
 import type { MkGraphSettings } from './settings.js';
 import { createTooltip, type TooltipHandle } from './tooltip.js';
 import { SECRET_GLYPH } from './visual.js';
+import { hexToRgba } from './color.js';
 import type { ParsedAtom, ParsedRelation } from './atom-parser.js';
 
 export interface RendererOpts {
@@ -24,27 +25,6 @@ export interface RendererOpts {
 
 export interface RendererHandle {
   destroy(): void;
-}
-
-/** Convert "#RRGGBB" / "#RGB" + alpha into "rgba(r,g,b,a)" for force-graph's
- *  linkColor (which accepts CSS color strings including rgba). */
-function hexToRgba(hex: string, alpha: number): string {
-  const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex);
-  if (!m) return hex; // unparseable — return as-is; force-graph treats as opaque
-  const h = m[1];
-  let r: number;
-  let g: number;
-  let b: number;
-  if (h.length === 3) {
-    r = parseInt(h[0] + h[0], 16);
-    g = parseInt(h[1] + h[1], 16);
-    b = parseInt(h[2] + h[2], 16);
-  } else {
-    r = parseInt(h.slice(0, 2), 16);
-    g = parseInt(h.slice(2, 4), 16);
-    b = parseInt(h.slice(4, 6), 16);
-  }
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 /**
