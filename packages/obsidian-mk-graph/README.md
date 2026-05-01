@@ -48,7 +48,7 @@ Reload Obsidian and enable the plugin.
 |---|---|---|
 | Memory directory | `.mk` | Path to memory-kernel store. Relative paths resolve under the vault. |
 | Memory dir outside vault | off | Allow absolute paths outside the current vault. |
-| Agent ID | (empty) | Per-agent isolation — when set and `agents/<id>/` exists, the plugin reads from there. |
+| Agent ID | (empty) | Per-agent isolation — when set and `agents/<id>/` exists, the plugin reads from there. **Changing this setting requires closing and reopening the graph view** so the file watcher rebinds to the new directory. |
 | Border = classification | on | Toggle the F2 classification ring. |
 | Opacity = status | on | Toggle the F2 status dimming. |
 | Size = log(citations) | on | Toggle the F2 log-scale node sizing. |

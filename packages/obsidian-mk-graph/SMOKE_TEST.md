@@ -40,7 +40,7 @@ Run before tagging `obsidian-mk-graph@0.1.0`. All steps must pass.
 - [ ] **S8: Click opens atom file.** Click any node — the atom .md file opens in the main pane.
 - [ ] **S9: Settings persist.** Open settings, toggle "Border = classification" off, close + reopen Obsidian — toggle remains off, borders stay hidden.
 - [ ] **S10: Live mode picks up changes.** With the view open, edit one atom file from disk (`echo >> .mk/ENTITIES/<one>.md`), save — within ~1 second, the graph re-renders.
-- [ ] **S11: Per-agent isolation routes correctly.** Create `.mk/agents/test/ENTITIES/<one-new>.md`, set Agent ID = `test` in settings. Reload graph — only the new atom is shown (not the 20 base atoms).
+- [ ] **S11: Per-agent isolation routes correctly.** Create `.mk/agents/test/ENTITIES/<one-new>.md`, set Agent ID = `test` in settings, then **close and reopen the graph view** (the file watcher binds at view-open time and doesn't auto-rewatch on settings changes). Only the new atom should be shown — not the 20 base atoms.
 - [ ] **S12: Reload command works.** Use the command palette → "Reload Memory Kernel Graph from disk" — graph re-renders without restarting Obsidian.
 - [ ] **S13: maxNodesShown degrades gracefully.** Set max to 10. Reload graph. Only 10 nodes render and they're the most-cited (highest inbound).
 - [ ] **S14: View closes cleanly.** Close the leaf, reopen via command. No memory leak warning in console; no orphaned canvas elements (inspect DOM).
