@@ -41,7 +41,12 @@ export default class MkGraphPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    const stored = (await this.loadData()) as Partial<MkGraphSettings> | null;
+    let stored: Partial<MkGraphSettings> | null = null;
+    try {
+      stored = (await this.loadData()) as Partial<MkGraphSettings> | null;
+    } catch (e) {
+      console.warn('mk-graph: loadSettings failed, using defaults', e);
+    }
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...(stored ?? {}),

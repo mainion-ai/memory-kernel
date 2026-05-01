@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, normalizePath, type App } from 'obsidian';
+import { ItemView, Notice, WorkspaceLeaf, normalizePath, type App } from 'obsidian';
 import path from 'node:path';
 import { GraphState } from './graph-state.js';
 import { readVault, watchVault, resolveMemoryDir, type Watcher } from './data-loader.js';
@@ -121,6 +121,14 @@ export class MkGraphView extends ItemView {
     let rel = atom.filePath;
     if (rel.startsWith(vaultRoot)) {
       rel = rel.slice(vaultRoot.length).replace(/^[/\\]+/, '');
+    } else {
+      // Atom lives outside the vault (likely memoryDirOutsideVault=true).
+      // Obsidian can't open files it doesn't know about — surface a Notice
+      // so the click doesn't silently fail.
+      new Notice(
+        `mk-graph: atom is outside the vault (${atom.filePath}); Obsidian can only open files inside the vault.`,
+      );
+      return;
     }
     // Open in a new tab so the graph view stays visible alongside the atom.
     await this.host.app.workspace.openLinkText(normalizePath(rel), '', 'tab');
