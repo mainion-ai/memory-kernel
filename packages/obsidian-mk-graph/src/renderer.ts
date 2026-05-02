@@ -43,14 +43,27 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
 
   fg.backgroundColor('rgba(0,0,0,0)');
   fg.nodeRelSize(1);
-  // force-graph computes hit-test radius as sqrt(val) * nodeRelSize. Without
-  // a val, hover detection fails (undefined → NaN radius → no hits → no
-  // tooltip). Set val to radius^2 so hit radius = sqrt(r^2) * 1 = r.
+  // force-graph uses sqrt(val) * nodeRelSize for force-layout sizing
+  // (collision radius, link distance scaling). Keep val accurate for that
+  // even though hit-testing now goes through nodePointerAreaPaint below.
   fg.nodeVal((node: GraphNode) => {
     const radius = opts.settings.nodeChannels.size
       ? f2NodeSize(citations.get(node.id) ?? 0)
       : 6;
     return radius * radius;
+  });
+  // nodeCanvasObjectMode('replace') tells force-graph we paint visuals
+  // ourselves — but it ALSO disables the default hit-test mask, so we
+  // must paint an explicit pointer-area shape too. Without this,
+  // onNodeHover never fires regardless of nodeVal.
+  fg.nodePointerAreaPaint((node: GraphNode, color: string, ctx: CanvasRenderingContext2D) => {
+    const radius = opts.settings.nodeChannels.size
+      ? f2NodeSize(citations.get(node.id) ?? 0)
+      : 6;
+    ctx.beginPath();
+    ctx.arc(node.x ?? 0, node.y ?? 0, radius, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.fill();
   });
   fg.linkDirectionalArrowLength(0); // arrows added in Phase 4 if useful
   fg.cooldownTicks(120);
