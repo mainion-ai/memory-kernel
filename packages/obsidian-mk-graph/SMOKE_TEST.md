@@ -12,9 +12,9 @@ Run before tagging `obsidian-mk-graph@0.1.x`. All steps must pass.
    ```
    (`<repo>` = your local memory-kernel checkout root.)
 
-2. Make a temporary vault:
+2. Make a smoke-test vault somewhere persistent (`/tmp/` gets reaped between sessions on macOS):
    ```bash
-   mkdir -p /tmp/mk-graph-smoke && cd /tmp/mk-graph-smoke
+   mkdir -p ~/mk-graph-smoke && cd ~/mk-graph-smoke
    ```
 
 3. Copy the fixture as a NON-DOT memory directory. Obsidian doesn't index dot-folders, so the conventional `.mk` won't be clickable in S8 — use `memory/` instead for the smoke walk:
@@ -31,7 +31,7 @@ Run before tagging `obsidian-mk-graph@0.1.x`. All steps must pass.
    ln -sf <repo>/packages/obsidian-mk-graph/styles.css .obsidian/plugins/obsidian-mk-graph/styles.css
    ```
 
-5. Open `/tmp/mk-graph-smoke` in Obsidian. Trust the vault. Settings → Community plugins → enable "Memory Kernel Graph". Then click the gear icon next to the plugin name → set **Memory directory** to `memory` (override the `.mk` default for this smoke walk).
+5. Open `~/mk-graph-smoke` in Obsidian. Trust the vault. Settings → Community plugins → enable "Memory Kernel Graph". Then click the gear icon next to the plugin name → set **Memory directory** to `memory` (override the `.mk` default for this smoke walk).
 
 ## Checklist
 
@@ -57,16 +57,32 @@ Run before tagging `obsidian-mk-graph@0.1.x`. All steps must pass.
 
 - [ ] **S9: Settings persist.** Settings (gear icon, bottom-left) → "Community plugins" → click the **gear/cog icon** next to "Memory Kernel Graph" → toggle "Border = classification" off. Close Obsidian completely (`Cmd+Q`), reopen, return to the same settings panel — the toggle remains off, and the graph view shows nodes without classification rings.
 
-- [ ] **S10: Live mode picks up changes.** With the graph view open, append a newline to one fixture atom from the terminal:
+- [ ] **S10: Live mode picks up changes.** With the graph view open, run this command — it sleeps 3 seconds then creates a new atom. Switch focus to Obsidian within those 3 seconds and watch a fresh SECRET node (with a 🔒 glyph) pop into the graph:
   ```bash
-  echo "" >> /tmp/mk-graph-smoke/memory/ENTITIES/FACT-2026-04-01-FIX00-aa00.md
-  ```
-  Within ~1 second, the graph re-renders (force-graph re-runs the simulation; you'll see nodes settle).
+  sleep 3 && cat > ~/mk-graph-smoke/memory/ENTITIES/FACT-2026-05-02-LIVE-zz99.md <<'EOF'
+  ---
+  id: FACT-2026-05-02-LIVE-zz99
+  type: fact
+  status: active
+  confidence: 1.0
+  created_at: "2026-05-02T12:00:00Z"
+  updated_at: "2026-05-02T12:00:00Z"
+  ttl_days: null
+  classification: SECRET
+  ---
 
-- [ ] **S11: Per-agent isolation routes correctly.** Create a new atom under an agent-specific subdirectory:
+  Live-mode test atom — should appear immediately in the graph.
+  EOF
+  ```
+  Clean up after the test:
   ```bash
-  mkdir -p /tmp/mk-graph-smoke/memory/agents/test/ENTITIES
-  cat > /tmp/mk-graph-smoke/memory/agents/test/ENTITIES/FACT-2026-05-02-AGENT-bb00.md <<'EOF'
+  rm ~/mk-graph-smoke/memory/ENTITIES/FACT-2026-05-02-LIVE-zz99.md
+  ```
+
+- [ ] **S11: Per-agent isolation routes correctly.** Create a new atom under an agent-specific subdirectory, then verify the file actually landed before testing the routing:
+  ```bash
+  mkdir -p ~/mk-graph-smoke/memory/agents/test/ENTITIES
+  cat > ~/mk-graph-smoke/memory/agents/test/ENTITIES/FACT-2026-05-02-AGENT-bb00.md <<'EOF'
   ---
   id: FACT-2026-05-02-AGENT-bb00
   type: fact
@@ -80,14 +96,31 @@ Run before tagging `obsidian-mk-graph@0.1.x`. All steps must pass.
 
   Single atom only visible when Agent ID = test.
   EOF
+
+  # VERIFY the heredoc actually wrote the file:
+  ls -la ~/mk-graph-smoke/memory/agents/test/ENTITIES/
   ```
-  In plugin settings, set **Agent ID** to `test`. **Close and reopen the graph view** (the file watcher binds at view-open time and doesn't auto-rewatch on settings changes). Only the new atom should be shown — not the 20 base atoms.
+  The `ls` output should show exactly one file: `FACT-2026-05-02-AGENT-bb00.md`. If it shows nothing or a different name, the heredoc failed — re-run the command and check your shell.
+
+  Once the file exists: in plugin settings, set **Agent ID** to `test`. **Close and reopen the graph view** (the file watcher binds at view-open time and doesn't auto-rewatch on settings changes). Only the new atom should be shown — not the 20 base atoms. Clean up:
+  ```bash
+  rm -rf ~/mk-graph-smoke/memory/agents
+  ```
+  Reset Agent ID to empty in plugin settings.
 
 - [ ] **S12: Reload command works.** Open the command palette with `Cmd+P` (macOS) or `Ctrl+P` (Linux/Windows), type "Memory Kernel" — the palette filters to "Reload Memory Kernel Graph from disk". Press Enter. The graph re-renders without restarting Obsidian.
 
 - [ ] **S13: maxNodesShown degrades gracefully.** Plugin settings → **Max nodes shown** field at the bottom. Change `5000` to `10`. Open the command palette → "Reload Memory Kernel Graph from disk". Only 10 nodes render — the most-cited 10. (Reset to 5000 when done.)
 
-- [ ] **S14: View closes cleanly.** Open DevTools (`Cmd+Option+I` macOS / `Ctrl+Shift+I`). Switch to the Elements tab, search the DOM tree (`Cmd+F`) for `mk-graph-tooltip`. You should see one match. Close the graph leaf (right-click leaf header → Close, or focus the leaf and `Cmd+W`). Re-search for `mk-graph-tooltip` — should be 0 matches. Switch to Console — no `Memory leak` or `Detached` warnings. Reopen the graph via ribbon. View renders cleanly with a fresh tooltip element.
+- [ ] **S14: View closes cleanly.** Step-by-step:
+  1. Open Obsidian's DevTools: `Cmd+Option+I` on macOS, `Ctrl+Shift+I` on Linux/Windows. A panel attaches to the bottom or right of the Obsidian window.
+  2. In the DevTools tab strip at the top, click **Elements** (leftmost tab — looks like `<>` or `Elements`). If you don't see it, click the `>>` overflow chevron to reveal hidden tabs.
+  3. With the graph view open, click anywhere inside the Elements tree, then press `Cmd+F` (macOS) / `Ctrl+F` (other) to summon the DOM search box.
+  4. Type `mk-graph-tooltip` — you should see exactly one match (the tooltip div mounted by the renderer).
+  5. Close the graph leaf: focus it (click the graph view), then `Cmd+W` (macOS) / `Ctrl+W`. Or right-click the leaf's tab header → Close.
+  6. Press `Cmd+F` again in Elements and search `mk-graph-tooltip` — should be 0 matches now.
+  7. Click the **Console** tab in DevTools. No `Memory leak`, `Detached`, or red error messages should appear.
+  8. Reopen the graph via the ribbon icon. The view should render cleanly. Re-search `mk-graph-tooltip` in Elements — exactly one match again (a fresh tooltip element).
 
 ## Pass/fail
 
