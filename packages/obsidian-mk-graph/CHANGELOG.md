@@ -2,6 +2,17 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.3] — 2026-05-02
+
+### Fixed
+- **Hover tooltip now actually shows.** v0.1.2 set `nodeVal` to fix hit-testing, but with `nodeCanvasObjectMode('replace')` force-graph also requires an explicit `nodePointerAreaPaint` callback to populate its off-screen hit-test mask. Without it, `onNodeHover` never fires regardless of `nodeVal`. Paint the same circle into the supplied hit-test color. (Found by smoke walker: S3 still failing after v0.1.2.)
+
+### Documentation
+- `SMOKE_TEST.md` now uses `~/mk-graph-smoke/` instead of `/tmp/mk-graph-smoke/` (macOS reaps `/tmp/` between sessions).
+- S10 rewritten as a sleep+create-new-atom test with visible SECRET node pop-in (was an append-newline that made no visible change).
+- S11 adds an `ls` verification step before the routing test (a walker's heredoc silently failed and the missing file was hard to diagnose).
+- S14 rewritten with explicit DevTools step-by-step instructions including the Elements-tab overflow note.
+
 ## [0.1.2] — 2026-05-02
 
 ### Fixed
