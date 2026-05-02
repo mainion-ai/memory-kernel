@@ -46,7 +46,7 @@ Reload Obsidian and enable the plugin.
 
 | Setting | Default | What it does |
 |---|---|---|
-| Memory directory | `.mk` | Path to memory-kernel store. Relative paths resolve under the vault. |
+| Memory directory | `.mk` | Path to memory-kernel store. Relative paths resolve under the vault. **Note:** Obsidian deliberately skips dot-folders during vault indexing, so atoms in the default `.mk/` are not clickable (click-to-open relies on Obsidian's vault index). To enable clicks, point this at a non-dot folder like `memory` or `mk-store`. |
 | Memory dir outside vault | off | Allow absolute paths outside the current vault. |
 | Agent ID | (empty) | Per-agent isolation — when set and `agents/<id>/` exists, the plugin reads from there. **Changing this setting requires closing and reopening the graph view** so the file watcher rebinds to the new directory. |
 | Border = classification | on | Toggle the F2 classification ring. |
@@ -58,6 +58,12 @@ Reload Obsidian and enable the plugin.
 
 - **Open Memory Kernel Graph** — opens the graph view in the right pane.
 - **Reload Memory Kernel Graph from disk** — re-reads `ENTITIES/*.md`.
+
+## Known caveats
+
+- **Dot-folder memory directories aren't clickable.** Obsidian skips dot-folders (`.mk`, `.memory`, etc.) when building its vault file index. The plugin reads atom files fine via Node `fs`, so the graph renders, but clicking a node calls `app.workspace.openLinkText` which depends on Obsidian's index. The plugin shows a clear Notice when it detects this case. Workaround: rename your memory dir to a non-dot path (e.g. `memory/`) and update the "Memory directory" setting accordingly.
+- **Changing `Agent ID` requires reopening the graph view.** The file watcher binds at view-open time. Updating the setting persists the new value but doesn't rewatch — close and reopen the leaf to pick up the new agent.
+- **Mobile not supported.** `isDesktopOnly: true` in the manifest. Mobile compatibility is a Phase 5+ concern.
 
 ## Roadmap
 
