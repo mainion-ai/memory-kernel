@@ -130,6 +130,19 @@ export class MkGraphView extends ItemView {
       );
       return;
     }
+
+    // Obsidian skips dot-folders during vault indexing, so files inside
+    // them (e.g. the conventional `.mk/` memory dir) aren't reachable via
+    // openLinkText — the call falls through to "create a new file" and
+    // collides with the existing folder. Detect and warn rather than fail
+    // silently with "Folder already exists".
+    if (rel.split(/[/\\]/).some((seg) => seg.startsWith('.'))) {
+      new Notice(
+        `mk-graph: atom path "${rel}" is in a dot-folder. Obsidian doesn't index dot-folders, so it can't open the file. Move or rename the memory directory (e.g. "memory" instead of ".mk") to make atoms clickable.`,
+      );
+      return;
+    }
+
     // Open in a new tab so the graph view stays visible alongside the atom.
     await this.host.app.workspace.openLinkText(normalizePath(rel), '', 'tab');
   }
