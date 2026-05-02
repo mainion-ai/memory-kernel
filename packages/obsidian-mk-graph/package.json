@@ -1,6 +1,6 @@
 {
   "name": "obsidian-mk-graph",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Obsidian plugin: typed graph view for memory-kernel",
   "main": "main.js",
   "type": "module",

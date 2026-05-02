@@ -2,6 +2,17 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.2] — 2026-05-02
+
+### Fixed
+- **Hover tooltip now shows.** Force-graph hit-testing requires `node.val` to compute the hover radius; the renderer's custom `nodeCanvasObject` had been painting visuals without setting `val`, so `onNodeHover` never fired. Set `nodeVal` to the squared visual radius. (Found by smoke walker: S3.)
+- **Click on atom now surfaces a clear Notice when the file is in a dot-folder** instead of silently failing with Obsidian's "Folder already exists" error. (Found by smoke walker: S8.)
+- Bumped tooltip `z-index` from 10 to 1000 as defense-in-depth against force-graph stacking contexts.
+
+### Documentation
+- Rewrote `SMOKE_TEST.md` with explicit CLI for every step (S10/S11), literal Obsidian UI paths (S9/S12/S13/S14), and walker-friendly expectations (S5/S7). Setup now uses `memory/` instead of `.mk/` so the dot-folder caveat doesn't block the walk.
+- Added a "Known caveats" section to README covering the dot-folder issue, the agentId view-reopen requirement, and the desktop-only constraint.
+
 ## [0.1.1] — 2026-04-30
 
 ### Changed
