@@ -70,51 +70,15 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   //
   // Position: fixed in body with size + position tracked against the
   // container's getBoundingClientRect.
-  console.log('[mk-graph] createRenderer: starting overlay mount');
-  console.log('[mk-graph] container:', {
-    tag: container.tagName,
-    cls: container.className,
-    inDom: container.isConnected,
-    rect: container.getBoundingClientRect(),
-  });
-
   const doc = container.ownerDocument;
-  console.log('[mk-graph] doc:', { hasBody: !!doc.body, bodyTag: doc.body?.tagName });
-
   const overlayLayer = doc.createElement('div');
   overlayLayer.classList.add('mk-graph-overlay-layer');
-  console.log('[mk-graph] overlay element created:', overlayLayer);
-
   try {
     doc.body.appendChild(overlayLayer);
-    console.log('[mk-graph] overlay appended. parent:', overlayLayer.parentElement?.tagName, 'inDom:', overlayLayer.isConnected);
   } catch (e) {
-    console.error('[mk-graph] OVERLAY APPENDCHILD THREW:', e);
+    // Extremely rare — body should always exist by the time the view opens.
+    console.warn('mk-graph: failed to attach overlay to document.body', e);
   }
-
-  // Watch for the overlay being removed by anything (force-graph reaching
-  // into body, an Obsidian lifecycle hook, etc.).
-  const overlayMutationObserver = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      m.removedNodes.forEach((removed) => {
-        if (removed === overlayLayer) {
-          console.warn('[mk-graph] OVERLAY REMOVED FROM:', m.target);
-        }
-      });
-    }
-  });
-  overlayMutationObserver.observe(doc.body, { childList: true });
-
-  // Verify after the next microtask + after one animation frame.
-  Promise.resolve().then(() => {
-    console.log('[mk-graph] overlay after microtask. inDom:', overlayLayer.isConnected, 'parent:', overlayLayer.parentElement?.tagName);
-  });
-  requestAnimationFrame(() => {
-    console.log('[mk-graph] overlay after rAF. inDom:', overlayLayer.isConnected, 'parent:', overlayLayer.parentElement?.tagName);
-  });
-  setTimeout(() => {
-    console.log('[mk-graph] overlay after 100ms. inDom:', overlayLayer.isConnected, 'parent:', overlayLayer.parentElement?.tagName);
-  }, 100);
 
   const updateOverlayPosition = (): void => {
     const rect = container.getBoundingClientRect();
@@ -124,22 +88,13 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
     overlayLayer.style.height = `${rect.height}px`;
   };
   updateOverlayPosition();
-  console.log('[mk-graph] overlay position set to:', {
-    left: overlayLayer.style.left,
-    top: overlayLayer.style.top,
-    width: overlayLayer.style.width,
-    height: overlayLayer.style.height,
-  });
-
   const overlayResizeObserver = new ResizeObserver(updateOverlayPosition);
   overlayResizeObserver.observe(container);
   window.addEventListener('resize', updateOverlayPosition);
   window.addEventListener('scroll', updateOverlayPosition, true); // capture: catches nested scrolls
 
   const tooltip: TooltipHandle = createTooltip(overlayLayer);
-  console.log('[mk-graph] tooltip created. parent:', overlayLayer.children.length, 'children');
   const legend: LegendHandle = createLegend(overlayLayer, { visible: opts.settings.showLegend });
-  console.log('[mk-graph] legend created. showLegend setting:', opts.settings.showLegend, 'overlay children:', overlayLayer.children.length);
 
   fg.backgroundColor('rgba(0,0,0,0)');
   fg.nodeRelSize(1);
@@ -275,17 +230,15 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
 
   return {
     destroy(): void {
-      console.log('[mk-graph] destroy() called');
       container.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('resize', updateOverlayPosition);
       window.removeEventListener('scroll', updateOverlayPosition, true);
       overlayResizeObserver.disconnect();
-      overlayMutationObserver.disconnect();
       unsubscribe();
       resizeObserver.disconnect();
       tooltip.destroy();
       legend.destroy();
-      overlayLayer.remove();
+      overlayLayer.remove(); // safe even though it's in body, not container
       fg._destructor?.();
       while (container.firstChild) container.removeChild(container.firstChild);
     },

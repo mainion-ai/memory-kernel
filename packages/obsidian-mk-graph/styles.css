@@ -165,13 +165,8 @@
   position: fixed;
   pointer-events: none;
   isolation: isolate;
-  z-index: 99999;
+  z-index: 9999;
   /* width / height / left / top set via renderer.ts */
-
-  /* DIAGNOSTIC v0.1.8 — visible red border so we can SEE the overlay
-   * even if positioning is slightly off. Remove in v0.1.9. */
-  border: 2px solid red;
-  background: rgba(255, 0, 0, 0.05);
 }
 
 .mk-graph-overlay-layer > * {
