@@ -136,6 +136,20 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   fg.linkLineDash((link: GraphLink) => [...f2EdgeDash(linkAsRelation(link))]);
   // No linkOpacity — force-graph 1.x doesn't expose one; alpha baked into linkColor's rgba.
 
+  // Track the latest cursor position in container-local coordinates so the
+  // tooltip can be placed at the cursor on hover. Avoids graph2ScreenCoords,
+  // whose reference frame in Obsidian's Electron renderer is unreliable
+  // (force-graph wraps the canvas in its own div with positioning that
+  // doesn't always match the container origin).
+  let lastCursorX = 0;
+  let lastCursorY = 0;
+  const onMouseMove = (ev: MouseEvent): void => {
+    const rect = container.getBoundingClientRect();
+    lastCursorX = ev.clientX - rect.left;
+    lastCursorY = ev.clientY - rect.top;
+  };
+  container.addEventListener('mousemove', onMouseMove);
+
   fg.onNodeHover((node: GraphNode | null, _prev: GraphNode | null) => {
     if (!node) {
       tooltip.hide();
@@ -143,8 +157,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
       return;
     }
     container.style.cursor = 'pointer';
-    const screen = fg.graph2ScreenCoords(node.x ?? 0, node.y ?? 0);
-    tooltip.show(node, screen.x, screen.y, citations.get(node.id) ?? 0);
+    tooltip.show(node, lastCursorX, lastCursorY, citations.get(node.id) ?? 0);
   });
 
   fg.onNodeClick((node: GraphNode) => {
@@ -164,6 +177,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
 
   return {
     destroy(): void {
+      container.removeEventListener('mousemove', onMouseMove);
       unsubscribe();
       resizeObserver.disconnect();
       tooltip.destroy();
