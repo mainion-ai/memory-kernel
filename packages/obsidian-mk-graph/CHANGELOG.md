@@ -2,6 +2,11 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.6] — 2026-05-03
+
+### Fixed
+- **Tooltip and legend now visible.** v0.1.5's cursor-based tooltip positioning was correct on its own merits, but neither tooltip nor legend were rendering in the user's smoke walk because force-graph's canvas wrapper sometimes creates a stacking context in Obsidian's Electron renderer that traps absolute-positioned siblings beneath it. Mount both overlays in a dedicated layer (`.mk-graph-overlay-layer`) that's a later sibling of force-graph's wrapper, with `isolation: isolate` so the layer is self-contained. (Found by smoke walker: S3 still failing in v0.1.5 + legend never visible since v0.1.4.)
+
 ## [0.1.5] — 2026-05-03
 
 ### Fixed
