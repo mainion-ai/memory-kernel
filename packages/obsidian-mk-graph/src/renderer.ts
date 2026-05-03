@@ -35,13 +35,22 @@ export interface RendererHandle {
  * before unmounting the container (the view does this in `onClose`).
  */
 export function createRenderer(container: HTMLElement, opts: RendererOpts): RendererHandle {
-  const tooltip: TooltipHandle = createTooltip(container);
-  const legend: LegendHandle = createLegend(container, { visible: opts.settings.showLegend });
   const containerStyle = getComputedStyle(container);
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const fg: any = (ForceGraph as any)()(container);
   /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // Mount our overlays in a dedicated layer that's a LATER sibling of
+  // force-graph's wrapper. Combined with `isolation: isolate` in CSS,
+  // this guarantees the tooltip and legend render above the canvas
+  // regardless of any stacking contexts force-graph creates internally.
+  const overlayLayer = container.ownerDocument.createElement('div');
+  overlayLayer.classList.add('mk-graph-overlay-layer');
+  container.appendChild(overlayLayer);
+
+  const tooltip: TooltipHandle = createTooltip(overlayLayer);
+  const legend: LegendHandle = createLegend(overlayLayer, { visible: opts.settings.showLegend });
 
   fg.backgroundColor('rgba(0,0,0,0)');
   fg.nodeRelSize(1);
@@ -182,6 +191,10 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
       resizeObserver.disconnect();
       tooltip.destroy();
       legend.destroy();
+      // Removing overlayLayer is redundant with the firstChild loop below
+      // but explicit so the intent is clear if a future contributor adds
+      // logic to skip non-force-graph children in the loop.
+      overlayLayer.remove();
       fg._destructor?.();
       while (container.firstChild) container.removeChild(container.firstChild);
     },
