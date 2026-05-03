@@ -25,6 +25,8 @@ export interface MkGraphSettings {
   nodeChannels: NodeChannels;
   /** Hard cap on nodes rendered before graceful degrade kicks in. */
   maxNodesShown: number;
+  /** Show the F2-encoding legend overlay in the graph view. */
+  showLegend: boolean;
 }
 
 export const DEFAULT_SETTINGS: MkGraphSettings = {
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: MkGraphSettings = {
   defaultLayout: 'force',
   nodeChannels: { border: true, opacity: true, size: true },
   maxNodesShown: 5000,
+  showLegend: true,
 };
 
 /**
@@ -150,6 +153,18 @@ export class MkGraphSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(this.host.settings.nodeChannels.size).onChange(async (value) => {
           this.host.settings.nodeChannels.size = value;
+          await this.safeSave();
+        }),
+      );
+
+    containerEl.createEl('h3', { text: 'View' });
+
+    new Setting(containerEl)
+      .setName('Show legend')
+      .setDesc('Display the F2-encoding legend in the bottom-left of the graph view.')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.showLegend).onChange(async (value) => {
+          this.host.settings.showLegend = value;
           await this.safeSave();
         }),
       );

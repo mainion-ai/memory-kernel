@@ -13,6 +13,7 @@ import {
 import { countIncomingCitations } from './citations.js';
 import type { MkGraphSettings } from './settings.js';
 import { createTooltip, type TooltipHandle } from './tooltip.js';
+import { createLegend, type LegendHandle } from './legend.js';
 import { SECRET_GLYPH } from './visual.js';
 import { hexToRgba } from './color.js';
 import type { ParsedAtom, ParsedRelation } from './atom-parser.js';
@@ -35,6 +36,7 @@ export interface RendererHandle {
  */
 export function createRenderer(container: HTMLElement, opts: RendererOpts): RendererHandle {
   const tooltip: TooltipHandle = createTooltip(container);
+  const legend: LegendHandle = createLegend(container, { visible: opts.settings.showLegend });
   const containerStyle = getComputedStyle(container);
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -165,6 +167,7 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
       unsubscribe();
       resizeObserver.disconnect();
       tooltip.destroy();
+      legend.destroy();
       fg._destructor?.();
       while (container.firstChild) container.removeChild(container.firstChild);
     },
