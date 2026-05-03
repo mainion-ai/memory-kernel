@@ -2,6 +2,14 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.4] — 2026-05-03
+
+### Added
+- **Legend overlay** in the graph view's bottom-left, explaining every F2 encoding channel (atom-type colors, classification rings, status opacities, relation colors, edge dash patterns, and node-size citation scale). Collapsible header. Toggleable via new `Show legend` setting (default on). Reading visual constants directly from `visual.ts` keeps it in sync with the renderer.
+
+### Changed
+- New setting `showLegend: boolean` (default `true`). Toggle takes effect on next view-open.
+
 ## [0.1.3] — 2026-05-02
 
 ### Fixed
