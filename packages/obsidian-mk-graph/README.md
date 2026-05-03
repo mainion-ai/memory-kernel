@@ -65,6 +65,7 @@ Reload Obsidian and enable the plugin.
 - **Dot-folder memory directories aren't clickable.** Obsidian skips dot-folders (`.mk`, `.memory`, etc.) when building its vault file index. The plugin reads atom files fine via Node `fs`, so the graph renders, but clicking a node calls `app.workspace.openLinkText` which depends on Obsidian's index. The plugin shows a clear Notice when it detects this case. Workaround: rename your memory dir to a non-dot path (e.g. `memory/`) and update the "Memory directory" setting accordingly.
 - **Changing `Agent ID` requires reopening the graph view.** The file watcher binds at view-open time. Updating the setting persists the new value but doesn't rewatch — close and reopen the leaf to pick up the new agent.
 - **Mobile not supported.** `isDesktopOnly: true` in the manifest. Mobile compatibility is a Phase 5+ concern.
+- **Plugin-bundle cache after rebuild.** Obsidian's `Cmd+P → Reload app without saving` doesn't always invalidate cached plugin bundles. After running `npm run build` during plugin development, if changes aren't visible, do a **hard reload** (`Cmd+Shift+R` on macOS, `Ctrl+Shift+R` on Linux/Windows) to force Obsidian to re-fetch the bundle.
 
 ## Roadmap
 

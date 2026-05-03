@@ -33,6 +33,8 @@ Run before tagging `obsidian-mk-graph@0.1.x`. All steps must pass.
 
 5. Open `~/mk-graph-smoke` in Obsidian. Trust the vault. Settings → Community plugins → enable "Memory Kernel Graph". Then click the gear icon next to the plugin name → set **Memory directory** to `memory` (override the `.mk` default for this smoke walk).
 
+6. **If you rebuild during the walk** (`npm run build`), invalidate Obsidian's plugin-bundle cache with **`Cmd+Shift+R`** (macOS) or **`Ctrl+Shift+R`** (Linux/Windows) — `Cmd+P → Reload app without saving` is NOT enough. The cache trap costs hours; the hard reload costs a second.
+
 ## Checklist
 
 - [ ] **S1: View opens.** Click the ribbon icon (a small graph icon, looks like a `git-branch` glyph) in the left sidebar. The right pane opens with the graph view. (Side pane is intentional — atoms open as tabs in the main area when clicked. See README.)
