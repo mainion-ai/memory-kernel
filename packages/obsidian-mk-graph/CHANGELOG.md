@@ -2,6 +2,11 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.8] — 2026-05-03 (diagnostic)
+
+### Diagnostic
+- Temporary: console.log markers at every renderer step, plus a visible red border on the overlay layer. Lets the smoke walker pinpoint exactly where the overlay-attachment chain breaks. v0.1.9 will be the clean fix.
+
 ## [0.1.7] — 2026-05-03
 
 ### Fixed
