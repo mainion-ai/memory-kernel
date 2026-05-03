@@ -2,6 +2,16 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.9] — 2026-05-03
+
+### Changed
+- Removed v0.1.8's diagnostic console logs and visible red overlay border. The v0.1.7 body-attached overlay was working correctly all along — the smoke walker's earlier reports of invisibility (across v0.1.4–v0.1.7) were a stale Obsidian plugin-bundle cache that `Cmd+P → Reload` doesn't invalidate. Hard-reload (`Cmd+Shift+R`) fixes it.
+- Restored overlay `z-index` from `99999` (v0.1.8 diagnostic value) back to `9999`.
+
+### Documentation
+- README "Known caveats" now mentions Obsidian's plugin-bundle cache and the `Cmd+Shift+R` workaround.
+- `SMOKE_TEST.md` setup adds an explicit hard-reload step so future walkers don't repeat the cache trap.
+
 ## [0.1.8] — 2026-05-03 (diagnostic)
 
 ### Diagnostic
