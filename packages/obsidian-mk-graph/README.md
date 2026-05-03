@@ -11,7 +11,7 @@ A typed event-sourced graph view for [memory-kernel](https://github.com/mainion-
 - **Edge dash** = source (manual = solid, extracted = dashed, enriched = dotted)
 - **Edge opacity** = relation confidence
 
-Read-only. Click a node to open its atom file. Hover for a tooltip with id, type, status, classification, citations, and tags.
+Read-only. Click a node to open its atom file. Hover for a tooltip with id, type, status, classification, citations, and tags. The legend in the bottom-left of the view explains every color and dash style.
 
 ## Status
 
@@ -52,6 +52,7 @@ Reload Obsidian and enable the plugin.
 | Border = classification | on | Toggle the F2 classification ring. |
 | Opacity = status | on | Toggle the F2 status dimming. |
 | Size = log(citations) | on | Toggle the F2 log-scale node sizing. |
+| Show legend | on | Display the F2-encoding legend in the bottom-left of the graph view. Toggle takes effect on next view-open. |
 | Max nodes shown | 5000 | Hard cap; above this the most-cited nodes win. |
 
 ## Commands
