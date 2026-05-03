@@ -26,7 +26,33 @@ export interface ParsedRelation {
   evidence?: string[];
 }
 
+const RELATIONS_SENTINEL = '<!-- mk:relations -->';
 const RELATIONS_SECTION_RE = /(?:^|\n)##\s+Relations\s*\n[\s\S]*$/m;
+
+function stripRelationsSection(body: string): string {
+  // Mirrors mk-core's stripRelationsSection (src/obsidian.ts): atoms written
+  // by the CLI carry a sentinel comment placed above `## Relations`, and
+  // slicing at the sentinel removes both. Falls back to the heading regex
+  // for hand-written files without a sentinel.
+  const idx = body.indexOf(RELATIONS_SENTINEL);
+  if (idx !== -1) return body.slice(0, idx).trimEnd();
+  return body.replace(RELATIONS_SECTION_RE, '').trimEnd();
+}
+
+function normalizeTags(tags: unknown[]): string[] {
+  // Mirrors mk-core's normalizeTags (src/format.ts): older CLI versions
+  // wrote `--tags "a,b,c"` as a single string; split on commas, trim,
+  // dedupe, sort. Non-strings are dropped.
+  const out = new Set<string>();
+  for (const t of tags) {
+    if (typeof t !== 'string') continue;
+    for (const part of t.split(',')) {
+      const trimmed = part.trim();
+      if (trimmed) out.add(trimmed);
+    }
+  }
+  return [...out].sort();
+}
 
 /**
  * Parse a memory-kernel atom markdown file into a renderer-friendly shape.
@@ -48,7 +74,7 @@ export function parseAtomFile(content: string, filePath?: string): ParsedAtom | 
 
   const scope = (fm.scope ?? {}) as { tags?: unknown };
   const rawTags = Array.isArray(scope.tags) ? scope.tags : [];
-  const tags = rawTags.filter((t): t is string => typeof t === 'string');
+  const tags = normalizeTags(rawTags);
 
   const rawRelations = Array.isArray(fm.relations) ? fm.relations : [];
   const relations: ParsedRelation[] = [];
@@ -67,7 +93,7 @@ export function parseAtomFile(content: string, filePath?: string): ParsedAtom | 
     relations.push(rel);
   }
 
-  const body = parsed.content.replace(RELATIONS_SECTION_RE, '').trim();
+  const body = stripRelationsSection(parsed.content).trim();
 
   return {
     id: fm.id,

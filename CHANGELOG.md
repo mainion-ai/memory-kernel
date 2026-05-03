@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- New first-party Obsidian plugin: `packages/obsidian-mk-graph` (v0.1.0). See [packages/obsidian-mk-graph/CHANGELOG.md](packages/obsidian-mk-graph/CHANGELOG.md).
+- New first-party Obsidian plugin: `packages/obsidian-mk-graph`. The plugin is independently versioned — see [packages/obsidian-mk-graph/CHANGELOG.md](packages/obsidian-mk-graph/CHANGELOG.md) for its release history.
 
 ## [1.17.1] — 2026-04-30
 

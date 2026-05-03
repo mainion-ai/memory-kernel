@@ -161,6 +161,44 @@ Real body content.
     expect(atom!.body.trim()).toBe('Real body content.');
   });
 
+  it('strips the `## Relations` section delimited by the mk-core sentinel comment', () => {
+    const md = `---
+id: FACT-2026-04-29-SENTINEL-aa00
+type: fact
+status: active
+---
+
+Real body content.
+
+<!-- mk:relations -->
+## Relations
+
+- [[FACT-2026-04-28-OTHER-bb01]] (extends)
+`;
+    const atom = parseAtomFile(md);
+    expect(atom!.body).not.toContain('<!-- mk:relations -->');
+    expect(atom!.body).not.toContain('## Relations');
+    expect(atom!.body.trim()).toBe('Real body content.');
+  });
+
+  it('normalizes comma-separated tags into individual entries', () => {
+    // Older mk CLI versions wrote `--tags "a,b,c"` as a single string;
+    // mirror mk-core's normalizeTags (src/format.ts) so legacy stores
+    // render as three tags instead of one.
+    const md = `---
+id: FACT-2026-04-29-COMMATAGS-aa00
+type: fact
+status: active
+scope:
+  tags: ["alpha,beta", "gamma", " beta ", "alpha"]
+---
+
+Body.
+`;
+    const atom = parseAtomFile(md);
+    expect(atom!.tags).toEqual(['alpha', 'beta', 'gamma']);
+  });
+
   it('drops relations whose target or type is not a string', () => {
     const md = `---
 id: FACT-2026-04-29-BAD-aa00

@@ -2,6 +2,12 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.10] — 2026-05-03
+
+### Fixed — PR #61 code-review follow-up
+- **Atom body no longer contains the `<!-- mk:relations -->` sentinel.** The previous regex stripped from the `## Relations` heading onward, but mk-core (post-v1.17.0) writes the sentinel comment one line above the heading, so the sentinel survived in `atom.body`. Now mirrors mk-core's `stripRelationsSection` (`src/obsidian.ts`): slice at the sentinel when present, fall back to the heading regex for hand-written files without one.
+- **Comma-separated tag strings are now split into individual tags.** Older mk CLI versions wrote `--tags "a,b,c"` as a single-element array (`["a,b,c"]`) instead of three entries. The plugin now mirrors mk-core's `normalizeTags` (`src/format.ts`, fix `146a23e`): split on commas, trim, dedupe, sort. Stores written before mk-core v1.15.0 will display tags correctly.
+
 ## [0.1.9] — 2026-05-03
 
 ### Changed
