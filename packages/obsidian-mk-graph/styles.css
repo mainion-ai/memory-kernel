@@ -156,18 +156,17 @@
   text-overflow: ellipsis;
 }
 
-/* Overlay layer — host for tooltip + legend, mounted as a LATER sibling
- * of force-graph's wrapper so it stacks above the canvas regardless of
- * any stacking contexts force-graph creates. `isolation: isolate` makes
- * the layer self-contained — even if Obsidian's parent CSS introduces a
- * surprise stacking context, our overlay still wins inside its own. */
+/* Overlay layer — host for tooltip + legend, attached to document.body
+ * (NOT the graph container) because force-graph clobbers anything
+ * appended to its container post-init. Size + position set via JS to
+ * track the container's bounding rect. */
 
 .mk-graph-overlay-layer {
-  position: absolute;
-  inset: 0;
+  position: fixed;
   pointer-events: none;
   isolation: isolate;
-  z-index: 100;
+  z-index: 9999;
+  /* width / height / left / top set via renderer.ts */
 }
 
 .mk-graph-overlay-layer > * {

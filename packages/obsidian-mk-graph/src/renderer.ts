@@ -34,20 +34,24 @@ export interface RendererHandle {
  * canvas on `destroy()`. Caller is responsible for calling `destroy()`
  * before unmounting the container (the view does this in `onClose`).
  *
- * DOM layout produced inside `container`:
+ * DOM layout produced:
  * ```
- * container (position: relative)
- * ├── force-graph wrapper        (mounted first; canvas inside)
- * └── .mk-graph-overlay-layer    (mounted second — LATER sibling)
- *     ├── .mk-graph-tooltip      (hover tooltip, position: absolute)
- *     └── .mk-graph-legend       (encoding legend, position: absolute)
+ * container (position: relative — the leaf content area)
+ * └── force-graph-container       (force-graph mounts here exclusively;
+ *                                  it clears any siblings async during init)
+ *
+ * document.body
+ * └── .mk-graph-overlay-layer     (position: fixed, size tracks container
+ *                                  via ResizeObserver + window listeners)
+ *     ├── .mk-graph-tooltip       (position: absolute inside overlay)
+ *     └── .mk-graph-legend        (position: absolute inside overlay)
  * ```
  *
- * The overlay layer exists because force-graph's wrapper sometimes creates
- * a stacking context that traps absolute-positioned siblings beneath the
- * canvas in Obsidian's Electron renderer. The overlay layer + `isolation: isolate`
- * makes our overlays self-contained. Don't refactor it back into a flat
- * sibling layout without verifying tooltip + legend visibility manually.
+ * The overlay layer lives in `document.body` rather than the leaf container
+ * because force-graph's init in Obsidian's Electron renderer clobbers
+ * sibling children (verified by v0.1.6 console diagnostic). Body attachment
+ * is force-graph-proof. Don't move overlays back into the container without
+ * verifying tooltip + legend visibility against a live Obsidian instance.
  */
 export function createRenderer(container: HTMLElement, opts: RendererOpts): RendererHandle {
   const containerStyle = getComputedStyle(container);
@@ -56,13 +60,33 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   const fg: any = (ForceGraph as any)()(container);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
-  // Mount our overlays in a dedicated layer that's a LATER sibling of
-  // force-graph's wrapper. Combined with `isolation: isolate` in CSS,
-  // this guarantees the tooltip and legend render above the canvas
-  // regardless of any stacking contexts force-graph creates internally.
-  const overlayLayer = container.ownerDocument.createElement('div');
+  // Mount our overlays in a layer attached to document.body (NOT the
+  // graph container) because force-graph's mount sequence in Obsidian's
+  // Electron renderer ends up clobbering siblings — a v0.1.6 console
+  // diagnostic showed the container had only force-graph's wrapper as a
+  // child even after an explicit appendChild of the overlay. Working
+  // theory: force-graph defers DOM setup to after our synchronous code
+  // returns and clears the container as part of its init.
+  //
+  // Position: fixed in body with size + position tracked against the
+  // container's getBoundingClientRect.
+  const doc = container.ownerDocument;
+  const overlayLayer = doc.createElement('div');
   overlayLayer.classList.add('mk-graph-overlay-layer');
-  container.appendChild(overlayLayer);
+  doc.body.appendChild(overlayLayer);
+
+  const updateOverlayPosition = (): void => {
+    const rect = container.getBoundingClientRect();
+    overlayLayer.style.left = `${rect.left}px`;
+    overlayLayer.style.top = `${rect.top}px`;
+    overlayLayer.style.width = `${rect.width}px`;
+    overlayLayer.style.height = `${rect.height}px`;
+  };
+  updateOverlayPosition();
+  const overlayResizeObserver = new ResizeObserver(updateOverlayPosition);
+  overlayResizeObserver.observe(container);
+  window.addEventListener('resize', updateOverlayPosition);
+  window.addEventListener('scroll', updateOverlayPosition, true); // capture: catches nested scrolls
 
   const tooltip: TooltipHandle = createTooltip(overlayLayer);
   const legend: LegendHandle = createLegend(overlayLayer, { visible: opts.settings.showLegend });
@@ -202,14 +226,14 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   return {
     destroy(): void {
       container.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('resize', updateOverlayPosition);
+      window.removeEventListener('scroll', updateOverlayPosition, true);
+      overlayResizeObserver.disconnect();
       unsubscribe();
       resizeObserver.disconnect();
       tooltip.destroy();
       legend.destroy();
-      // Removing overlayLayer is redundant with the firstChild loop below
-      // but explicit so the intent is clear if a future contributor adds
-      // logic to skip non-force-graph children in the loop.
-      overlayLayer.remove();
+      overlayLayer.remove(); // safe even though it's in body, not container
       fg._destructor?.();
       while (container.firstChild) container.removeChild(container.firstChild);
     },
