@@ -33,6 +33,21 @@ export interface RendererHandle {
  * cleans up the subscription, the resize observer, and the force-graph
  * canvas on `destroy()`. Caller is responsible for calling `destroy()`
  * before unmounting the container (the view does this in `onClose`).
+ *
+ * DOM layout produced inside `container`:
+ * ```
+ * container (position: relative)
+ * ├── force-graph wrapper        (mounted first; canvas inside)
+ * └── .mk-graph-overlay-layer    (mounted second — LATER sibling)
+ *     ├── .mk-graph-tooltip      (hover tooltip, position: absolute)
+ *     └── .mk-graph-legend       (encoding legend, position: absolute)
+ * ```
+ *
+ * The overlay layer exists because force-graph's wrapper sometimes creates
+ * a stacking context that traps absolute-positioned siblings beneath the
+ * canvas in Obsidian's Electron renderer. The overlay layer + `isolation: isolate`
+ * makes our overlays self-contained. Don't refactor it back into a flat
+ * sibling layout without verifying tooltip + legend visibility manually.
  */
 export function createRenderer(container: HTMLElement, opts: RendererOpts): RendererHandle {
   const containerStyle = getComputedStyle(container);
