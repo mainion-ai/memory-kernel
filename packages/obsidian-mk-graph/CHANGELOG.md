@@ -2,6 +2,11 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.7] — 2026-05-03
+
+### Fixed
+- **Tooltip and legend now actually render.** v0.1.6's overlay-layer-as-container-sibling never made it into the DOM (smoke walker's console diagnostic showed the container had only `force-graph-container` as a child even after an explicit `appendChild`). force-graph's mount sequence in Obsidian's Electron renderer appears to clear sibling children async during init. Move the overlay to `document.body` with `position: fixed`, tracking the container's bounding rect via `ResizeObserver` + window listeners. force-graph can't touch the body.
+
 ## [0.1.6] — 2026-05-03
 
 ### Fixed
