@@ -2,6 +2,11 @@
 
 This file is independent of the `memory-kernel` core changelog (per project convention — plugin manifest version drifts with the plugin only).
 
+## [0.1.5] — 2026-05-03
+
+### Fixed
+- **Hover tooltip now appears at the cursor.** v0.1.3 fixed hit-testing (`nodePointerAreaPaint`) and v0.1.4 added the legend, but the tooltip still didn't visually show in v0.1.4 because `fg.graph2ScreenCoords`'s reference frame in Obsidian's Electron renderer doesn't reliably match the container origin (force-graph's wrapper div introduces an offset). Track cursor position via mousemove on the container and place the tooltip at the cursor — robust regardless of any internal coordinate transforms. (Found by smoke walker: S3 still failing after v0.1.4.)
+
 ## [0.1.4] — 2026-05-03
 
 ### Added
