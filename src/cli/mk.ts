@@ -34,7 +34,7 @@ import {
   createAtom,
   embeddingStats,
 } from '../index.js';
-import { recall } from '../recall.js';
+import { recall, recallWithEmbeddings } from '../recall.js';
 import { reflect } from '../reflect.js';
 import { checkpoint } from '../checkpoint.js';
 import { bootstrapEvents } from '../bootstrap.js';
@@ -246,7 +246,7 @@ program
   .option('--reservations', 'Enable type-based token reservations (default: on for no-task, off for --task)')
   .option('--no-reservations', 'Disable type-based token reservations')
   .option('--json', 'Output as JSON')
-  .action((opts: {
+  .action(async (opts: {
     dir: string;
     task?: string;
     paths?: string[];
@@ -272,7 +272,7 @@ program
       : opts.reservations === true
         ? false
         : undefined;
-    const bundle = recall(memoryDir, {
+    const recallOpts = {
       task: opts.task,
       paths: opts.paths,
       types: opts.types as any,
@@ -282,7 +282,11 @@ program
       include_episodes: opts.includeEpisodes,
       graph_boost: opts.graph,
       no_reservations: noReservations,
-    });
+    };
+    // Use hybrid FTS+semantic retrieval when a task query is provided
+    const bundle = opts.task
+      ? await recallWithEmbeddings(memoryDir, recallOpts)
+      : recall(memoryDir, recallOpts);
 
     if (opts.json) {
       console.log(JSON.stringify(bundle, null, 2));
