@@ -2,19 +2,51 @@
 
 ## 1. Quality Gates
 
-All v2 changes must meet the following gates before merge:
+> **IMPORTANT:** R1-R10 baselines were invalidated — the GPT-4o judge accepted "I don't know" as correct answers, inflating all numbers. R12 is the first honest baseline using the fixed judge. See [BELI-STABLE-BIAS-MASQUERADES-AS-SIGNAL](../docs/atoms/BELI-2026-05-01-STABLE-BIAS-MASQUERADES-AS-SIGNAL-IN-EVA-1rlao.md) for the full analysis.
 
-| Gate | Threshold | Source |
-|------|-----------|--------|
-| LongMemEval overall | >= 66.8% (R8d baseline) | #42 |
-| All tests pass | 1095+ tests green | CI |
-| knowledge-update | >= 79.5% | R8d |
-| multi-session | >= 76.7% | R8d |
-| single-session-user | >= 74.3% | R8d |
-| temporal-reasoning | >= 71.4% | R8d |
-| single-session-assistant | >= 41.1% | R8d |
+### Two-Number Reporting
 
-No per-type regression beyond 2pp is acceptable. Any change that improves one type at the expense of another must demonstrate net-positive overall accuracy.
+All evaluations MUST report both metrics:
+- **Overall accuracy** — correct / total (includes abstentions as incorrect)
+- **Real-answer accuracy** — correct / non-abstention answers (synthesis quality)
+- **Abstention rate** — how often the system says "I don't have enough information" (retrieval gap)
+
+### Baselines (R12 — lean+rewrite pipeline, fixed GPT-4o judge)
+
+| Type | Overall | Real-Answer Acc | Abstention Rate | N |
+|------|---------|----------------|-----------------|---|
+| single-session-user | 74% | 94% | 27% | 70 |
+| single-session-assistant | 75% | 95% | 21% | 56 |
+| single-session-preference | 27% | 50% | 53% | 30 |
+| knowledge-update | 40% | 50% | 31% | 78 |
+| temporal-reasoning | 11% | 29% | 77% | 133 |
+| multi-session | 9% | 2% | 70% | 133 |
+| **Overall** | **32.0%** | **57.3%** | **53.2%** | **500** |
+
+### Quality Gates for Merge
+
+| Gate | Threshold | Notes |
+|------|-----------|-------|
+| Overall accuracy | >= 32.0% (R12) | No regression from baseline |
+| All tests pass | 1105+ tests green | CI |
+| Abstention rate | <= 53.2% (R12) | Must not increase |
+| Per-type regression | <= 5pp for N<100, <= 2pp for N>=100 | Adjusted for sample size (SE ~4.5% at N=78) |
+
+### Per-Layer Diagnostics (recommended)
+
+When investigating regressions, check three layers separately:
+1. **Ingestion** — is the gold answer in the stored atoms?
+2. **Recall** — does mk recall retrieve atoms containing the answer?
+3. **Synthesis** — does the model extract the answer from retrieved context?
+
+R12 diagnostic found: 70% of failures are at Layer 2 (recall). Atoms exist but FTS doesn't find them. R13 (hybrid FTS + semantic) reduced abstention by 3.4pp but didn't fix multi-session or temporal.
+
+### Benchmark Coverage
+
+| Benchmark | What it tests | Status |
+|-----------|--------------|--------|
+| LongMemEval (500 instances) | Read-end recall across 6 question types | Operational (R12 baseline) |
+| MemoryAgentBench (FactConsolidation) | Conflict resolution — newer facts overriding older | Adapter built, not yet run |
 
 ---
 
@@ -115,7 +147,9 @@ No per-type regression beyond 2pp is acceptable. Any change that improves one ty
 
 ## 5. Testing
 
-### 5.1 Answer Health Check (#48)
+### 5.1 Answer Health Check (#48) — PARTIALLY DELIVERED
+
+**Status:** Partially delivered — evaluate.py v4 has resume, rate-limit detection, health check, and parallel support. Fixed judge rejects abstentions. Remaining: per-layer diagnostic automation.
 
 **Problem:** R8, R8b, and R8c all produced invalid results from CLI failures and rate limits that were not detected until manual inspection. R8 was misattributed to MMR (PR #20) when the actual cause was 95 empty answers from CLI failures.
 
@@ -176,14 +210,14 @@ No per-type regression beyond 2pp is acceptable. Any change that improves one ty
 1. Issue created with requirement, motivation, acceptance criteria, and evidence
 2. Branch created, implementation, PR opened
 3. Taj runs LongMemEval on PR branch
-4. Quality gates checked: overall >= 66.8%, no per-type regression > 2pp, all tests pass
+4. Quality gates checked: overall >= 32.0%, abstention <= 53.2%, no per-type regression > 5pp (N<100) or 2pp (N>=100), all tests pass
 5. PR merged to main
 
 ### Priority Labels
 
 | Priority | Issues | Rationale |
 |----------|--------|-----------|
-| **P0** — Critical | #44 (episode FTS), #45 (content-type decay), #46 (assistant utterances) | Direct LongMemEval/production impact. Addresses the three weakest recall areas. |
+| **P0** — Critical | #44 (episode FTS) ✅, #45 (content-type decay) — reverted, #46 (assistant utterances) ✅ | Direct LongMemEval/production impact. Addresses the three weakest recall areas. |
 | **P1** — High | #47 (preference ingestion) | Daily usage impact. Preference recall is 0% across all runs. |
 | **P2** — Medium | #48 (answer health check), #49 (model/effort config), #50 (constitution pipeline), #51 (citations), #52 (consolidation automation) | Infrastructure and tooling. Enables confident iteration and cost optimization. |
 | **P3** — Research | #53 (additional test framework) | Research task. Identify complementary evaluation coverage for write-end blind spots. |
