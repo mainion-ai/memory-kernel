@@ -519,6 +519,7 @@ describe('plugin configSchema — SecretRef resolution', () => {
 
   it('warns (not fails) when vault file mode is group/world readable', () => {
     fs.writeFileSync(vaultFile, JSON.stringify({ 'openai-key': 'sk-loose' }), { mode: 0o644 });
+    fs.chmodSync(vaultFile, 0o644);
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const cfg = plugin.configSchema.parse({
