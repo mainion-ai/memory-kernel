@@ -25,6 +25,7 @@ afterEach(() => {
 function mockClaude(candidates: object[]) {
   return vi.mock('child_process', () => ({
     execFileSync: () => JSON.stringify(candidates),
+    execFile: vi.fn(),
   }));
 }
 
