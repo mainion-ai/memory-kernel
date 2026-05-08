@@ -99,7 +99,7 @@ export function createLegend(container: HTMLElement, opts: { visible: boolean })
       manual: 'manual (solid)',
       extracted: 'extracted (dashed)',
       enriched: 'enriched (dotted)',
-      unknown: 'unknown (solid)',
+      unknown: 'unknown (solid, thin)',
     };
     for (const [src, dash] of Object.entries(SOURCE_DASH)) {
       const item = list.createDiv({ cls: 'mk-graph-legend-item' });
@@ -113,6 +113,9 @@ export function createLegend(container: HTMLElement, opts: { visible: boolean })
         const offLen = dashArr[1] ?? 3;
         swatch.style.background = `repeating-linear-gradient(to right, currentColor 0 ${onLen}px, transparent ${onLen}px ${onLen + offLen}px)`;
       }
+      // Visualize "thin" by halving the swatch height for the unknown
+      // source — matches edgeWidth's 0.5× scaling for `source: 'unknown'`.
+      if (src === 'unknown') swatch.style.height = '1px';
       item.createSpan({ cls: 'mk-graph-legend-label', text: labels[src] ?? src });
     }
     return list;

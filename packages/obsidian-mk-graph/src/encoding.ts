@@ -37,11 +37,14 @@ export function edgeColor(rel: ParsedRelation): string {
 
 /** F2 edge width: 1 + 2 * (rel.weight ?? type_default), clamped to [0.5, 8].
  *  Non-finite weights fall back to DEFAULT_RELATION_WEIGHT_FALLBACK so a
- *  hand-edited `weight: .nan` can never reach the canvas as NaN. */
+ *  hand-edited `weight: .nan` can never reach the canvas as NaN.
+ *  Source `unknown` halves the result so it renders thinner than `manual`
+ *  (both are solid; thinness is the visual differentiator). */
 export function edgeWidth(rel: ParsedRelation): number {
   const raw = rel.weight ?? DEFAULT_RELATION_WEIGHT[rel.type] ?? DEFAULT_RELATION_WEIGHT_FALLBACK;
   const weight = Number.isFinite(raw) ? raw : DEFAULT_RELATION_WEIGHT_FALLBACK;
-  const w = 1 + 2 * weight;
+  let w = 1 + 2 * weight;
+  if (rel.source === 'unknown') w *= 0.5;
   return Math.max(0.5, Math.min(8, w));
 }
 

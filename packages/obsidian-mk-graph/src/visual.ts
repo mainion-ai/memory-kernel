@@ -62,11 +62,16 @@ export const STATUS_OPACITY: Record<string, number> = {
 
 export const STATUS_OPACITY_FALLBACK = 1.0;
 
-/** Edge-source dash patterns (F2 spec §5.2). [] = solid. */
+/** Edge-source dash patterns (F2 spec §5.2). [] = solid.
+ *  - manual: solid (full-width)
+ *  - extracted: clearly dashed (long on, medium off)
+ *  - enriched: proper dots (1px on, wide gap)
+ *  - unknown: solid but rendered at half width by edgeWidth so it's
+ *    visually distinct from manual */
 export const SOURCE_DASH: Record<string, ReadonlyArray<number>> = {
   manual:    Object.freeze([]),
-  extracted: Object.freeze([5, 3]),
-  enriched:  Object.freeze([2, 3]),
+  extracted: Object.freeze([8, 4]),
+  enriched:  Object.freeze([1, 5]),
   unknown:   Object.freeze([]),
 };
 

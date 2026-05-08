@@ -92,9 +92,18 @@ describe('edge encoding', () => {
 
   it('edgeDash returns the source pattern, falls back solid', () => {
     expect(edgeDash(makeRel({ source: 'manual' }))).toEqual([]);
-    expect(edgeDash(makeRel({ source: 'extracted' }))).toEqual([5, 3]);
-    expect(edgeDash(makeRel({ source: 'enriched' }))).toEqual([2, 3]);
+    expect(edgeDash(makeRel({ source: 'extracted' }))).toEqual([8, 4]);
+    expect(edgeDash(makeRel({ source: 'enriched' }))).toEqual([1, 5]);
     expect(edgeDash(makeRel())).toEqual([]); // undefined -> solid
+  });
+
+  it('edgeWidth halves for source: unknown so it renders thinner than manual', () => {
+    // Same weight, only source differs — unknown should be half the width.
+    const manual = edgeWidth(makeRel({ type: 'related', weight: 1.0, source: 'manual' }));
+    const unknown = edgeWidth(makeRel({ type: 'related', weight: 1.0, source: 'unknown' }));
+    expect(unknown).toBeCloseTo(manual * 0.5, 5);
+    // Floor still applies — very small weight + unknown halving clamps at 0.5.
+    expect(edgeWidth(makeRel({ type: 'related', weight: 0, source: 'unknown' }))).toBe(0.5);
   });
 
   it('edgeOpacity floors at 0.3, scales by confidence', () => {

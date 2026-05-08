@@ -5,14 +5,14 @@ import { parseAtomFile, type ParsedAtom } from './atom-parser.js';
 const ENTITIES_DIR = 'ENTITIES';
 const AGENTS_DIR = 'agents';
 
-/** Reject agent IDs that contain path separators or `..` segments — these
- *  would let `path.join` escape the `agents/` namespace and route reads
- *  outside the intended store. */
+const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/** Mirror of mk-core's assertValidAgentId allowlist — rejects any agent ID
+ *  that contains characters mk-core would refuse to materialize as a directory.
+ *  Without alignment, the plugin would silently route reads to the shared
+ *  base dir for IDs the user thinks are valid. */
 function isSafeAgentId(agentId: string): boolean {
-  if (agentId.length === 0) return false;
-  if (agentId.includes('/') || agentId.includes('\\')) return false;
-  if (agentId === '.' || agentId === '..') return false;
-  return true;
+  return agentId.length > 0 && AGENT_ID_PATTERN.test(agentId);
 }
 
 /**
@@ -82,10 +82,9 @@ export function watchVault(memoryDir: string, onChange: () => void): Watcher {
         onChange();
       }, 150);
     });
-    // Swallow watcher-level errors (e.g. mid-session directory deletion)
-    // so they don't surface as uncaught exceptions in Electron's renderer.
-    // Caller can re-init via close() + watchVault() if needed.
-    watcher.on('error', () => {});
+    watcher.on('error', (err) => {
+      console.warn('mk-graph: vault watcher error, atom updates may not reflect file changes', err);
+    });
   } catch {
     return { close: () => {} };
   }
@@ -97,3 +96,6 @@ export function watchVault(memoryDir: string, onChange: () => void): Watcher {
     },
   };
 }
+
+export { watchEvents } from './events-loader.js';
+export { readEvents } from './events-loader.js';

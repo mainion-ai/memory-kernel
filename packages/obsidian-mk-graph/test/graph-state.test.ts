@@ -132,3 +132,36 @@ describe('GraphState', () => {
     });
   });
 });
+
+describe('GraphState — filter-panel helpers', () => {
+  it('getAvailableTags returns the sorted unique tag set across all atoms', () => {
+    const s = new GraphState();
+    s.replace([
+      { ...atom('A'), tags: ['fixture', 'fact'] },
+      { ...atom('B'), tags: ['fixture', 'belief'] },
+      { ...atom('C'), tags: [] },
+      { ...atom('D'), tags: ['fact'] },
+    ]);
+    expect(s.getAvailableTags()).toEqual(['belief', 'fact', 'fixture']);
+  });
+
+  it('getAvailableTags returns [] when the state has no atoms', () => {
+    const s = new GraphState();
+    expect(s.getAvailableTags()).toEqual([]);
+  });
+
+  it('getReferencedIds returns the set of atom ids that any other atom links to', () => {
+    const s = new GraphState();
+    s.replace([
+      atom('A', ['B']),       // A → B
+      atom('B', ['C']),       // B → C
+      atom('C'),
+      atom('D'),              // truly orphan
+    ]);
+    const ref = s.getReferencedIds();
+    expect(ref.has('B')).toBe(true);
+    expect(ref.has('C')).toBe(true);
+    expect(ref.has('A')).toBe(false);
+    expect(ref.has('D')).toBe(false);
+  });
+});

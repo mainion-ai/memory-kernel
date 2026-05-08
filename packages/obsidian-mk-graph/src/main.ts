@@ -33,6 +33,32 @@ export default class MkGraphPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'mk-graph-toggle-live-scrubbed',
+      name: 'Toggle Live / Scrubbed mode',
+      checkCallback: (checking) => {
+        const view = this.getActiveGraphView();
+        if (!view) return false;
+        if (!checking) view.toggleLiveScrubbed();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: 'mk-graph-toggle-filter-panel',
+      name: 'Toggle filter panel',
+      checkCallback: (checking) => {
+        const view = this.getActiveGraphView();
+        if (!view) return false;
+        if (!checking) {
+          this.settings.showFilterPanel = !this.settings.showFilterPanel;
+          view.setFilterPanelVisible(this.settings.showFilterPanel);
+          void this.saveSettings();
+        }
+        return true;
+      },
+    });
+
     this.addSettingTab(new MkGraphSettingTab(this.app, this));
   }
 

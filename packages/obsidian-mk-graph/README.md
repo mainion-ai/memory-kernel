@@ -13,6 +13,12 @@ A typed event-sourced graph view for [memory-kernel](https://github.com/mainion-
 
 Read-only. Click a node to open its atom file. Hover for a tooltip with id, type, status, classification, citations, and tags. The legend in the bottom-left of the view explains every color and dash style.
 
+### Phase 3 features (v0.2.0)
+
+- **Time-aware exploration** — three modes via the bottom scrubber: **Live** (file-watcher tail), **Scrubbed** (graph frozen at T), **Diff** (T1↔T2 with added/removed/mutated highlighting).
+- **Event-density histogram** above the playhead — at-a-glance "where the activity is" view of your memory log.
+- **Timeline layout** — X axis maps to `created_at`, Y axis stratifies by atom type. Toggle via plugin settings.
+
 ## Status
 
 `v0.1.0` — Phase 2 of the [obsidian-mk-graph design spec](../../docs/superpowers/specs/2026-04-28-obsidian-mk-graph-design.md). Force-directed layout only; timeline, scrubber, and wander-visualisation come in Phases 3 / 4.

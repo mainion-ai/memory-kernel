@@ -7,6 +7,10 @@ export interface GraphNode extends ParsedAtom {
   y?: number;
   vx?: number;
   vy?: number;
+  /** Pinned position. When set, force-graph treats the node as fixed.
+   *  Used by the timeline layout. Cleared by the force layout. */
+  fx?: number;
+  fy?: number;
 }
 
 /** Force-graph link shape. `source` and `target` are atom IDs in the
@@ -92,5 +96,27 @@ export class GraphState {
       }
     }
     return { nodes, links };
+  }
+
+  /** Sorted unique set of tags across all loaded atoms. Used by the
+   *  filter panel to populate tag chips. Empty array when there are no
+   *  atoms or no atoms have tags. */
+  getAvailableTags(): string[] {
+    const tags = new Set<string>();
+    for (const a of this.atoms.values()) {
+      for (const t of a.tags) tags.add(t);
+    }
+    return [...tags].sort();
+  }
+
+  /** Set of atom ids that are referenced as relation targets by some
+   *  other atom. Used by the filter panel's "orphans only" mode to
+   *  detect atoms with zero inbound references. O(total relations). */
+  getReferencedIds(): Set<string> {
+    const refs = new Set<string>();
+    for (const rels of this.outboundIndex.values()) {
+      for (const r of rels) refs.add(r.target);
+    }
+    return refs;
   }
 }

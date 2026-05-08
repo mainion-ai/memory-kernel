@@ -60,6 +60,15 @@ npm run build   # compile TypeScript
 - Migration: `mk migrate --strategy fresh|partition|clone-to-shared`
 - Key files: `src/isolation.ts`, `src/isolation-recall.ts`, `src/share.ts`, `src/migrate.ts`, `src/render.ts` (renderAgentClaudeMd)
 
+## obsidian-mk-graph Phase 3 integration (Task 16+)
+
+- `ViewHost` interface requires `app`, `settings`, AND `saveSettings()` — the view calls `saveSettings()` directly from mode/playhead callbacks (not via `safeSave` which is private to `MkGraphSettingTab`)
+- `data-loader.ts` re-exports `watchEvents` and `readEvents` from `events-loader.ts` so the view imports everything from one place
+- `MkGraphView` fields: `state`, `renderer`, `watcher` (atoms), `eventsWatcher` (events.ndjson), `scrubber`, `controller`, `events`
+- `reloadFromDisk()` now feeds `controller.setFallbackAtoms()` + `controller.setEvents()` and updates histogram; `reloadEvents()` is a lighter path (events.ndjson only) triggered by `eventsWatcher`
+- `toggleLiveScrubbed()` is public — called by the "Toggle Live / Scrubbed mode" command in `main.ts`
+- Phase 3 Task 16 shipped as commit 273d20a
+
 ## OpenClaw plugin isolation
 
 - Plugin source: `packages/openclaw-memory-kernel/src/index.ts`

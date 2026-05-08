@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -94,3 +94,73 @@ writeFileSync(path.join(eps, 'EP-fixture-001.md'), epBody);
 
 console.log(`Wrote ${atoms.length} atoms to ${ents}`);
 console.log(`Wrote 1 episode to ${eps}`);
+
+// --- events.ndjson ---
+// Mirror the atoms array as a sequence of atom_created events at
+// 2026-04-DD T 10:00:00Z (DD = atom.day). Add two archives at the end
+// (atoms[2], atoms[5]) and one update for atoms[10]. Output is ordered
+// by timestamp ascending so replay can stream-process line by line.
+
+const events = [];
+let evt = 0;
+function evid() { return `EVT-${String(++evt).padStart(4, '0')}`; }
+
+// Atom-created events, one per fixture atom.
+for (const a of atoms) {
+  const dd = String(a.day).padStart(2, '0');
+  const ts = `2026-04-${dd}T10:00:00Z`;
+  const file = path.join(ents, `${a.id}.md`);
+  let snapshot;
+  try {
+    snapshot = readFileSync(file, 'utf-8');
+  } catch {
+    snapshot = `---\nid: ${a.id}\ntype: ${a.type}\nstatus: ${a.status}\nclassification: ${a.classification}\ncreated_at: "${ts}"\nupdated_at: "${ts}"\nttl_days: null\n---\n\n`;
+  }
+  events.push({
+    event_id: evid(),
+    timestamp: ts,
+    agent_id: 'fixture',
+    session_id: 'fixture-seed',
+    action: 'atom_created',
+    atom_refs: [a.id],
+    schema_version: 2,
+    atom_snapshot: snapshot,
+  });
+}
+
+// One update event for atoms[10] (bumps its updated_at).
+const updTarget = atoms[10];
+if (updTarget) {
+  const ts = `2026-04-25T10:00:00Z`;
+  events.push({
+    event_id: evid(),
+    timestamp: ts,
+    agent_id: 'fixture',
+    session_id: 'fixture-seed',
+    action: 'atom_updated',
+    atom_refs: [updTarget.id],
+    schema_version: 2,
+    atom_snapshot: `---\nid: ${updTarget.id}\ntype: ${updTarget.type}\nstatus: ${updTarget.status}\nclassification: ${updTarget.classification}\ncreated_at: "2026-04-${String(updTarget.day).padStart(2, '0')}T10:00:00Z"\nupdated_at: "${ts}"\nttl_days: null\n---\n\nUpdated body for ${updTarget.id}.\n`,
+  });
+}
+
+// Two archive events at the very end.
+for (const idx of [2, 5]) {
+  const a = atoms[idx];
+  if (!a) continue;
+  events.push({
+    event_id: evid(),
+    timestamp: `2026-04-26T10:00:00Z`,
+    agent_id: 'fixture',
+    session_id: 'fixture-seed',
+    action: 'atom_archived',
+    atom_refs: [a.id],
+    schema_version: 2,
+    // Archived events typically lack a snapshot — replay just removes.
+  });
+}
+
+events.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+const ndjson = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
+writeFileSync(path.join(root, 'events.ndjson'), ndjson);
+console.log(`wrote ${events.length} events to ${path.join(root, 'events.ndjson')}`);

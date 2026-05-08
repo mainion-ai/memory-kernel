@@ -1,6 +1,6 @@
 {
   "name": "obsidian-mk-graph",
-  "version": "0.1.10",
+  "version": "0.3.1",
   "description": "Obsidian plugin: typed graph view for memory-kernel",
   "main": "main.js",
   "type": "module",
@@ -11,7 +11,13 @@
     "test:watch": "vitest",
     "lint": "tsc --noEmit"
   },
-  "keywords": ["obsidian", "obsidian-plugin", "memory-kernel", "graph", "knowledge-graph"],
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "memory-kernel",
+    "graph",
+    "knowledge-graph"
+  ],
   "author": "mainion-ai",
   "license": "Apache-2.0",
   "repository": {
@@ -24,9 +30,11 @@
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {
+    "@types/jsdom": "^28.0.1",
     "@types/node": "^25.6.0",
     "builtin-modules": "^3.3.0",
     "esbuild": "^0.24.0",
+    "jsdom": "^29.1.1",
     "obsidian": "^1.4.11",
     "tslib": "^2.6.2",
     "typescript": "^5.9.3",

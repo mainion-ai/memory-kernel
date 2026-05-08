@@ -1,4 +1,5 @@
 import { App, Notice, PluginSettingTab, Setting, type Plugin } from 'obsidian';
+import type { SerializedFilterState } from './filter-state.js';
 
 export interface NodeChannels {
   /** Toggle the F2 border-by-classification ring. */
@@ -19,14 +20,29 @@ export interface MkGraphSettings {
    *  dot-segment IDs at read time; the SettingTab also warns the user
    *  inline so they see why their agent isn't loading. */
   agentId: string;
-  /** Phase 2 always force; Phase 3 adds `timeline`, Phase 4 adds `radial-wander`. */
-  defaultLayout: 'force';
+  /** Phase 3 widens this from `'force'` to include `'timeline'`. Phase 4
+   *  will add `'radial-wander'`. */
+  defaultLayout: 'force' | 'timeline';
   /** F2 channel toggles — fill (color by type) is always on. */
   nodeChannels: NodeChannels;
   /** Hard cap on nodes rendered before graceful degrade kicks in. */
   maxNodesShown: number;
   /** Show the F2-encoding legend overlay in the graph view. */
   showLegend: boolean;
+  /** Show the scrubber overlay (mode buttons + histogram + playhead). */
+  showScrubber: boolean;
+  /** Default replay mode on view-open. Spec §H1: true until the user
+   *  scrubs once; thereafter `false` so we restore `lastScrubbedAt`. */
+  liveModeOnStartup: boolean;
+  /** ISO8601 last scrubbed-to timestamp. Restored on view-open when
+   *  `liveModeOnStartup === false`. Null until the user scrubs once. */
+  lastScrubbedAt: string | null;
+  /** Show the filter side overlay (atom-type / status / classification
+   *  toggles, search, tags, orphans). Default true. */
+  showFilterPanel: boolean;
+  /** Persisted filter state. JSON-friendly shape (Sets serialised as
+   *  arrays). Empty / missing → default state matches every atom. */
+  filters: SerializedFilterState;
 }
 
 export const DEFAULT_SETTINGS: MkGraphSettings = {
@@ -37,6 +53,18 @@ export const DEFAULT_SETTINGS: MkGraphSettings = {
   nodeChannels: { border: true, opacity: true, size: true },
   maxNodesShown: 5000,
   showLegend: true,
+  showScrubber: true,
+  liveModeOnStartup: true,
+  lastScrubbedAt: null,
+  showFilterPanel: true,
+  filters: {
+    search: '',
+    hiddenTypes: [],
+    hiddenStatuses: [],
+    hiddenClassifications: [],
+    selectedTags: [],
+    orphansOnly: false,
+  },
 };
 
 /**
@@ -48,13 +76,13 @@ export interface SettingsHost extends Plugin {
   saveSettings(): Promise<void>;
 }
 
+const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
 /** Mirrors data-loader.ts:isSafeAgentId. Duplicated here so the SettingTab
- *  can warn inline without coupling to the loader module. */
+ *  can warn the user inline before the watcher binds. */
 function isUnsafeAgentId(agentId: string): boolean {
-  if (agentId.length === 0) return false; // empty = shared mode, not unsafe
-  if (agentId.includes('/') || agentId.includes('\\')) return true;
-  if (agentId === '.' || agentId === '..') return true;
-  return false;
+  if (agentId.length === 0) return false; // empty = shared mode (intentional)
+  return !AGENT_ID_PATTERN.test(agentId);
 }
 
 export class MkGraphSettingTab extends PluginSettingTab {
@@ -165,6 +193,50 @@ export class MkGraphSettingTab extends PluginSettingTab {
       .addToggle((t) =>
         t.setValue(this.host.settings.showLegend).onChange(async (value) => {
           this.host.settings.showLegend = value;
+          await this.safeSave();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Show scrubber')
+      .setDesc('Display the bottom-of-view scrubber with mode buttons and event-density histogram.')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.showScrubber).onChange(async (v) => {
+          this.host.settings.showScrubber = v;
+          await this.safeSave();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Show filter panel')
+      .setDesc('Display the side overlay with atom-type / status / classification toggles, search, tag chips, and orphans-only filter.')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.showFilterPanel).onChange(async (v) => {
+          this.host.settings.showFilterPanel = v;
+          await this.safeSave();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName('Default layout')
+      .setDesc('Graph layout used when the view opens. Force-directed packs nodes by relation; timeline maps the X axis to created_at, Y to atom type.')
+      .addDropdown((dd) =>
+        dd
+          .addOption('force', 'Force-directed')
+          .addOption('timeline', 'Timeline')
+          .setValue(this.host.settings.defaultLayout)
+          .onChange(async (v) => {
+            this.host.settings.defaultLayout = (v as MkGraphSettings['defaultLayout']);
+            await this.safeSave();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Live mode on startup')
+      .setDesc('Open the view in Live mode. When off, the view restores your last-scrubbed timestamp instead.')
+      .addToggle((t) =>
+        t.setValue(this.host.settings.liveModeOnStartup).onChange(async (v) => {
+          this.host.settings.liveModeOnStartup = v;
           await this.safeSave();
         }),
       );

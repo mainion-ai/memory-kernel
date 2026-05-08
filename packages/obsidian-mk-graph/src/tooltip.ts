@@ -26,11 +26,14 @@ export function createTooltip(container: HTMLElement): TooltipHandle {
     title.setText(`${atom.type} · ${atom.status}`);
 
     const meta = el.createDiv({ cls: 'mk-graph-tooltip-meta' });
-    const lines: string[] = [];
-    lines.push(`classification: ${atom.classification}`);
-    lines.push(`citations: ${citations}`);
-    if (atom.tags.length > 0) lines.push(`tags: ${atom.tags.slice(0, 4).join(', ')}`);
-    meta.setText(lines.join(' · '));
+    // Each meta field gets its own line for readability — previously the
+    // fields were `·`-separated on a single wrapping line which made
+    // longer atoms hard to scan at a glance.
+    meta.createDiv({ cls: 'mk-graph-tooltip-meta-row', text: `classification: ${atom.classification}` });
+    meta.createDiv({ cls: 'mk-graph-tooltip-meta-row', text: `citations: ${citations}` });
+    if (atom.tags.length > 0) {
+      meta.createDiv({ cls: 'mk-graph-tooltip-meta-row', text: `tags: ${atom.tags.slice(0, 4).join(', ')}` });
+    }
 
     el.style.left = `${x + 12}px`;
     el.style.top = `${y + 12}px`;

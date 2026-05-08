@@ -43,6 +43,14 @@
   font-size: 11px;
 }
 
+.mk-graph-tooltip-meta-row {
+  line-height: 1.4;
+}
+
+.mk-graph-tooltip-meta-row + .mk-graph-tooltip-meta-row {
+  margin-top: 2px;
+}
+
 /* Legend overlay — bottom-left of the view container */
 
 .mk-graph-legend {
@@ -64,6 +72,21 @@
 }
 
 .mk-graph-legend.is-hidden {
+  display: none;
+}
+
+/* When the scrubber is mounted (Phase 3+), push the legend up by the
+ * scrubber's height (110px since v0.2.6) plus a small gap so the two
+ * overlays don't overlap in the bottom-left of the view. */
+.mk-graph-legend.with-scrubber-clearance {
+  bottom: 122px;
+}
+
+/* Hide the body-attached overlay when an Obsidian modal is open — the
+ * overlay's z-index 9999 was sitting on top of settings/preferences.
+ * This covers the legend, tooltip, AND the filter panel (since v0.3.0)
+ * since they all live inside .mk-graph-overlay-layer. */
+.mk-graph-overlay-layer.is-modal-suppressed {
   display: none;
 }
 
@@ -176,4 +199,431 @@
 .mk-graph-overlay-layer > .mk-graph-tooltip {
   /* Tooltip stays click-through so it doesn't steal hover. */
   pointer-events: none;
+}
+
+/* --- Phase 3: scrubber overlay --- */
+
+.mk-graph-scrubber-host {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 110px; /* header + body (histogram + slider stacked) */
+  pointer-events: auto;
+  z-index: 9998; /* below tooltip (9999) but above the canvas */
+}
+
+.mk-graph-scrubber {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 10px 14px;
+  background: linear-gradient(
+    180deg,
+    var(--background-primary, rgba(18, 18, 22, 0.92)) 0%,
+    var(--background-primary-alt, rgba(24, 24, 28, 0.92)) 100%
+  );
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-top: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.08));
+  font-size: 12px;
+  gap: 6px;
+  box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.25);
+}
+
+.mk-graph-scrubber-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mk-graph-scrubber-modes {
+  display: flex;
+  gap: 4px;
+}
+
+.mk-graph-scrubber-mode-btn {
+  padding: 3px 12px;
+  border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.12));
+  background: transparent;
+  color: var(--text-muted, #aaa);
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.mk-graph-scrubber-mode-btn:hover:not(.is-active) {
+  background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-normal, #ddd);
+}
+
+.mk-graph-scrubber-mode-btn.is-active {
+  background: var(--interactive-accent, #3b82f6);
+  color: var(--text-on-accent, #fff);
+  border-color: transparent;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.mk-graph-scrubber-time {
+  font-family: var(--font-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-muted, #aaa);
+  letter-spacing: 0.02em;
+}
+
+/* Body row: timeline column (histogram + slider) + controls column.
+ * The timeline takes flex: 1 so its width drives both the histogram and
+ * the slider — they're guaranteed to have identical horizontal extent.
+ * Controls sit at the right with align-self: flex-end pinning them to the
+ * slider's row vertically. */
+.mk-graph-scrubber-body {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex: 1;
+}
+
+.mk-graph-scrubber-timeline {
+  flex: 1 1 0;
+  min-width: 0; /* allow flex-item to shrink below content size */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* Histogram — accent-colored bars where events exist, faint baseline for
+ * empty buckets so the timeline reads as continuous. */
+.mk-graph-scrubber-histogram {
+  display: flex;
+  align-items: flex-end;
+  height: 26px;
+  gap: 1px;
+  padding: 0;
+}
+
+.mk-graph-scrubber-bar {
+  flex: 1 1 0;
+  min-width: 1px;
+  min-height: 2px; /* baseline so empty buckets stay visible */
+  background: var(--text-faint, rgba(255, 255, 255, 0.18));
+  border-radius: 2px 2px 0 0;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.mk-graph-scrubber-bar.has-events {
+  background: var(--interactive-accent, #3b82f6);
+  opacity: 0.55;
+}
+
+.mk-graph-scrubber-bar:hover {
+  opacity: 1;
+  transform: scaleY(1.05);
+  transform-origin: bottom;
+}
+
+/* Playhead slider — hybrid custom-visual + native-interaction.
+ *
+ * The wrapper is the slider's bounding box. Inside, three absolutely-
+ * positioned divs (track, fill, thumb) handle the visuals — they inherit
+ * the wrapper's full width via `left: 0; right: 0`, so the visible track
+ * is provably the same width as the histogram (which is also `flex: 1` of
+ * the same parent column). A transparent native <input type="range">
+ * layered on top handles all interaction (click-to-position, drag,
+ * focus, keyboard ←/→ / Page / Home / End). The native input's own
+ * track/thumb are stripped to zero. The `--mk-frac` CSS variable is
+ * updated by JS on every input event and on programmatic value changes;
+ * the fill and thumb read it via `width` / `left`. */
+.mk-graph-scrubber-playhead-wrapper {
+  --mk-frac: 100%;
+  position: relative;
+  width: 100%;
+  height: 22px;
+  margin-top: 4px;
+  cursor: pointer;
+  touch-action: none; /* prevent scroll/zoom from stealing drags */
+}
+
+.mk-graph-scrubber-playhead-wrapper.is-disabled {
+  cursor: not-allowed;
+}
+
+.mk-graph-scrubber-playhead-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 6px;
+  background: var(--background-modifier-border, rgba(255, 255, 255, 0.22));
+  border-radius: 3px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.mk-graph-scrubber-playhead-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: var(--mk-frac, 100%);
+  background: var(--interactive-accent, #3b82f6);
+  opacity: 0.55;
+  border-radius: 3px 0 0 3px;
+  transition: width 80ms linear;
+}
+
+.mk-graph-scrubber-playhead-thumb {
+  position: absolute;
+  left: var(--mk-frac, 100%);
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--interactive-accent, #3b82f6);
+  border: 2px solid var(--background-primary, #181a1f);
+  pointer-events: none;
+  transition: transform 120ms ease, box-shadow 120ms ease, left 80ms linear;
+  box-sizing: border-box;
+}
+
+.mk-graph-scrubber-playhead-wrapper:hover:not(.is-disabled) .mk-graph-scrubber-playhead-thumb {
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.mk-graph-scrubber-playhead-wrapper.is-disabled .mk-graph-scrubber-playhead-track,
+.mk-graph-scrubber-playhead-wrapper.is-disabled .mk-graph-scrubber-playhead-fill,
+.mk-graph-scrubber-playhead-wrapper.is-disabled .mk-graph-scrubber-playhead-thumb {
+  opacity: 0.35;
+}
+
+.mk-graph-scrubber-playhead-wrapper.is-disabled {
+  cursor: not-allowed;
+}
+
+.mk-graph-scrubber-playhead-wrapper:focus-within .mk-graph-scrubber-playhead-thumb {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);
+}
+
+/* The native <input type="range"> stays in the DOM for two reasons:
+ *   1. Test compatibility — existing tests dispatch `input` events on it.
+ *   2. Native keyboard navigation — Tab focuses it; ←/→ / Page / Home /
+ *      End fire the `input` event which routes through applySliderValue.
+ * It has pointer-events: none so it doesn't intercept clicks — the
+ * wrapper handles those itself with custom drag logic. */
+.mk-graph-scrubber-playhead {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mk-graph-scrubber-playhead:focus {
+  outline: none;
+}
+
+/* --- Controls (right of slider, on the same row) --- */
+
+.mk-graph-scrubber-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  align-self: flex-end; /* pin to bottom of body = slider's row */
+  padding-bottom: 2px;  /* line up vertically with the slider's track center */
+}
+
+.mk-graph-scrubber-play-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--text-muted, #aaa);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.mk-graph-scrubber-play-btn:hover:not(:disabled) {
+  background: var(--interactive-accent, #3b82f6);
+  color: var(--text-on-accent, #fff);
+  border-color: transparent;
+}
+
+.mk-graph-scrubber-play-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mk-graph-scrubber-loop-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--text-muted, #aaa);
+  cursor: pointer;
+  user-select: none;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mk-graph-scrubber-loop-checkbox {
+  margin: 0;
+  cursor: pointer;
+  width: 12px;
+  height: 12px;
+}
+
+/* --- v0.3.0: filter panel (right-side overlay) --- */
+
+.mk-graph-filter-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 240px;
+  max-height: calc(100% - 160px); /* leave room for scrubber at bottom */
+  overflow-y: auto;
+  padding: 12px;
+  background: linear-gradient(
+    180deg,
+    var(--background-primary, rgba(18, 18, 22, 0.92)) 0%,
+    var(--background-primary-alt, rgba(24, 24, 28, 0.92)) 100%
+  );
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-normal, #ddd);
+  pointer-events: auto;
+  z-index: 50;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.mk-graph-filter-panel.is-hidden {
+  display: none;
+}
+
+.mk-graph-filter-header {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text-normal, #ddd);
+  letter-spacing: 0.02em;
+}
+
+.mk-graph-filter-search {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.14));
+  background: var(--background-primary, #1b1d22);
+  color: var(--text-normal, #ddd);
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.mk-graph-filter-search:focus {
+  outline: 2px solid var(--interactive-accent, #3b82f6);
+  outline-offset: 1px;
+}
+
+.mk-graph-filter-section {
+  margin-bottom: 10px;
+}
+
+.mk-graph-filter-section-heading {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted, #aaa);
+  margin-bottom: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.08));
+}
+
+.mk-graph-filter-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mk-graph-filter-cb-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  padding: 1px 0;
+}
+
+.mk-graph-filter-cb-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  width: 12px;
+  height: 12px;
+}
+
+.mk-graph-filter-cb-text {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Tag chips */
+
+.mk-graph-filter-section-body:has(.mk-graph-filter-tag-chip) {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mk-graph-filter-tag-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--text-muted, #aaa);
+  border-radius: 999px;
+  font-size: 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.mk-graph-filter-tag-chip:hover {
+  background: var(--background-modifier-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-normal, #ddd);
+}
+
+.mk-graph-filter-tag-chip.is-active {
+  background: var(--interactive-accent, #3b82f6);
+  color: var(--text-on-accent, #fff);
+  border-color: transparent;
+}
+
+.mk-graph-filter-tags-empty {
+  font-size: 10px;
+  color: var(--text-faint, rgba(255, 255, 255, 0.35));
+  font-style: italic;
 }

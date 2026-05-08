@@ -17,14 +17,27 @@ import { createLegend, type LegendHandle } from './legend.js';
 import { SECRET_GLYPH } from './visual.js';
 import { hexToRgba } from './color.js';
 import type { ParsedAtom, ParsedRelation } from './atom-parser.js';
+import { applyLayout, type LayoutKind } from './layout.js';
+import { diffNodeColor, diffNodeOpacity, diffEdgeColor } from './diff-overlay.js';
+import type { DiffSet } from './diff-state.js';
 
 export interface RendererOpts {
   state: GraphState;
   settings: MkGraphSettings;
   onNodeClick: (atom: ParsedAtom) => void;
+  /** Initial layout. Defaults to settings.defaultLayout. */
+  layout?: LayoutKind;
+  /** Visible time range used by the timeline layout. Falls back to
+   *  the createdAt min/max of the loaded atoms when omitted. */
+  fromIso?: string;
+  toIso?: string;
+  /** When set, renders in Diff mode with overlay colors. */
+  diff?: DiffSet;
 }
 
 export interface RendererHandle {
+  setLayout(kind: LayoutKind, fromIso?: string, toIso?: string): void;
+  setDiff(diff: DiffSet | undefined): void;
   destroy(): void;
 }
 
@@ -96,6 +109,32 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   const tooltip: TooltipHandle = createTooltip(overlayLayer);
   const legend: LegendHandle = createLegend(overlayLayer, { visible: opts.settings.showLegend });
 
+  // The legend lives at `bottom: 12px` by default; the scrubber occupies
+  // `bottom: 0` with height 92px. When both are mounted, push the legend
+  // up so it clears the scrubber. Phase 2 (scrubber off) keeps the
+  // original positioning.
+  if (opts.settings.showScrubber) {
+    const legendEl = overlayLayer.querySelector('.mk-graph-legend');
+    legendEl?.classList.add('with-scrubber-clearance');
+  }
+
+  // Hide the overlay-layer (legend + tooltip) when an Obsidian modal is
+  // open. Without this, the overlay's z-index 9999 sits on top of the
+  // settings / preferences modal and obscures it.
+  const updateModalSuppression = (): void => {
+    const modalOpen = doc.body.classList.contains('is-modal-open')
+      || doc.body.querySelector('.modal-container .modal') !== null;
+    overlayLayer.classList.toggle('is-modal-suppressed', modalOpen);
+  };
+  updateModalSuppression();
+  const modalObserver = new MutationObserver(updateModalSuppression);
+  modalObserver.observe(doc.body, {
+    attributes: true,
+    attributeFilter: ['class'],
+    childList: true,
+    subtree: false, // body's direct children — modal-container is one of them
+  });
+
   fg.backgroundColor('rgba(0,0,0,0)');
   fg.nodeRelSize(1);
   // force-graph uses sqrt(val) * nodeRelSize for force-layout sizing
@@ -124,6 +163,27 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   fg.cooldownTicks(120);
 
   let citations = new Map<string, number>();
+  let firstNonEmptyRender = true;
+
+  let currentLayout: LayoutKind = opts.layout ?? opts.settings.defaultLayout ?? 'force';
+  let currentFromIso: string | undefined = opts.fromIso;
+  let currentToIso: string | undefined = opts.toIso;
+  let currentDiff: DiffSet | undefined = opts.diff;
+
+  function rangeFromAtoms(atoms: GraphNode[]): { from: string; to: string } {
+    let min = '';
+    let max = '';
+    for (const a of atoms) {
+      if (!a.createdAt) continue;
+      if (!min || a.createdAt < min) min = a.createdAt;
+      if (!max || a.createdAt > max) max = a.createdAt;
+    }
+    if (!min) {
+      const now = new Date().toISOString();
+      return { from: now, to: now };
+    }
+    return { from: min, to: max };
+  }
 
   function applyData(): void {
     const data = opts.state.toGraphData();
@@ -136,7 +196,39 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
     } else {
       citations = countIncomingCitations(data.nodes);
     }
+
+    const fallback = rangeFromAtoms(data.nodes);
+    const fromIso = currentFromIso ?? fallback.from;
+    const toIso = currentToIso ?? fallback.to;
+    const rect = container.getBoundingClientRect();
+    applyLayout(data.nodes, {
+      kind: currentLayout,
+      width: Math.max(100, rect.width),
+      height: Math.max(100, rect.height),
+      fromIso,
+      toIso,
+    });
+
     fg.graphData(data);
+
+    // Force layout: warm the simulation. Timeline: freeze.
+    if (currentLayout === 'force') {
+      fg.cooldownTicks(120);
+      fg.resumeAnimation?.();
+    } else {
+      fg.cooldownTicks(0);
+      fg.pauseAnimation?.();
+    }
+
+    // Auto-zoom-to-fit on the first non-empty render so a single-atom
+    // store (e.g. an agent dir with one file) doesn't render as a tiny
+    // dot at canvas origin. Force layout: wait for the simulation to
+    // settle first; timeline: positions are pinned, fit immediately.
+    if (firstNonEmptyRender && data.nodes.length > 0) {
+      firstNonEmptyRender = false;
+      const fitDelay = currentLayout === 'force' ? 600 : 0;
+      setTimeout(() => fg.zoomToFit?.(400, 60), fitDelay);
+    }
   }
 
   fg.nodeCanvasObjectMode(() => 'replace');
@@ -145,14 +237,16 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
     const baseRadius = opts.settings.nodeChannels.size
       ? f2NodeSize(citations.get(node.id) ?? 0)
       : 6;
-    const opacity = opts.settings.nodeChannels.opacity ? f2NodeOpacity(node) : 1.0;
+    let opacity = opts.settings.nodeChannels.opacity ? f2NodeOpacity(node) : 1.0;
+    if (currentDiff) opacity = diffNodeOpacity(currentDiff.classify(node.id), opacity);
     if (opacity <= 0) return;
 
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.beginPath();
     ctx.arc(node.x ?? 0, node.y ?? 0, baseRadius, 0, 2 * Math.PI);
-    ctx.fillStyle = f2NodeColor(node);
+    const baseColor = f2NodeColor(node);
+    ctx.fillStyle = currentDiff ? diffNodeColor(currentDiff.classify(node.id), baseColor) : baseColor;
     ctx.fill();
 
     if (opts.settings.nodeChannels.border) {
@@ -183,7 +277,13 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
 
   fg.linkColor((link: GraphLink) => {
     const rel = linkAsRelation(link);
-    return hexToRgba(f2EdgeColor(rel), f2EdgeOpacity(rel));
+    const baseHex = f2EdgeColor(rel);
+    const baseAlpha = f2EdgeOpacity(rel);
+    if (!currentDiff) return hexToRgba(baseHex, baseAlpha);
+    const sId = typeof link.source === 'string' ? link.source : (link.source as GraphNode).id;
+    const tId = typeof link.target === 'string' ? link.target : (link.target as GraphNode).id;
+    const overlayHex = diffEdgeColor(currentDiff.classify(sId), currentDiff.classify(tId), baseHex);
+    return hexToRgba(overlayHex, baseAlpha);
   });
   fg.linkWidth((link: GraphLink) => f2EdgeWidth(linkAsRelation(link)));
   fg.linkLineDash((link: GraphLink) => [...f2EdgeDash(linkAsRelation(link))]);
@@ -229,11 +329,25 @@ export function createRenderer(container: HTMLElement, opts: RendererOpts): Rend
   fg.height(container.clientHeight);
 
   return {
+    setLayout(kind: LayoutKind, fromIso?: string, toIso?: string): void {
+      currentLayout = kind;
+      currentFromIso = fromIso;
+      currentToIso = toIso;
+      applyData();
+    },
+    setDiff(diff: DiffSet | undefined): void {
+      currentDiff = diff;
+      // force-graph re-paints on its next animation frame; the closure
+      // updates above are picked up automatically. No graphData call needed
+      // because the data itself didn't change.
+      fg.refresh?.();
+    },
     destroy(): void {
       container.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('resize', updateOverlayPosition);
       window.removeEventListener('scroll', updateOverlayPosition, true);
       overlayResizeObserver.disconnect();
+      modalObserver.disconnect();
       unsubscribe();
       resizeObserver.disconnect();
       tooltip.destroy();
