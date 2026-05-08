@@ -261,6 +261,14 @@ export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.j
 export { extractFromLog } from './extract.js';
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
+// Observe (extract compressed observations from conversation logs)
+export { observeConversation } from './observe.js';
+export type { ObserveOptions, ObserveResult } from './observe.js';
+
+// Query classification (lightweight routing for recall strategies)
+export { classifyQuery } from './classify-query.js';
+export type { QueryRoute, ClassifyResult } from './classify-query.js';
+
 // Consolidate (lifecycle pipeline for promoting draft atoms)
 export { consolidateAtoms } from './consolidate.js';
 export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, ConsolidateAtomStatus } from './types.js';
