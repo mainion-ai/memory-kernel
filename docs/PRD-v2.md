@@ -11,26 +11,30 @@ All evaluations MUST report both metrics:
 - **Real-answer accuracy** — correct / non-abstention answers (synthesis quality)
 - **Abstention rate** — how often the system says "I don't have enough information" (retrieval gap)
 
-### Baselines (R12 — lean+rewrite pipeline, fixed GPT-4o judge)
+### Baselines (R15b — observer pipeline, fixed GPT-4o judge)
 
-| Type | Overall | Real-Answer Acc | Abstention Rate | N |
-|------|---------|----------------|-----------------|---|
-| single-session-user | 74% | 94% | 27% | 70 |
-| single-session-assistant | 75% | 95% | 21% | 56 |
-| single-session-preference | 27% | 50% | 53% | 30 |
-| knowledge-update | 40% | 50% | 31% | 78 |
-| temporal-reasoning | 11% | 29% | 77% | 133 |
-| multi-session | 9% | 2% | 70% | 133 |
-| **Overall** | **32.0%** | **57.3%** | **53.2%** | **500** |
+| Type | Accuracy | N |
+|------|----------|---|
+| single-session-user | 94% | 70 |
+| knowledge-update | 72% | 78 |
+| single-session-assistant | 66% | 56 |
+| multi-session | 52% | 133 |
+| single-session-preference | 50% | 30 |
+| temporal-reasoning | 46% | 133 |
+| **Overall** | **60.8%** | **500** |
+
+Abstention rate: **0%** (observer produces answers for all questions).
+
+Previous baseline (R12, retrieval-only): 32.0% overall, 53.2% abstention. Observer approach nearly doubled accuracy and eliminated abstentions entirely.
 
 ### Quality Gates for Merge
 
 | Gate | Threshold | Notes |
 |------|-----------|-------|
-| Overall accuracy | >= 32.0% (R12) | No regression from baseline |
+| Overall accuracy | >= 60.8% (R15b) | No regression from baseline |
 | All tests pass | 1105+ tests green | CI |
-| Abstention rate | <= 53.2% (R12) | Must not increase |
-| Per-type regression | <= 5pp for N<100, <= 2pp for N>=100 | Adjusted for sample size (SE ~4.5% at N=78) |
+| Abstention rate | 0% (R15b) | Observer eliminates abstention |
+| Per-type regression | <= 5pp for N<100, <= 2pp for N>=100 | Adjusted for sample size |
 
 ### Per-Layer Diagnostics (recommended)
 
@@ -39,7 +43,7 @@ When investigating regressions, check three layers separately:
 2. **Recall** — does mk recall retrieve atoms containing the answer?
 3. **Synthesis** — does the model extract the answer from retrieved context?
 
-R12 diagnostic found: 70% of failures are at Layer 2 (recall). Atoms exist but FTS doesn't find them. R13 (hybrid FTS + semantic) reduced abstention by 3.4pp but didn't fix multi-session or temporal.
+R12 diagnostic found: 70% of failures were at Layer 2 (recall). R13 (hybrid FTS + semantic) reduced abstention by 3.4pp. R14-R15b (observer approach) eliminated abstention entirely by compressing conversations into dated observations at ingestion time, bypassing retrieval.
 
 ### Benchmark Coverage
 
@@ -210,7 +214,7 @@ R12 diagnostic found: 70% of failures are at Layer 2 (recall). Atoms exist but F
 1. Issue created with requirement, motivation, acceptance criteria, and evidence
 2. Branch created, implementation, PR opened
 3. Taj runs LongMemEval on PR branch
-4. Quality gates checked: overall >= 32.0%, abstention <= 53.2%, no per-type regression > 5pp (N<100) or 2pp (N>=100), all tests pass
+4. Quality gates checked: overall >= 60.8%, abstention = 0%, no per-type regression > 5pp (N<100) or 2pp (N>=100), all tests pass
 5. PR merged to main
 
 ### Priority Labels
