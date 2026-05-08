@@ -13,7 +13,6 @@
  *   mk status                  Show memory stats
  *   mk wander                  Explore memory via spreading activation
  *   mk closure                 Compute operational closure metrics
- *   mk observe <log>            Extract observations from a conversation log
  */
 
 import { Command } from 'commander';
@@ -58,7 +57,6 @@ import { registerExtractCommand } from './extract.js';
 import { registerConsolidateCommand } from './consolidate.js';
 import { registerExportObsidianCommand } from './export-obsidian.js';
 import { registerObsidianInitCommand } from './obsidian-init.js';
-import { registerObserveCommand } from './observe.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -1270,6 +1268,5 @@ registerExtractCommand(program);
 registerConsolidateCommand(program);
 registerExportObsidianCommand(program);
 registerObsidianInitCommand(program);
-registerObserveCommand(program);
 
 program.parse();
