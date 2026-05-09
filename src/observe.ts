@@ -14,15 +14,13 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { assertWithinDir } from './store.js';
+import { callLLM, resolveProvider } from './llm.js';
+import type { LLMProvider } from './llm.js';
 
-const execFileAsync = promisify(execFile);
+export type { LLMProvider };
 
 // ── Types ───────────────────────────────────────────────────────────────────
-
-export type LLMProvider = 'claude' | 'ollama';
 
 export interface ObserveOptions {
   /** Path to the conversation log file. */
@@ -80,93 +78,6 @@ Format as dated bullet points. Use priority markers:
 Be concise but COMPLETE — capture everything that could be asked about later.
 Include brief context of HOW things were mentioned (helps answer temporal questions).`;
 
-// ── LLM Providers ───────────────────────────────────────────────────────────
-
-/**
- * Detect provider from model string.
- * Ollama models typically have "name:tag" form (e.g. "qwen2.5:14b").
- * Explicit provider option takes precedence.
- */
-function resolveProvider(provider?: LLMProvider, model?: string): LLMProvider {
-  if (provider) return provider;
-  if (model && model.includes(':')) return 'ollama';
-  return 'claude';
-}
-
-async function callClaude(
-  conversation: string,
-  opts: { model?: string; temperature: number; maxTokens: number },
-): Promise<string> {
-  const claudeBin = process.env.CLAUDE_PATH ?? 'claude';
-  const userPrompt = `Here is the conversation to extract observations from:\n\n${conversation}\n\nOutput observations as bullet points:`;
-
-  const args = [
-    '-p',
-    '--system-prompt', OBSERVER_SYSTEM_PROMPT,
-    '--max-tokens', String(opts.maxTokens),
-  ];
-
-  // Forward model if explicitly specified (e.g. "claude-sonnet-4-20250514")
-  if (opts.model) {
-    args.push('--model', opts.model);
-  }
-
-  const { stdout } = await execFileAsync(
-    claudeBin,
-    args,
-    {
-      encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 120_000,
-      input: userPrompt,
-    },
-  );
-
-  return stdout.trim();
-}
-
-async function callOllama(
-  conversation: string,
-  opts: { model: string; temperature: number; maxTokens: number; ollamaUrl?: string },
-): Promise<string> {
-  const prompt = `${OBSERVER_SYSTEM_PROMPT}\n\nHere is the conversation to extract observations from:\n\n${conversation}\n\nOutput observations as bullet points:`;
-  const ollamaUrl = opts.ollamaUrl ?? process.env.OLLAMA_URL ?? 'http://localhost:11434';
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-
-  let resp: Response;
-  try {
-    resp = await fetch(`${ollamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: opts.model,
-        prompt,
-        stream: false,
-        options: {
-          temperature: opts.temperature,
-          num_predict: opts.maxTokens,
-        },
-      }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!resp.ok) {
-    throw new Error(`Ollama API error: ${resp.status} ${resp.statusText}`);
-  }
-
-  const data = (await resp.json()) as { response?: string };
-  if (!data.response) {
-    throw new Error('Ollama returned no response');
-  }
-
-  return data.response.trim();
-}
-
 // ── Main ────────────────────────────────────────────────────────────────────
 
 /**
@@ -216,17 +127,12 @@ export async function observeConversation(opts: ObserveOptions): Promise<Observe
   }
 
   // ── Call LLM ──────────────────────────────────────────────────────────
-  const resolvedProvider = resolveProvider(provider, model);
+  const userPrompt = `Here is the conversation to extract observations from:\n\n${conversation}\n\nOutput observations as bullet points:`;
   let observations: string;
   try {
-    if (resolvedProvider === 'ollama') {
-      if (!model) {
-        throw new Error('--model is required when using Ollama provider');
-      }
-      observations = await callOllama(conversation, { model, temperature, maxTokens, ollamaUrl });
-    } else {
-      observations = await callClaude(conversation, { model, temperature, maxTokens });
-    }
+    observations = await callLLM(OBSERVER_SYSTEM_PROMPT, userPrompt, {
+      model, temperature, maxTokens, provider, ollamaUrl,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`Observer LLM call failed: ${msg}`);

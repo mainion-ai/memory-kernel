@@ -108,8 +108,25 @@ const MULTI_SESSION_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * Assistant-response signal patterns — queries about what the assistant
+ * said, suggested, recommended, or explained in conversation.
+ * Maps to: single-session-assistant type → observer route.
+ */
+const ASSISTANT_PATTERNS: RegExp[] = [
+  /\bwhat\s+did\s+(?:you|the\s+assistant)\s+(?:say|suggest|recommend|advise|explain)\b/i,
+  /\b(?:the\s+assistant|you)\s+(?:said|mentioned|explained|suggested|recommended|told\s+me|advised)\b/i,
+  /\byou\s+told\s+me\b/i,
+  /\byou\s+(?:said|mentioned)\s+(?:that|to|I\s+should)\b/i,
+  /\byour\s+(?:suggestion|recommendation|advice)\b/i,
+  /\bwhat\s+(?:you|the\s+assistant)\s+(?:suggested|recommended)\b/i,
+  /\bdid\s+you\s+(?:suggest|recommend|advise|mention)\b/i,
+  /\bthe\s+advice\s+you\s+gave\b/i,
+  /\b(?:in\s+(?:our|the)\s+conversation)\s*,?\s*you\b/i,
+];
+
+/**
  * Knowledge-update signal patterns — queries about specific technical
- * details, how-to information, or assistant-provided content.
+ * details, how-to information, or factual content.
  * Maps to: knowledge-update type → retrieval route.
  */
 const RETRIEVAL_PATTERNS: RegExp[] = [
@@ -118,8 +135,6 @@ const RETRIEVAL_PATTERNS: RegExp[] = [
   /\bcode\s+(?:for|to|that)\b/i,
   /\bstep(?:s|\-by\-step)\b/i,
   /\bexplain\s+(?:how|what|the)\b/i,
-  /\bwhat\s+(?:did\s+(?:you|the\s+assistant))\s+(?:say|suggest|recommend|explain)\b/i,
-  /\bthe\s+(?:assistant|you)\s+(?:said|mentioned|explained|suggested|recommended)\b/i,
   /\bspecific\s+(?:detail|instruction|recommendation)\b/i,
   /\bexact\s+(?:words|quote|response)\b/i,
   /\baccording\s+to\b/i,
@@ -148,15 +163,17 @@ export function classifyQuery(query: string): ClassifyResult {
   const personalScore = countMatches(query, PERSONAL_PATTERNS);
   const preferenceScore = countMatches(query, PREFERENCE_PATTERNS);
   const multiSessionScore = countMatches(query, MULTI_SESSION_PATTERNS);
+  const assistantScore = countMatches(query, ASSISTANT_PATTERNS);
   const retrievalScore = countMatches(query, RETRIEVAL_PATTERNS);
 
   if (temporalScore > 0) signals.push(`temporal:${temporalScore}`);
   if (personalScore > 0) signals.push(`personal:${personalScore}`);
   if (preferenceScore > 0) signals.push(`preference:${preferenceScore}`);
   if (multiSessionScore > 0) signals.push(`multi-session:${multiSessionScore}`);
+  if (assistantScore > 0) signals.push(`assistant:${assistantScore}`);
   if (retrievalScore > 0) signals.push(`retrieval:${retrievalScore}`);
 
-  const observerScore = temporalScore + personalScore + preferenceScore + multiSessionScore;
+  const observerScore = temporalScore + personalScore + preferenceScore + multiSessionScore + assistantScore;
 
   // Determine route and inferred type
   let route: QueryRoute;
@@ -178,9 +195,10 @@ export function classifyQuery(query: string): ClassifyResult {
     route = 'observer';
 
     // Determine specific inferred type
-    const maxObserverCategory = Math.max(temporalScore, personalScore, preferenceScore, multiSessionScore);
+    const maxObserverCategory = Math.max(temporalScore, personalScore, preferenceScore, multiSessionScore, assistantScore);
     if (temporalScore === maxObserverCategory) inferredType = 'temporal-reasoning';
     else if (personalScore === maxObserverCategory) inferredType = 'single-session-user';
+    else if (assistantScore === maxObserverCategory) inferredType = 'single-session-assistant';
     else if (preferenceScore === maxObserverCategory) inferredType = 'single-session-preference';
     else if (multiSessionScore === maxObserverCategory) inferredType = 'multi-session';
 

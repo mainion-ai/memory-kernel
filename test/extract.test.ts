@@ -21,11 +21,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Mock execFileSync to return a fixed JSON response. */
+/** Mock Claude CLI (execFile async) to return a fixed JSON response. */
 function mockClaude(candidates: object[]) {
   return vi.mock('child_process', () => ({
-    execFileSync: () => JSON.stringify(candidates),
-    execFile: vi.fn(),
+    execFile: (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify(candidates), '');
+    },
   }));
 }
 

@@ -12,7 +12,8 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
-import { observeConversation, type LLMProvider } from '../observe.js';
+import { observeConversation } from '../observe.js';
+import type { LLMProvider } from '../llm.js';
 
 /** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
 function exitWithError(message: string, json?: boolean): never {

@@ -90,6 +90,47 @@ describe('classifyQuery', () => {
     });
   });
 
+  // ── Assistant-response queries → observer ───────────────────────────────
+  describe('single-session-assistant queries', () => {
+    it('classifies "what did you suggest" as observer', () => {
+      const result = classifyQuery('What did you suggest about the deployment steps?');
+      expect(result.route).toBe('observer');
+      expect(result.inferredType).toBe('single-session-assistant');
+    });
+
+    it('classifies "you recommended" as observer', () => {
+      const result = classifyQuery('You recommended using TypeScript for the project, right?');
+      expect(result.route).toBe('observer');
+      expect(result.inferredType).toBe('single-session-assistant');
+    });
+
+    it('classifies "you told me" as observer', () => {
+      const result = classifyQuery('You told me to avoid using global state.');
+      expect(result.route).toBe('observer');
+    });
+
+    it('classifies "your suggestion" as observer', () => {
+      const result = classifyQuery('What was your suggestion for handling errors?');
+      expect(result.route).toBe('observer');
+    });
+
+    it('classifies "did you recommend" as observer', () => {
+      const result = classifyQuery('Did you recommend any particular database for this use case?');
+      expect(result.route).toBe('observer');
+    });
+
+    it('classifies "the advice you gave" as observer', () => {
+      const result = classifyQuery('Can you repeat the advice you gave about caching?');
+      expect(result.route).toBe('observer');
+    });
+
+    it('classifies "what did the assistant say" as observer', () => {
+      const result = classifyQuery('What did the assistant say about the deployment process?');
+      expect(result.route).toBe('observer');
+      expect(result.inferredType).toBe('single-session-assistant');
+    });
+  });
+
   // ── Knowledge-update / retrieval queries ────────────────────────────────
   describe('knowledge-update / retrieval queries', () => {
     it('classifies "how to" as retrieval', () => {
@@ -98,18 +139,13 @@ describe('classifyQuery', () => {
       expect(result.inferredType).toBe('knowledge-update');
     });
 
-    it('classifies "what did the assistant say" as retrieval', () => {
-      const result = classifyQuery('What did the assistant say about the deployment steps?');
-      expect(result.route).toBe('retrieval');
-    });
-
     it('classifies specific detail queries as retrieval', () => {
       const result = classifyQuery('What is the command syntax for the reindex operation?');
       expect(result.route).toBe('retrieval');
     });
 
     it('classifies "step by step" instructions as retrieval', () => {
-      const result = classifyQuery('Give me the step-by-step process the assistant explained for database migration');
+      const result = classifyQuery('Give me the step-by-step process for database migration');
       expect(result.route).toBe('retrieval');
     });
   });

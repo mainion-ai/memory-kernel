@@ -6,21 +6,44 @@ import os from 'os';
 // ── Top-level mocks (Fix #4: hoisted before module imports) ────────────────
 
 // vi.hoisted ensures these are available when vi.mock factories run
-const { mockExecFile, mockFetch } = vi.hoisted(() => ({
-  mockExecFile: vi.fn(),
+const { mockSpawn, mockFetch } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
   mockFetch: vi.fn(),
 }));
 
 vi.mock('child_process', () => ({
-  execFile: mockExecFile,
+  spawn: mockSpawn,
 }));
 
 vi.stubGlobal('fetch', mockFetch);
+
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
 
 import { observeConversation } from '../src/observe.js';
 
 let testDir: string;
 let logFile: string;
+
+/** Create a mock child process that emits stdout data and closes with code 0. */
+function createMockProcess(stdoutData: string, code = 0) {
+  const proc = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: PassThrough;
+  };
+  proc.stdout = new PassThrough();
+  proc.stderr = new PassThrough();
+  proc.stdin = new PassThrough();
+
+  // Schedule stdout data + close after spawn returns
+  process.nextTick(() => {
+    proc.stdout.emit('data', Buffer.from(stdoutData));
+    proc.emit('close', code);
+  });
+
+  return proc;
+}
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-observe-'));
@@ -43,13 +66,9 @@ function writeLog(content: string) {
   fs.writeFileSync(logFile, content, 'utf-8');
 }
 
-/** Configure the Claude mock (execFile) to return given output. */
+/** Configure the Claude mock (spawn) to return given output. */
 function mockClaudeResponse(output: string) {
-  mockExecFile.mockImplementation(
-    (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error | null, result: { stdout: string; stderr: string }) => void) => {
-      callback(null, { stdout: output, stderr: '' });
-    },
-  );
+  mockSpawn.mockImplementation(() => createMockProcess(output));
 }
 
 /** Configure the Ollama mock (fetch) to return given output. */
@@ -93,16 +112,31 @@ describe('observeConversation', () => {
   });
 
   it('skips lines when --skip-lines is set', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], opts: { input?: string }, callback: (err: Error | null, result: { stdout: string; stderr: string }) => void) => {
-        const input = opts.input ?? '';
-        if (input.includes('PREAMBLE LINE')) {
-          callback(new Error('Preamble should have been skipped'), { stdout: '', stderr: '' });
-          return;
+    mockSpawn.mockImplementation(() => {
+      const proc = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        stdin: PassThrough;
+      };
+      proc.stdout = new PassThrough();
+      proc.stderr = new PassThrough();
+      proc.stdin = new PassThrough();
+
+      // Capture stdin to verify preamble was stripped
+      let stdinData = '';
+      proc.stdin.on('data', (chunk: Buffer) => { stdinData += chunk.toString(); });
+      proc.stdin.on('end', () => {
+        if (stdinData.includes('PREAMBLE LINE')) {
+          proc.stderr.emit('data', Buffer.from('Preamble should have been skipped'));
+          proc.emit('close', 1);
+        } else {
+          proc.stdout.emit('data', Buffer.from(SAMPLE_OBSERVATIONS));
+          proc.emit('close', 0);
         }
-        callback(null, { stdout: SAMPLE_OBSERVATIONS, stderr: '' });
-      },
-    );
+      });
+
+      return proc;
+    });
 
     writeLog('PREAMBLE LINE 1\nPREAMBLE LINE 2\nPREAMBLE LINE 3\nUSER: My name is Alex and I work at TechCorp as a software engineer. I prefer TypeScript.');
     const result = await observeConversation({
@@ -181,16 +215,29 @@ describe('observeConversation', () => {
   });
 
   it('truncates very long conversations', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], opts: { input?: string }, callback: (err: Error | null, result: { stdout: string; stderr: string }) => void) => {
-        const input = opts.input ?? '';
-        if (input.includes('[... truncated]')) {
-          callback(null, { stdout: '- Conversation was truncated', stderr: '' });
+    mockSpawn.mockImplementation(() => {
+      const proc = new EventEmitter() as EventEmitter & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+        stdin: PassThrough;
+      };
+      proc.stdout = new PassThrough();
+      proc.stderr = new PassThrough();
+      proc.stdin = new PassThrough();
+
+      let stdinData = '';
+      proc.stdin.on('data', (chunk: Buffer) => { stdinData += chunk.toString(); });
+      proc.stdin.on('end', () => {
+        if (stdinData.includes('[... truncated]')) {
+          proc.stdout.emit('data', Buffer.from('- Conversation was truncated'));
         } else {
-          callback(null, { stdout: SAMPLE_OBSERVATIONS, stderr: '' });
+          proc.stdout.emit('data', Buffer.from(SAMPLE_OBSERVATIONS));
         }
-      },
-    );
+        proc.emit('close', 0);
+      });
+
+      return proc;
+    });
 
     const longContent = 'USER: ' + 'x'.repeat(70000);
     writeLog(longContent);
@@ -206,14 +253,12 @@ describe('observeConversation', () => {
   // ── Fix #2/#3: Provider detection and model/temperature forwarding ─────
 
   it('forwards model and temperature to Claude CLI', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, args: string[], _opts: unknown, callback: (err: Error | null, result: { stdout: string; stderr: string }) => void) => {
-        // Verify model and temperature were passed
-        expect(args).toContain('--model');
-        expect(args).toContain('claude-sonnet-4-20250514');
-        callback(null, { stdout: SAMPLE_OBSERVATIONS, stderr: '' });
-      },
-    );
+    mockSpawn.mockImplementation((_cmd: string, args: string[]) => {
+      // Verify model was passed in args
+      expect(args).toContain('--model');
+      expect(args).toContain('claude-sonnet-4-20250514');
+      return createMockProcess(SAMPLE_OBSERVATIONS);
+    });
 
     writeLog(LONG_LOG);
     await observeConversation({
@@ -224,7 +269,7 @@ describe('observeConversation', () => {
       dryRun: true,
     });
 
-    expect(mockExecFile).toHaveBeenCalled();
+    expect(mockSpawn).toHaveBeenCalled();
   });
 
   it('auto-detects Ollama provider from model with colon', async () => {
@@ -241,7 +286,7 @@ describe('observeConversation', () => {
     expect(result.observations).toBe(SAMPLE_OBSERVATIONS);
     // fetch was called (Ollama path), not execFile (Claude path)
     expect(mockFetch).toHaveBeenCalled();
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
   it('uses explicit provider override', async () => {

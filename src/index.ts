@@ -264,6 +264,10 @@ export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.j
 export { extractFromLog } from './extract.js';
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
+// LLM abstraction (shared provider layer)
+export { callLLM, resolveProvider } from './llm.js';
+export type { LLMProvider, CallLLMOptions } from './llm.js';
+
 // Observe (extract compressed observations from conversation logs)
 export { observeConversation } from './observe.js';
 export type { ObserveOptions, ObserveResult } from './observe.js';

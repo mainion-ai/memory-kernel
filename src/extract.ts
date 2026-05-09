@@ -11,7 +11,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { callLLM } from './llm.js';
 import { createAtom } from './retain.js';
 import { indexExists, searchFts } from './index-db.js';
 import { generateAtomId, DEFAULT_TTLS } from './schema.js';
@@ -20,7 +20,6 @@ import type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom 
 
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom };
 
-const DEFAULT_MODEL_CLAUDE = 'claude';
 const DEFAULT_MAX_ATOMS = 20;
 
 // FTS rank threshold for possible_duplicate detection.
@@ -28,7 +27,7 @@ const DEFAULT_MAX_ATOMS = 20;
 // A rank < -2.0 indicates a strong match.
 const DUPLICATE_RANK_THRESHOLD = -2.0;
 
-const SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, beliefs, and assistant-generated content worth remembering long-term.
+const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, beliefs, and assistant-generated content worth remembering long-term.
 
 Pay special attention to the assistant's contributions:
 - Recommendations and suggestions the assistant made
@@ -61,14 +60,6 @@ Rules:
 Output a JSON array of atom objects. If nothing is worth extracting, output [].`;
 
 /**
- * Detect if a model string refers to an Ollama model.
- * Ollama models typically have the form "name:tag" (e.g. "qwen2.5:14b").
- */
-function isOllamaModel(model: string): boolean {
-  return model.includes(':');
-}
-
-/**
  * Parse LLM response — strips code fences, returns array of CandidateAtom.
  */
 function parseLLMResponse(raw: string): CandidateAtom[] {
@@ -92,64 +83,6 @@ function parseLLMResponse(raw: string): CandidateAtom[] {
     throw new Error(`LLM returned non-array: ${typeof parsed}`);
   }
   return parsed as CandidateAtom[];
-}
-
-/**
- * Call claude -p subprocess for extraction.
- */
-function callClaude(
-  logContent: string,
-  opts: { maxAtoms: number },
-): CandidateAtom[] {
-  const systemPrompt = SYSTEM_PROMPT.replace('{{max_atoms}}', String(opts.maxAtoms));
-  const userPrompt = `Here is the conversation log to extract atoms from:\n\n${logContent}`;
-
-  const claudeBin = process.env.CLAUDE_PATH ?? 'claude';
-  const output = execFileSync(
-    claudeBin,
-    ['-p', '--system-prompt', systemPrompt],
-    { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 120_000, input: userPrompt },
-  );
-
-  return parseLLMResponse(output);
-}
-
-/**
- * Call Ollama HTTP API for extraction.
- */
-async function callOllama(
-  logContent: string,
-  opts: { model: string; maxAtoms: number; ollamaUrl?: string },
-): Promise<CandidateAtom[]> {
-  const systemPrompt = SYSTEM_PROMPT.replace('{{max_atoms}}', String(opts.maxAtoms));
-  const prompt = `${systemPrompt}\n\nHere is the conversation log to extract atoms from:\n\n${logContent}`;
-  const ollamaUrl = opts.ollamaUrl ?? 'http://localhost:11434';
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-
-  let resp: Response;
-  try {
-    resp = await fetch(`${ollamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: opts.model, prompt, stream: false }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!resp.ok) {
-    throw new Error(`Ollama API error: ${resp.status} ${resp.statusText}`);
-  }
-
-  const data = (await resp.json()) as { response?: string };
-  if (!data.response) {
-    throw new Error('Ollama returned no response');
-  }
-
-  return parseLLMResponse(data.response);
 }
 
 /**
@@ -227,14 +160,12 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
   }
 
   // --- Call LLM ---
+  const systemPrompt = EXTRACTION_SYSTEM_PROMPT.replace('{{max_atoms}}', String(maxAtoms));
+  const userPrompt = `Here is the conversation log to extract atoms from:\n\n${logContent}`;
   let candidates: CandidateAtom[];
   try {
-    if (model && isOllamaModel(model)) {
-      candidates = await callOllama(logContent, { model, maxAtoms });
-    } else {
-      // Use claude -p subprocess (synchronous)
-      candidates = callClaude(logContent, { maxAtoms });
-    }
+    const raw = await callLLM(systemPrompt, userPrompt, { model });
+    candidates = parseLLMResponse(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`LLM extraction failed: ${msg}`);
