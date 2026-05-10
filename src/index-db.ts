@@ -636,9 +636,9 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
   const conditions: string[] = [];
   const params: unknown[] = [];
 
-    // Exclude archived/expired by default — only when no explicit status filter is given
+    // Exclude archived/expired/superseded by default — only when no explicit status filter is given
     if (!query.statuses || query.statuses.length === 0) {
-      conditions.push("a.status NOT IN ('archived', 'expired')");
+      conditions.push("a.status NOT IN ('archived', 'expired', 'superseded')");
     }
 
     // Exclude SECRET and PERSONAL by default

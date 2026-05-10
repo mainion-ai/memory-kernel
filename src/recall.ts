@@ -880,8 +880,13 @@ function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
   return atoms.filter((atom) => {
     const fm = atom.frontmatter;
 
-    // Exclude archived/expired by default
-    if (fm.status === 'archived' || fm.status === 'expired') return false;
+    // Exclude archived/expired/superseded by default
+    if (
+      fm.status === 'archived' ||
+      fm.status === 'expired' ||
+      fm.status === 'superseded'
+    )
+      return false;
 
     // Exclude SECRET and PERSONAL by default
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') return false;

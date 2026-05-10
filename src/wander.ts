@@ -177,7 +177,7 @@ function loadAtomGraph(memoryDir: string, now: number, options?: Pick<WanderOpti
   const db = openIndex(memoryDir);
 
   const ATOM_FILTER = `
-    a.status NOT IN ('archived', 'expired')
+    a.status NOT IN ('archived', 'expired', 'superseded')
     AND a.type != 'conflict'
     AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
   `;
