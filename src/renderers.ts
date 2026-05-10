@@ -51,10 +51,13 @@ function enforceBudget(lines: string[], budget?: ViewBudget): string[] {
   return truncated;
 }
 
-/** Filter to non-archived, non-expired atoms. */
+/** Filter to non-archived, non-expired, non-superseded atoms. */
 function activeAtoms(atoms: Atom[]): Atom[] {
   return atoms.filter(
-    (a) => a.frontmatter.status !== 'archived' && a.frontmatter.status !== 'expired',
+    (a) =>
+      a.frontmatter.status !== 'archived' &&
+      a.frontmatter.status !== 'expired' &&
+      a.frontmatter.status !== 'superseded',
   );
 }
 
