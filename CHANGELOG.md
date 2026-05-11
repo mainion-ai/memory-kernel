@@ -19,6 +19,14 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.16.1] — 2026-05-12
+
+### Fixed — superseded atoms excluded from active views
+
+- **Exclude `superseded` atoms from default filters** across `renderers.ts` (CLAUDE.md render), `recall.ts` (file-scan recall), `index-db.ts` (indexed recall), and `wander.ts` (spreading activation). Previously, superseded atoms rendered live alongside their canonical successors and showed up in recall/wander results, defeating the point of supersession. Default views now hide them; explicit `query.statuses: ['superseded']` still retrieves them.
+- **`filterAtoms` (file-scan recall) now honours explicit status filters.** The default `archived`/`expired`/`superseded` exclusion was previously unconditional, so callers passing `query.statuses: ['superseded']` got zero results from the file-scan path while the index path correctly returned them. Both paths now share the same gate — exclusion only applies when no explicit `statuses` filter is given.
+- **`buildGraphFromFiles` (wander file-scan fallback) now excludes `superseded`.** The index-backed `loadAtomGraph` was updated but the file-scan fallback was missed, creating divergent graph contents depending on whether the SQLite index existed. The two paths now agree, restoring the parity the `wanderFromFiles` docstring promises.
+
 ## [1.16.0] — 2026-04-25
 
 ### Added — Obsidian-native atom compatibility

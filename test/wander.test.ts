@@ -595,6 +595,40 @@ describe('wander — spreading activation', () => {
       const fileIds = new Set(fileResult.activated.map(a => a.atom_id));
       expect(fileIds).toEqual(indexIds);
     });
+
+    it('excludes superseded atoms in both index and file-scan paths', () => {
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'live-fact',
+        body: 'Live fact',
+        status: 'active',
+        scope: { tags: ['shared-tag'] },
+      });
+      createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'old-fact',
+        body: 'Old fact',
+        status: 'superseded',
+        scope: { tags: ['shared-tag'] },
+      });
+
+      const opts = { memoryDir: testDir, seedTags: ['shared-tag'], steps: 1, threshold: 0.0 };
+
+      // File-scan path
+      const fileResult = wanderFromFiles(opts);
+      const fileIds = new Set(fileResult.activated.map(a => a.atom_id));
+      const fileBodies = fileResult.activated.map(a => a.atom_id).join(',');
+      expect(fileBodies).not.toContain('old-fact');
+
+      // Index path
+      reindex(testDir);
+      const indexResult = wander(opts);
+      const indexIds = new Set(indexResult.activated.map(a => a.atom_id));
+
+      expect(fileIds).toEqual(indexIds);
+    });
   });
 
   describe('edge cases', () => {

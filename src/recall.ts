@@ -916,8 +916,15 @@ function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
   return atoms.filter((atom) => {
     const fm = atom.frontmatter;
 
-    // Exclude archived/expired by default
-    if (fm.status === 'archived' || fm.status === 'expired') return false;
+    // Exclude archived/expired/superseded by default — only when no explicit status filter is given
+    if (!query.statuses || query.statuses.length === 0) {
+      if (
+        fm.status === 'archived' ||
+        fm.status === 'expired' ||
+        fm.status === 'superseded'
+      )
+        return false;
+    }
 
     // Exclude SECRET and PERSONAL by default
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') return false;
@@ -925,7 +932,7 @@ function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
     // Filter by type
     if (query.types && !query.types.includes(fm.type)) return false;
 
-    // Filter by status
+    // Filter by status (explicit filter overrides the default exclusion above)
     if (query.statuses && !query.statuses.includes(fm.status)) return false;
 
     // Filter by tags
