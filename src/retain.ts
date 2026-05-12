@@ -22,7 +22,7 @@ import type { Atom, AtomFrontmatter, AtomStatus, AtomType, Classification, Relat
  * Serialize an atom snapshot, encrypting it if the atom is SECRET and a key is available.
  * Keeps the event log free of plaintext content for SECRET atoms.
  */
-function snapshotAtom(atom: Atom): string {
+export function snapshotAtom(atom: Atom): string {
   const raw = serializeAtom(atom);
   if (atom.frontmatter.classification === 'SECRET') {
     const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);

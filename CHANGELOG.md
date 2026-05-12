@@ -19,6 +19,21 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.17.0] — 2026-05-12
+
+### Added — `mk supersede` hardening
+
+- **`mk supersede` now emits V2 mutation events** with `schema_version: 2` and `atom_snapshot`, restoring the `compactLog` invariant (the post-supersede atom state can be reconstructed from the event log alone). Previously both `appendEvent` calls used V1 format and broke replay determinism.
+- **New `--agent-id`, `--session-id`, and `--dry-run` flags** on `mk supersede`. Event payloads now carry the real agent/session instead of the hardcoded `'cli'` / `'mk-supersede'`. `--dry-run` reports planned changes without writing files or appending events.
+- **Independent idempotency for both halves of supersede.** Re-running `mk supersede A B` after a partial-state crash (e.g. old marked superseded but new missing its `supersedes` relation, or vice versa) now repairs whichever half is missing instead of returning early.
+- **`supersedeAtoms()` exported as a pure function** from `src/cli/supersede.ts` for programmatic use and direct testing.
+- **`snapshotAtom()` exported from the package barrel** (`src/index.ts`) so CLI commands and downstream consumers can produce SECRET-aware event snapshots without re-implementing the helper.
+
+### Fixed — defense-in-depth on relation writes
+
+- **`mk supersede` and `mk relate` now call `assertWithinDir(memoryDir, file)` before every `writeAtom`.** Both commands derive file paths from user-supplied atom IDs via index lookup or scan; the guard prevents a corrupted index from steering writes outside the memory tree.
+- **`mk relate` now stamps `frontmatter.updated_at` on relation additions**, matching the convention enforced in `src/retain.ts`. Previously the on-disk timestamp drifted away from the actual last-mutation time.
+
 ## [1.16.1] — 2026-05-12
 
 ### Fixed — superseded atoms excluded from active views

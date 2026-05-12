@@ -137,7 +137,7 @@ export { replay, replayFromFile } from './replay.js';
 export { bootstrapEvents } from './bootstrap.js';
 
 // Operations
-export { createAtom, updateAtom, archiveAtom, resolveConflict } from './retain.js';
+export { createAtom, updateAtom, archiveAtom, resolveConflict, snapshotAtom } from './retain.js';
 export type {
   RetainOptions,
   ResolveConflictOptions,

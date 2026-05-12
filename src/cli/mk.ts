@@ -59,6 +59,7 @@ import { registerConsolidateCommand } from './consolidate.js';
 import { registerExportObsidianCommand } from './export-obsidian.js';
 import { registerObsidianInitCommand } from './obsidian-init.js';
 import { registerObserveCommand } from './observe.js';
+import { registerSupersedeCommand } from './supersede.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -1272,5 +1273,6 @@ registerConsolidateCommand(program);
 registerExportObsidianCommand(program);
 registerObsidianInitCommand(program);
 registerObserveCommand(program);
+registerSupersedeCommand(program);
 
 program.parse();

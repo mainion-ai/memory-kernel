@@ -4,7 +4,6 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
 import {
@@ -16,6 +15,8 @@ import {
   getRelationsForAtom,
   openIndex,
 } from '../index.js';
+import { assertWithinDir } from '../store.js';
+import { normalizeTimestamp } from '../format.js';
 import { RELATION_TYPES } from '../types.js';
 import type { Relation } from '../types.js';
 
@@ -85,6 +86,11 @@ export function registerRelateCommand(program: Command): void {
         ...existingRelations,
         { target: targetId, type: relationType as Relation['type'] },
       ];
+      atom.frontmatter.updated_at = normalizeTimestamp();
+
+      // Defense-in-depth: sourceFile is derived from a user-supplied atom ID
+      // via index lookup or scan; assert it lives under memoryDir before I/O.
+      assertWithinDir(memoryDir, sourceFile);
 
       // Write updated atom
       writeAtom(atom, sourceFile);
