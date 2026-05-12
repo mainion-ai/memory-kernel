@@ -19,8 +19,12 @@ import {
   openIndex,
   readEvents,
   getRelationsForAtom,
+  indexExists,
 } from '../src/index.js';
+import { isEncrypted } from '../src/crypto.js';
 import { supersedeAtoms } from '../src/cli/supersede.js';
+
+const TEST_ENC_KEY = 'c0ffee00'.repeat(8);
 
 let testDir: string;
 
@@ -266,6 +270,14 @@ describe('supersedeAtoms — idempotency', () => {
 
     const reReadOld = readAtom(oldAtom.filePath!);
     expect(reReadOld.frontmatter.status).toBe('superseded');
+
+    // Symmetric with the repair-missing-relation case: exactly one event,
+    // tagged with the half that was actually repaired.
+    const supersedeEvents = readEvents(testDir).filter(
+      (e) => e.action === 'atom_updated' && e.meta?.operation === 'supersede',
+    );
+    expect(supersedeEvents).toHaveLength(1);
+    expect(supersedeEvents[0].meta?.role).toBe('old');
   });
 });
 
@@ -333,9 +345,91 @@ describe('supersedeAtoms — path traversal guard', () => {
         oldAtomId: 'FACT-2020-01-01-EVIL-aaa',
         newAtomId: newAtom.frontmatter.id,
       }),
-    ).toThrow(/outside|escape|directory/i);
+    ).toThrow(/Path traversal denied/);
 
     closeAllIndexes();
     fs.rmSync(evilDir, { recursive: true, force: true });
+  });
+});
+
+describe('supersedeAtoms — index-absent fallback', () => {
+  it('falls back to file scan when the index does not exist', () => {
+    const oldAtom = mkAtom('o', 'o body');
+    const newAtom = mkAtom('n', 'n body');
+
+    // Tear down the index entirely. findAtomFile's index branch must not
+    // run, forcing the file-scan path that is the only safety net when
+    // the index is corrupted or missing.
+    closeAllIndexes();
+    const dbFile = path.join(testDir, '.memory-index.db');
+    fs.rmSync(dbFile, { force: true });
+    expect(indexExists(testDir)).toBe(false);
+
+    const result = supersedeAtoms({
+      memoryDir: testDir,
+      oldAtomId: oldAtom.frontmatter.id,
+      newAtomId: newAtom.frontmatter.id,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.old_status_changed).toBe(true);
+    expect(result.relation_added).toBe(true);
+
+    const reReadOld = readAtom(oldAtom.filePath!);
+    expect(reReadOld.frontmatter.status).toBe('superseded');
+    const reReadNew = readAtom(newAtom.filePath!);
+    expect(reReadNew.frontmatter.relations).toEqual([
+      { target: oldAtom.frontmatter.id, type: 'supersedes' },
+    ]);
+  });
+});
+
+describe('supersedeAtoms — SECRET atom integration', () => {
+  beforeEach(() => {
+    process.env.MEMORY_ENCRYPTION_KEY = TEST_ENC_KEY;
+  });
+  afterEach(() => {
+    delete process.env.MEMORY_ENCRYPTION_KEY;
+  });
+
+  it('encrypts atom_snapshot on emitted events when atoms are SECRET-classified', () => {
+    const oldAtom = createAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'old-secret',
+      body: 'TOP-SECRET-OLD-PAYLOAD-XYZZY',
+      classification: 'SECRET',
+    });
+    const newAtom = createAtom({
+      memoryDir: testDir,
+      agent_id: 'test',
+      session_id: 'test',
+      type: 'fact',
+      slug: 'new-secret',
+      body: 'TOP-SECRET-NEW-PAYLOAD-PLUGH',
+      classification: 'SECRET',
+    });
+
+    supersedeAtoms({
+      memoryDir: testDir,
+      oldAtomId: oldAtom.frontmatter.id,
+      newAtomId: newAtom.frontmatter.id,
+    });
+
+    const events = readEvents(testDir).filter(
+      (e) => e.action === 'atom_updated' && e.meta?.operation === 'supersede',
+    );
+    expect(events).toHaveLength(2);
+
+    for (const e of events) {
+      const snapshot = (e as any).atom_snapshot as string;
+      expect(typeof snapshot).toBe('string');
+      expect(isEncrypted(snapshot)).toBe(true);
+      // Plaintext bodies must not appear in the snapshot.
+      expect(snapshot).not.toContain('TOP-SECRET-OLD-PAYLOAD-XYZZY');
+      expect(snapshot).not.toContain('TOP-SECRET-NEW-PAYLOAD-PLUGH');
+    }
   });
 });

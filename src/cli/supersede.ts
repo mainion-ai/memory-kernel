@@ -1,8 +1,3 @@
-/**
- * CLI command for superseding atoms (fact currency management).
- * Marks old atom as superseded and adds a 'supersedes' relation on the new atom.
- */
-
 import fs from 'fs';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
@@ -20,7 +15,6 @@ import { appendEvent } from '../event-log.js';
 import { normalizeTimestamp } from '../format.js';
 import type { Relation } from '../types.js';
 
-/** JSON-aware error exit. */
 function exitWithError(message: string, json?: boolean): never {
   if (json) {
     console.log(JSON.stringify({ error: message }, null, 2));
@@ -30,10 +24,10 @@ function exitWithError(message: string, json?: boolean): never {
   process.exit(1);
 }
 
-/**
- * Find an atom's file path by ID.
- * Queries index first; falls back to full file scan.
- */
+// Index-first lookup with file-scan fallback. Failures are surfaced on stderr
+// (don't mask DB corruption, ABI mismatches, or malformed atoms) but don't
+// abort — a degraded read path is better than a crash when the user is trying
+// to inspect or repair memory.
 function findAtomFile(memoryDir: string, atomId: string): string | null {
   if (indexExists(memoryDir)) {
     try {
@@ -42,7 +36,11 @@ function findAtomFile(memoryDir: string, atomId: string): string | null {
         | { file_path: string }
         | undefined;
       if (row?.file_path) return row.file_path;
-    } catch { /* fall through to file scan */ }
+    } catch (err) {
+      process.stderr.write(
+        `⚠ Index query failed for ${atomId} (${(err as Error).message}); falling back to file scan.\n`,
+      );
+    }
   }
 
   const files = listAtomFiles(memoryDir);
@@ -50,7 +48,9 @@ function findAtomFile(memoryDir: string, atomId: string): string | null {
     try {
       const atom = readAtom(fp);
       if (atom.frontmatter.id === atomId) return fp;
-    } catch { /* skip corrupted files */ }
+    } catch (err) {
+      process.stderr.write(`⚠ Skipped unreadable atom file ${fp}: ${(err as Error).message}\n`);
+    }
   }
   return null;
 }
@@ -61,7 +61,6 @@ export interface SupersedeOptions {
   newAtomId: string;
   agent_id?: string;
   session_id?: string;
-  /** If true, compute the result but do not write any files or emit events. */
   dryRun?: boolean;
 }
 
@@ -75,11 +74,9 @@ export interface SupersedeResult {
 }
 
 /**
- * Core supersede logic, exported for direct programmatic use and tests.
- *
- * Idempotency: both halves are checked independently — re-running after a
- * partial-state crash (old marked superseded but new missing the relation,
- * or vice versa) will repair whichever half is missing.
+ * Idempotent both halves: each is checked independently, so re-running after a
+ * partial-state crash (old marked superseded but new missing the relation, or
+ * vice versa) repairs whichever half is missing without duplicating the other.
  */
 export function supersedeAtoms(opts: SupersedeOptions): SupersedeResult {
   const { memoryDir, oldAtomId, newAtomId } = opts;
@@ -107,8 +104,6 @@ export function supersedeAtoms(opts: SupersedeOptions): SupersedeResult {
   const oldAtom = readAtom(oldFile);
   const newAtom = readAtom(newFile);
 
-  // Independent idempotency checks: a partial-state run could leave the
-  // old atom superseded without the new atom's relation, or vice versa.
   const oldNeedsStatus = oldAtom.frontmatter.status !== 'superseded';
 
   const existingRelations: Relation[] = newAtom.frontmatter.relations ?? [];
@@ -155,7 +150,6 @@ export function supersedeAtoms(opts: SupersedeOptions): SupersedeResult {
     writeAtom(newAtom, newFile);
   }
 
-  // Re-index whichever atoms were touched.
   if (indexExists(memoryDir)) {
     if (oldNeedsStatus) {
       oldAtom.filePath = oldFile;
@@ -169,6 +163,9 @@ export function supersedeAtoms(opts: SupersedeOptions): SupersedeResult {
 
   // Emit V2 mutation events with atom_snapshot so compactLog can preserve
   // the post-supersede atom state (see CODING_INSTRUCTIONS.md §Log compaction invariant).
+  // Order matches retain.ts: writeAtom → appendEvent. A crash between the two
+  // leaves disk ahead of the log; replay would then reconstruct the pre-supersede
+  // snapshot until the next supersede run repairs the half via idempotency.
   if (oldNeedsStatus) {
     appendEvent(memoryDir, 'atom_updated', {
       agent_id: agentId,
@@ -204,16 +201,8 @@ export function supersedeAtoms(opts: SupersedeOptions): SupersedeResult {
   };
 }
 
-/**
- * Register `mk supersede <old-atom-id> <new-atom-id>` command.
- *
- * Marks the old atom as superseded and records a 'supersedes' relation
- * on the new atom pointing back to the old one.
- *
- * This fixes the append-only fact currency problem: when a fact changes
- * (e.g. user moved from NYC to Boston), the old atom is retired so
- * recall/render pipelines skip it.
- */
+// Superseded atoms are excluded from default recall/render — the durable
+// invariant callers rely on after invoking this command.
 export function registerSupersedeCommand(program: Command): void {
   program
     .command('supersede')
@@ -255,7 +244,7 @@ export function registerSupersedeCommand(program: Command): void {
           dryRun: opts.dryRun,
         });
       } catch (err) {
-        exitWithError((err as Error).message, opts.json);
+        exitWithError(err instanceof Error ? err.message : String(err), opts.json);
       }
 
       if (opts.json) {

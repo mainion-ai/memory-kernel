@@ -19,6 +19,20 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.17.1] — 2026-05-12
+
+### Fixed — error-handling polish on `mk supersede` / `mk relate`
+
+- **`findAtomFile` in both `mk supersede` and `mk relate` now surfaces caught errors on stderr** instead of silently swallowing them. SQLite corruption, `better-sqlite3` ABI mismatches, permission errors, and malformed atom files were previously hidden behind a silent fallthrough to file scan; the user now sees `⚠ Index query failed for <id> (<msg>); falling back to file scan.` or `⚠ Skipped unreadable atom file <path>: <msg>`. The fallback to file scan still runs — the change is observability-only.
+- **`mk relate`'s mutation block is now wrapped in `try/catch → exitWithError`**, matching `mk supersede`. Previously `assertWithinDir`, `writeAtom`, or `indexAtom` throws would surface as raw Node stack traces; they now exit cleanly with the same error format as the rest of the command.
+- **`mk supersede`'s CLI catch handles non-`Error` throws** (`err instanceof Error ? err.message : String(err)`) instead of producing `undefined` for callers that `throw` strings or non-`Error` values.
+
+### Internal
+
+- **`mk supersede` writeAtom→appendEvent ordering hazard documented** inline at the V2-events block in `src/cli/supersede.ts`. The order matches the project-wide convention in `src/retain.ts`; a crash between the two leaves disk ahead of the log until the next supersede run repairs the half via the existing idempotency contract.
+- **Comment cleanup in `src/cli/supersede.ts`** to align with the "WHY-only" project convention: removed the file header, the `exitWithError` JSDoc, the `dryRun?` JSDoc, the "Re-index whichever..." inline comment, and the bug-history paragraph from `registerSupersedeCommand`. Shortened `supersedeAtoms` and `findAtomFile` docstrings; resolved the duplicated idempotency comment.
+- **New test coverage in `test/supersede.test.ts`** — `findAtomFile` index-absent fallback (deletes `.memory-index.db` mid-test), SECRET-atom integration (verifies `atom_snapshot` is encrypted and plaintext bodies don't leak into events), and symmetric event-count assertion on the repair-missing-status partial-state test. Path-traversal test now matches the stable `Path traversal denied` substring instead of the brittle `/outside|escape|directory/i` regex. Supersede test count: 9 → 14, total suite 1103/1103 passing.
+
 ## [1.17.0] — 2026-05-12
 
 ### Added — `mk supersede` hardening

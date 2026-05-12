@@ -65,40 +65,44 @@ export function registerRelateCommand(program: Command): void {
         process.stderr.write(`⚠ Target atom not found in index: ${targetId} (relation will be recorded but may not resolve)\n`);
       }
 
-      // Read source atom and update relations
-      const atom = readAtom(sourceFile);
-      const existingRelations: Relation[] = atom.frontmatter.relations ?? [];
+      try {
+        // Read source atom and update relations
+        const atom = readAtom(sourceFile);
+        const existingRelations: Relation[] = atom.frontmatter.relations ?? [];
 
-      // Idempotent: skip if (target, type) already exists
-      const alreadyExists = existingRelations.some(
-        (r) => r.target === targetId && r.type === relationType as Relation['type'],
-      );
-      if (alreadyExists) {
-        if (opts.json) {
-          console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: false }, null, 2));
+        // Idempotent: skip if (target, type) already exists
+        const alreadyExists = existingRelations.some(
+          (r) => r.target === targetId && r.type === relationType as Relation['type'],
+        );
+        if (alreadyExists) {
+          if (opts.json) {
+            console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: false }, null, 2));
+            return;
+          }
+          console.log(`✓ Relation already exists: ${sourceId} --[${relationType}]--> ${targetId}`);
           return;
         }
-        console.log(`✓ Relation already exists: ${sourceId} --[${relationType}]--> ${targetId}`);
-        return;
-      }
 
-      atom.frontmatter.relations = [
-        ...existingRelations,
-        { target: targetId, type: relationType as Relation['type'] },
-      ];
-      atom.frontmatter.updated_at = normalizeTimestamp();
+        atom.frontmatter.relations = [
+          ...existingRelations,
+          { target: targetId, type: relationType as Relation['type'] },
+        ];
+        atom.frontmatter.updated_at = normalizeTimestamp();
 
-      // Defense-in-depth: sourceFile is derived from a user-supplied atom ID
-      // via index lookup or scan; assert it lives under memoryDir before I/O.
-      assertWithinDir(memoryDir, sourceFile);
+        // Defense-in-depth: sourceFile is derived from a user-supplied atom ID
+        // via index lookup or scan; assert it lives under memoryDir before I/O.
+        assertWithinDir(memoryDir, sourceFile);
 
-      // Write updated atom
-      writeAtom(atom, sourceFile);
+        // Write updated atom
+        writeAtom(atom, sourceFile);
 
-      // Sync index if it exists
-      if (indexExists(memoryDir)) {
-        atom.filePath = sourceFile;
-        indexAtom(memoryDir, atom);
+        // Sync index if it exists
+        if (indexExists(memoryDir)) {
+          atom.filePath = sourceFile;
+          indexAtom(memoryDir, atom);
+        }
+      } catch (err) {
+        exitWithError(err instanceof Error ? err.message : String(err), opts.json);
       }
 
       if (opts.json) {
@@ -158,10 +162,10 @@ export function registerRelationsCommand(program: Command): void {
     });
 }
 
-/**
- * Find an atom's file path by ID.
- * Queries index first; falls back to full file scan.
- */
+// Index-first lookup with file-scan fallback. Failures are surfaced on stderr
+// (don't mask DB corruption, ABI mismatches, or malformed atoms) but don't
+// abort — a degraded read path is better than a crash when the user is trying
+// to inspect or repair memory.
 function findAtomFile(memoryDir: string, atomId: string): string | null {
   if (indexExists(memoryDir)) {
     try {
@@ -170,16 +174,21 @@ function findAtomFile(memoryDir: string, atomId: string): string | null {
         | { file_path: string }
         | undefined;
       if (row?.file_path) return row.file_path;
-    } catch { /* fall through to file scan */ }
+    } catch (err) {
+      process.stderr.write(
+        `⚠ Index query failed for ${atomId} (${(err as Error).message}); falling back to file scan.\n`,
+      );
+    }
   }
 
-  // File scan fallback
   const files = listAtomFiles(memoryDir);
   for (const fp of files) {
     try {
       const atom = readAtom(fp);
       if (atom.frontmatter.id === atomId) return fp;
-    } catch { /* skip corrupted files */ }
+    } catch (err) {
+      process.stderr.write(`⚠ Skipped unreadable atom file ${fp}: ${(err as Error).message}\n`);
+    }
   }
   return null;
 }
