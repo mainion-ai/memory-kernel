@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { callLLM } from './llm.js';
 import { createAtom } from './retain.js';
+import { insertTriples } from './triples.js';
 import { indexExists, searchFts } from './index-db.js';
 import { generateAtomId, DEFAULT_TTLS } from './schema.js';
 import type { AtomType, AtomFrontmatter } from './types.js';
@@ -46,6 +47,7 @@ For each item, output a JSON object with:
 - tags: string[] of relevant tags (use "role:assistant" for assistant-generated content, "role:user" for user-provided content)
 - confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions)
 - rationale: one sentence explaining why this is worth remembering
+- triples (optional): array of {subject, predicate, object} entity-relation triples extracted from the body. Use stable lower-cased predicates like "has_capital", "born_in", "works_at", "is_a". Triples enable semantic conflict detection so newer facts can supersede older ones.
 
 For PREFERENCE atoms specifically:
 - Set type to "preference"
@@ -291,6 +293,10 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
         scope,
         status: 'draft',
       });
+
+      if (candidate.triples && candidate.triples.length > 0) {
+        insertTriples(memoryDir, atom.frontmatter.id, candidate.triples);
+      }
 
       extracted++;
       atomResults.push({

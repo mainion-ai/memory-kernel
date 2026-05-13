@@ -337,6 +337,8 @@ export interface CandidateAtom {
   preference?: string;
   /** For preference atoms: context when/why the preference was expressed. */
   context?: string;
+  /** Optional entity-relation triples extracted by the LLM (#75 conflict detection). */
+  triples?: TripleInput[];
 }
 
 /** Result for a single extracted atom candidate. */
