@@ -19,6 +19,19 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.18.1] — 2026-05-13
+
+### Added — semantic conflict detection for `mk extract`
+
+- **Semantic conflict detection pipeline inside `mk extract`** (#75). New two-tier pipeline runs automatically after atoms are written:
+  - **Tier 1:** entity-triple extraction (LLM emits a `triples` field per candidate atom) and deterministic SQL matching on `(subject, predicate)` pairs with a disagreeing object value.
+  - **Tier 2:** cheap LLM confirmation per Tier-1 candidate via `callLLM()` (temperature 0, capped at 150 tokens).
+  - Confirmed conflicts automatically invoke `supersedeAtoms()` so the older atom is superseded by the newer one. Direction: newer-supersedes-older only.
+- **New SQLite table `entity_triples`** (schema v8 — existing indexes auto-rebuild on first open).
+- **New public API:** `detectAndResolveConflicts`, `confirmConflictWithLLM`, `insertTriples`, `getTriplesForAtom`, `findCandidateConflicts`; types `EntityTriple`, `TripleInput`, `ConflictCandidate`, `ConflictResolution`, `ConflictAction`.
+- **New CLI flags on `mk extract`:** `--no-conflict-detect` (disable the pipeline), `--conflict-confirm-model <model>` (override Tier-2 confirmation model).
+- **`ExtractResult` gains `conflicts: number`** (count of `action === 'superseded'`); **`ExtractedAtomResult` gains optional `conflicts: ConflictResolution[]`**.
+
 ## [1.18.0] — 2026-05-12
 
 ### Added — structured preference ingestion
