@@ -91,6 +91,38 @@ export interface Relation {
   type: RelationType;
 }
 
+// --- Entity Triple (Tier 1: semantic conflict detection) ---
+
+/**
+ * An entity-relation triple extracted from an atom body.
+ *
+ * Used by the conflict-detection layer (Tier 1) to find atoms that share a
+ * (subject, predicate) but disagree on the object. Triples are extracted at
+ * ingestion time by the LLM and persisted in the `entity_triples` SQLite table.
+ */
+export interface EntityTriple {
+  /** Atom this triple was extracted from. */
+  atom_id: string;
+  /** Entity that the predicate applies to (e.g. "France"). Lower-cased on insert. */
+  subject: string;
+  /** Relation type / predicate (e.g. "has_capital"). Lower-cased on insert. */
+  predicate: string;
+  /** Value of the predicate for the subject (e.g. "Paris"). Lower-cased on insert. */
+  object: string;
+  /** LLM-reported confidence in the extraction (0..1). */
+  confidence: number;
+  /** ISO8601 UTC timestamp when the triple was inserted. */
+  created_at: string;
+}
+
+/** Input form accepted from LLM candidates — no atom_id/created_at yet. */
+export interface TripleInput {
+  subject: string;
+  predicate: string;
+  object: string;
+  confidence?: number;
+}
+
 // --- Atom (frontmatter + body) ---
 
 export interface Atom {
