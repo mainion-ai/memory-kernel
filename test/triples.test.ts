@@ -181,3 +181,12 @@ describe('triples — Tier 1 candidate matching', () => {
     expect(candidates[0].new_triple.object).toBe('paris');
   });
 });
+
+describe('triples — public API surface', () => {
+  it('is re-exported from src/index.ts', async () => {
+    const mod = await import('../src/index.js');
+    expect(typeof mod.insertTriples).toBe('function');
+    expect(typeof mod.getTriplesForAtom).toBe('function');
+    expect(typeof mod.findCandidateConflicts).toBe('function');
+  });
+});

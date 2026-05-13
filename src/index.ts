@@ -280,6 +280,11 @@ export type { QueryRoute, ClassifyResult } from './classify-query.js';
 export { consolidateAtoms } from './consolidate.js';
 export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, ConsolidateAtomStatus } from './types.js';
 
+// Triples (entity-relation store for Tier-1 semantic conflict detection)
+export { insertTriples, getTriplesForAtom, findCandidateConflicts } from './triples.js';
+export type { EntityTriple, TripleInput } from './types.js';
+export type { ConflictCandidate } from './triples.js';
+
 // Obsidian-native compatibility
 export {
   RELATIONS_SENTINEL,
