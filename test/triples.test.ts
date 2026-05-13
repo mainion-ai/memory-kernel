@@ -81,6 +81,20 @@ describe('triples — insert and read', () => {
     insertTriples(testDir, atom.frontmatter.id, []);
     expect(getTriplesForAtom(testDir, atom.frontmatter.id)).toHaveLength(0);
   });
+
+  it('insertTriples skips rows with blank subject/predicate/object', () => {
+    openIndex(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'fact', slug: 'blanks', body: 'has blanks' });
+    insertTriples(testDir, atom.frontmatter.id, [
+      { subject: '', predicate: 'is', object: 'X' },          // blank subject — skip
+      { subject: 'A', predicate: '', object: 'X' },           // blank predicate — skip
+      { subject: 'A', predicate: 'is', object: '' },          // blank object — skip
+      { subject: 'A', predicate: 'is', object: 'B' },         // valid — keep
+    ]);
+    const got = getTriplesForAtom(testDir, atom.frontmatter.id);
+    expect(got).toHaveLength(1);
+    expect(got[0].object).toBe('b');
+  });
 });
 
 describe('triples — Tier 1 candidate matching', () => {
@@ -129,5 +143,41 @@ describe('triples — Tier 1 candidate matching', () => {
     const a = createAtom({ ...base(testDir), type: 'fact', slug: 'self', body: 'Y is Z.' });
     insertTriples(testDir, a.frontmatter.id, [{ subject: 'Y', predicate: 'is', object: 'Z' }]);
     expect(findCandidateConflicts(testDir, a.frontmatter.id)).toHaveLength(0);
+  });
+
+  it('returns one row per matching old triple when an old atom has multiple matches', () => {
+    openIndex(testDir);
+    const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'multi-old', body: 'multi-triple atom' });
+    insertTriples(testDir, oldAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Lyon' },
+      { subject: 'France', predicate: 'has_capital', object: 'Marseille' },
+    ]);
+    const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'multi-new', body: 'new fact' });
+    insertTriples(testDir, newAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Paris' },
+    ]);
+
+    const candidates = findCandidateConflicts(testDir, newAtom.frontmatter.id);
+    expect(candidates).toHaveLength(2);
+    const oldObjects = candidates.map((c) => c.old_triple.object).sort();
+    expect(oldObjects).toEqual(['lyon', 'marseille']);
+    expect(candidates.every((c) => c.old_atom_id === oldAtom.frontmatter.id)).toBe(true);
+  });
+
+  it('matches case-insensitively across atoms (both sides normalized at insert)', () => {
+    openIndex(testDir);
+    const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'mixed-old', body: 'mixed case old' });
+    insertTriples(testDir, oldAtom.frontmatter.id, [
+      { subject: 'FRANCE', predicate: 'Has_Capital', object: 'lyon' },     // upper subject, mixed predicate
+    ]);
+    const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'mixed-new', body: 'lower case new' });
+    insertTriples(testDir, newAtom.frontmatter.id, [
+      { subject: 'france', predicate: 'has_capital', object: 'PARIS' },    // lower subject, upper object
+    ]);
+
+    const candidates = findCandidateConflicts(testDir, newAtom.frontmatter.id);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].old_triple.object).toBe('lyon');
+    expect(candidates[0].new_triple.object).toBe('paris');
   });
 });
