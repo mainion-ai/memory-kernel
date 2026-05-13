@@ -47,6 +47,8 @@ export function registerExtractCommand(program: Command): void {
     .option('--model <model>', 'LLM model: omit for claude -p (default), or Ollama model e.g. "qwen2.5:14b"')
     .option('--max-atoms <n>', 'Max atoms to extract per run', '20')
     .option('--skip-lines <n>', 'Skip first N lines (e.g. to skip CLAUDE.md preamble)', '0')
+    .option('--no-conflict-detect', 'Disable Tier-1+Tier-2 semantic conflict detection during ingestion')
+    .option('--conflict-confirm-model <model>', 'LLM model used for Tier-2 conflict confirmation (default: same as --model)')
     .action(async (logPath: string, opts: {
       dir: string;
       agentId?: string;
@@ -56,6 +58,8 @@ export function registerExtractCommand(program: Command): void {
       model?: string;
       maxAtoms?: string;
       skipLines?: string;
+      conflictDetect?: boolean;
+      conflictConfirmModel?: string;
     }) => {
       const resolvedLog = path.resolve(logPath);
       if (!fs.existsSync(resolvedLog)) {
@@ -87,6 +91,8 @@ export function registerExtractCommand(program: Command): void {
           model: opts.model,
           maxAtoms,
           skipLines,
+          conflictDetect: opts.conflictDetect,
+          conflictConfirmModel: opts.conflictConfirmModel,
         });
 
         if (opts.json) {
@@ -119,6 +125,17 @@ export function registerExtractCommand(program: Command): void {
             );
           } else {
             console.log(`  ${icon} ${idDisplay} [new]`);
+          }
+        }
+
+        if (result.conflicts > 0) {
+          console.log(`\n  ${result.conflicts} auto-superseded by conflict detection`);
+          for (const a of result.atoms) {
+            for (const c of a.conflicts ?? []) {
+              if (c.action === 'superseded' || c.action === 'would_supersede') {
+                console.log(`    ↳ ${c.new_atom_id} supersedes ${c.old_atom_id} (${c.subject}.${c.predicate})`);
+              }
+            }
           }
         }
 

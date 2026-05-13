@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { Command } from 'commander';
 import {
   initMemoryDir, closeAllIndexes, openIndex,
 } from '../src/index.js';
@@ -9,6 +10,7 @@ import { getTriplesForAtom } from '../src/triples.js';
 import { extractFromLog } from '../src/extract.js';
 import { readAtom, getRelationsForAtom, createAtom } from '../src/index.js';
 import { insertTriples } from '../src/triples.js';
+import { registerExtractCommand } from '../src/cli/extract.js';
 
 let testDir: string;
 let logFile: string;
@@ -198,5 +200,16 @@ describe('extractFromLog — auto-supersede integration', () => {
     // Old atom remains active — no side-effects from dry-run
     const reReadOld = readAtom(oldAtom.filePath!);
     expect(reReadOld.frontmatter.status).not.toBe('superseded');
+  });
+});
+
+describe('mk extract CLI — conflict flags', () => {
+  it('registers --no-conflict-detect and --conflict-confirm-model options', () => {
+    const prog = new Command();
+    registerExtractCommand(prog);
+    const extractCmd = prog.commands.find((c) => c.name() === 'extract')!;
+    const optNames = extractCmd.options.map((o) => o.long);
+    expect(optNames).toContain('--no-conflict-detect');
+    expect(optNames).toContain('--conflict-confirm-model');
   });
 });
