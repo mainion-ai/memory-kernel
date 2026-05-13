@@ -3,7 +3,7 @@ import type { EntityTriple } from '../src/types.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { initMemoryDir, openIndex, closeAllIndexes } from '../src/index.js';
+import { initMemoryDir, openIndex, closeAllIndexes, reindex } from '../src/index.js';
 import { insertTriples, getTriplesForAtom, findCandidateConflicts } from '../src/triples.js';
 import { createAtom } from '../src/index.js';
 
@@ -138,6 +138,18 @@ describe('triples — Tier 1 candidate matching', () => {
     expect(findCandidateConflicts(testDir, newAtom.frontmatter.id)).toHaveLength(0);
   });
 
+  it('excludes expired atoms from candidates', () => {
+    openIndex(testDir);
+    const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'expired-old', body: 'X is A.' });
+    insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'X', predicate: 'is', object: 'A' }]);
+    const db = openIndex(testDir);
+    db.prepare("UPDATE atoms SET status = 'expired' WHERE atom_id = ?").run(oldAtom.frontmatter.id);
+
+    const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'expired-new', body: 'X is B.' });
+    insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'X', predicate: 'is', object: 'B' }]);
+    expect(findCandidateConflicts(testDir, newAtom.frontmatter.id)).toHaveLength(0);
+  });
+
   it('does not return the atom as its own candidate', () => {
     openIndex(testDir);
     const a = createAtom({ ...base(testDir), type: 'fact', slug: 'self', body: 'Y is Z.' });
@@ -179,6 +191,57 @@ describe('triples — Tier 1 candidate matching', () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0].old_triple.object).toBe('lyon');
     expect(candidates[0].new_triple.object).toBe('paris');
+  });
+});
+
+describe('triples — reindex preservation', () => {
+  it('preserves triples across reindex (atoms still exist)', () => {
+    openIndex(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'fact', slug: 'preserve', body: 'France capital is Paris.' });
+    insertTriples(testDir, atom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Paris', confidence: 0.9 },
+      { subject: 'Paris', predicate: 'in', object: 'France' },
+    ]);
+    expect(getTriplesForAtom(testDir, atom.frontmatter.id)).toHaveLength(2);
+
+    reindex(testDir);
+
+    const got = getTriplesForAtom(testDir, atom.frontmatter.id);
+    expect(got).toHaveLength(2);
+    const objects = got.map((t) => t.object).sort();
+    expect(objects).toEqual(['france', 'paris']);
+  });
+
+  it('reindex drops triples whose atom has been removed', () => {
+    openIndex(testDir);
+    const atom = createAtom({ ...base(testDir), type: 'fact', slug: 'orphan', body: 'X is Y.' });
+    insertTriples(testDir, atom.frontmatter.id, [{ subject: 'X', predicate: 'is', object: 'Y' }]);
+
+    // Delete the atom file (but leave the index row temporarily) — reindex must
+    // rebuild from files, so the orphaned triple should not survive.
+    const fp = atom.filePath;
+    if (fp) fs.rmSync(fp);
+
+    reindex(testDir);
+    expect(getTriplesForAtom(testDir, atom.frontmatter.id)).toHaveLength(0);
+  });
+
+  it('Tier-1 candidate matching still works after reindex', () => {
+    openIndex(testDir);
+    const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 't1-old', body: 'France capital is Lyon.' });
+    insertTriples(testDir, oldAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Lyon' },
+    ]);
+    const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 't1-new', body: 'France capital is Paris.' });
+    insertTriples(testDir, newAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Paris' },
+    ]);
+
+    reindex(testDir);
+
+    const candidates = findCandidateConflicts(testDir, newAtom.frontmatter.id);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].old_atom_id).toBe(oldAtom.frontmatter.id);
   });
 });
 

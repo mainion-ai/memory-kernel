@@ -320,6 +320,9 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     // Preserve embeddings across reindex — they are expensive to recompute (API calls).
     // Save to temp table before clearing atoms (FK cascade would wipe them).
     db.exec('CREATE TEMP TABLE IF NOT EXISTS _saved_embeddings AS SELECT * FROM atom_embeddings');
+    // Preserve entity triples — LLM-extracted at ingestion and not serialized in
+    // atom markdown, so reindex has no source of truth to rebuild from.
+    db.exec('CREATE TEMP TABLE IF NOT EXISTS _saved_triples AS SELECT * FROM entity_triples');
 
     // Disable FK enforcement during the batch delete so that the explicit DELETE FROM
     // atom_relations (below) isn't redundantly cascade-fired again when atoms are deleted.
@@ -426,6 +429,15 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
       WHERE atom_id IN (SELECT atom_id FROM atoms)
     `);
     db.exec('DROP TABLE IF EXISTS _saved_embeddings');
+
+    // Restore preserved triples (only for atoms that still exist — orphans are dropped)
+    db.exec(`
+      INSERT INTO entity_triples (atom_id, subject, predicate, object, confidence, created_at)
+      SELECT atom_id, subject, predicate, object, confidence, created_at
+      FROM _saved_triples
+      WHERE atom_id IN (SELECT atom_id FROM atoms)
+    `);
+    db.exec('DROP TABLE IF EXISTS _saved_triples');
   });
 
   tx();

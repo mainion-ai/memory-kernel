@@ -19,6 +19,13 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.18.2] — 2026-05-13
+
+### Fixed — semantic conflict detection durability (#77 review)
+
+- **`reindex()` no longer wipes `entity_triples`.** Triples are LLM-extracted at ingestion and are not serialized in atom markdown, so the previous behaviour (clear without repopulate) silently destroyed all triple data and disabled Tier-1 conflict detection on every `mk reindex`. Triples are now snapshotted to a temp table at the start of reindex and restored at the end for atoms that still exist (orphaned triples are dropped, matching the embedding-preservation pattern in the same transaction).
+- **`findCandidateConflicts` now excludes `expired` atoms** in addition to `superseded` and `archived`, bringing it in line with `queryIndex()` / `wander` and the rest of the active-status convention. Previously an expired atom could be returned as a conflict candidate and silently auto-superseded.
+
 ## [1.18.1] — 2026-05-13
 
 ### Added — semantic conflict detection for `mk extract`

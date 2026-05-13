@@ -71,7 +71,8 @@ export interface ConflictCandidate {
  * For each triple owned by `newAtomId`, return existing atoms that share the
  * (subject, predicate) but have a different object. Excludes:
  *   - the new atom itself
- *   - atoms with status 'superseded' or 'archived'
+ *   - atoms with status 'superseded', 'archived', or 'expired' (i.e. anything
+ *     not active — kept in sync with queryIndex / wander)
  *
  * Returns one row per matching old triple (an old atom with multiple matching
  * triples produces multiple rows).
@@ -92,7 +93,7 @@ export function findCandidateConflicts(
         AND t.predicate = ?
         AND t.object <> ?
         AND t.atom_id <> ?
-        AND a.status NOT IN ('superseded', 'archived')`,
+        AND a.status NOT IN ('superseded', 'archived', 'expired')`,
   );
 
   const out: ConflictCandidate[] = [];
