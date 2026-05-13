@@ -366,7 +366,7 @@ export interface ExtractOptions {
   model?: string;
   maxAtoms?: number;
   skipLines?: number;
-  /** When true (default), run Tier-1 + Tier-2 conflict detection on every newly-created atom. */
+  /** When true (default), run Tier-1 + Tier-2 conflict detection on every newly-created atom that has triples. Atoms without triples are not eligible (Tier-1 needs triples). */
   conflictDetect?: boolean;
   /** Model override for the Tier-2 LLM call. Falls back to `model` if omitted. */
   conflictConfirmModel?: string;

@@ -160,6 +160,42 @@ describe('extractFromLog — auto-supersede integration', () => {
     });
 
     expect(r.conflicts).toBe(0);
+    expect(r.atoms[0].conflicts).toBeUndefined();
+    const reReadOld = readAtom(oldAtom.filePath!);
+    expect(reReadOld.frontmatter.status).not.toBe('superseded');
+  });
+
+  it('dry-run skips conflict detection entirely', async () => {
+    const oldAtom = createAtom({
+      memoryDir: testDir, agent_id: 'seed', session_id: 'seed',
+      type: 'fact', slug: 'old-cap', body: 'France capital is Lyon.',
+    });
+    insertTriples(testDir, oldAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Lyon' },
+    ]);
+    await new Promise((res) => setTimeout(res, 1100));
+
+    const candidates = [{
+      type: 'fact', slug: 'new-cap', title: 't',
+      body: '## Fact\nFrance capital is Paris.',
+      tags: [], confidence: 1.0,
+      triples: [{ subject: 'France', predicate: 'has_capital', object: 'Paris' }],
+    }];
+    // Only one mocked response (the extraction LLM); Tier-2 should NOT be called.
+    mockOllamaSequence([JSON.stringify(candidates)]);
+
+    const r = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'qwen2.5:14b',
+      dryRun: true,
+    });
+
+    expect(r.extracted).toBe(1);
+    expect(r.conflicts).toBe(0);
+    expect(r.atoms[0].conflicts).toBeUndefined();
+
+    // Old atom remains active — no side-effects from dry-run
     const reReadOld = readAtom(oldAtom.filePath!);
     expect(reReadOld.frontmatter.status).not.toBe('superseded');
   });
