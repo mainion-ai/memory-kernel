@@ -64,4 +64,24 @@ describe('confirmConflictWithLLM', () => {
     });
     expect(r.conflict).toBe(true);
   });
+
+  it('returns conflict=false (fail-safe) when callLLM throws', async () => {
+    // Make fetch throw to simulate Ollama network failure
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
+    const r = await confirmConflictWithLLM({
+      oldFact: 'a', newFact: 'b', model: 'qwen2.5:14b',
+    });
+    expect(r.conflict).toBe(false);
+    expect(r.reason).toMatch(/LLM call failed/);
+    expect(r.reason).toMatch(/network down/);
+  });
+
+  it('returns conflict=false (fail-safe) when JSON is structurally valid but missing the conflict field', async () => {
+    mockOllama('{"reason": "no verdict"}');
+    const r = await confirmConflictWithLLM({
+      oldFact: 'a', newFact: 'b', model: 'qwen2.5:14b',
+    });
+    expect(r.conflict).toBe(false);
+    expect(r.reason).toMatch(/malformed response/);
+  });
 });

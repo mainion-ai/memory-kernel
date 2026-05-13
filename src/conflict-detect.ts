@@ -52,7 +52,11 @@ export async function confirmConflictWithLLM(
   const userPrompt = `Old fact: ${input.oldFact}\nNew fact: ${input.newFact}\n\nDo these conflict?`;
   let raw: string;
   try {
-    raw = await callLLM(CONFIRM_SYSTEM_PROMPT, userPrompt, { model: input.model });
+    raw = await callLLM(CONFIRM_SYSTEM_PROMPT, userPrompt, {
+      model: input.model,
+      temperature: 0,
+      maxTokens: 150,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { conflict: false, reason: `LLM call failed: ${msg}` };
