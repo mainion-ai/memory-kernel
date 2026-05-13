@@ -8,6 +8,9 @@
  */
 
 import { callLLM } from './llm.js';
+import { findCandidateConflicts } from './triples.js';
+import { supersedeAtoms } from './cli/supersede.js';
+import { openIndex } from './index-db.js';
 
 const CONFIRM_SYSTEM_PROMPT = `You are a fact-conflict classifier. Given two factual statements about the world, decide whether they DIRECTLY CONTRADICT each other (i.e. cannot both be true at the same time about the same subject).
 
@@ -80,4 +83,138 @@ export async function confirmConflictWithLLM(
     };
   }
   return { conflict: false, reason: 'malformed response (missing conflict field)' };
+}
+
+export type ConflictAction =
+  | 'superseded'              // newer atom auto-superseded the older one
+  | 'would_supersede'         // dry-run; supersede would have fired
+  | 'not_a_conflict'          // Tier 2 LLM said no
+  | 'skipped_wrong_direction' // new atom is older than the candidate → skip
+  | 'skipped_self';           // candidate is the same atom (defensive)
+
+export interface ConflictResolution {
+  old_atom_id: string;
+  new_atom_id: string;
+  action: ConflictAction;
+  reason: string;
+  subject: string;
+  predicate: string;
+  old_object: string;
+  new_object: string;
+}
+
+export interface DetectAndResolveOptions {
+  memoryDir: string;
+  newAtomId: string;
+  /** Model to use for Tier 2 confirmation. Same provider auto-detection as extract. */
+  model?: string;
+  /** When true, log what *would* happen but make no writes. */
+  dryRun?: boolean;
+  agent_id?: string;
+  session_id?: string;
+}
+
+export interface DetectAndResolveResult {
+  resolutions: ConflictResolution[];
+  llm_calls: number;
+}
+
+/** Read created_at directly from the index — avoids loading the markdown twice. */
+function getCreatedAt(memoryDir: string, atomId: string): string | null {
+  const db = openIndex(memoryDir);
+  const row = db.prepare('SELECT created_at FROM atoms WHERE atom_id = ?').get(atomId) as
+    | { created_at: string }
+    | undefined;
+  return row?.created_at ?? null;
+}
+
+/**
+ * Detect Tier-1 candidate conflicts against `newAtomId`, run Tier-2 LLM
+ * confirmation on each, and auto-supersede older atoms when a conflict is
+ * confirmed and the new atom is strictly newer than the candidate.
+ *
+ * Failure-mode policy: any per-candidate error is recorded as `not_a_conflict`
+ * with a reason; the whole batch never throws. Extraction shouldn't fail just
+ * because conflict resolution had a hiccup.
+ */
+export async function detectAndResolveConflicts(
+  opts: DetectAndResolveOptions,
+): Promise<DetectAndResolveResult> {
+  const { memoryDir, newAtomId, model, dryRun = false } = opts;
+  const resolutions: ConflictResolution[] = [];
+  let llmCalls = 0;
+
+  const candidates = findCandidateConflicts(memoryDir, newAtomId);
+  if (candidates.length === 0) {
+    return { resolutions, llm_calls: 0 };
+  }
+
+  const newCreatedAt = getCreatedAt(memoryDir, newAtomId);
+  if (!newCreatedAt) {
+    return { resolutions, llm_calls: 0 };
+  }
+
+  for (const c of candidates) {
+    const oldCreatedAt = getCreatedAt(memoryDir, c.old_atom_id);
+    if (!oldCreatedAt) continue;
+
+    const baseRes = {
+      old_atom_id: c.old_atom_id,
+      new_atom_id: newAtomId,
+      subject: c.new_triple.subject,
+      predicate: c.new_triple.predicate,
+      old_object: c.old_triple.object,
+      new_object: c.new_triple.object,
+    };
+
+    if (c.old_atom_id === newAtomId) {
+      resolutions.push({ ...baseRes, action: 'skipped_self', reason: 'self' });
+      continue;
+    }
+    if (oldCreatedAt >= newCreatedAt) {
+      resolutions.push({
+        ...baseRes,
+        action: 'skipped_wrong_direction',
+        reason: 'candidate atom is at least as new as the ingested atom',
+      });
+      continue;
+    }
+
+    const confirm = await confirmConflictWithLLM({
+      oldFact: `${c.old_triple.subject} ${c.old_triple.predicate} ${c.old_triple.object}`,
+      newFact: `${c.new_triple.subject} ${c.new_triple.predicate} ${c.new_triple.object}`,
+      model,
+    });
+    llmCalls++;
+
+    if (!confirm.conflict) {
+      resolutions.push({ ...baseRes, action: 'not_a_conflict', reason: confirm.reason });
+      continue;
+    }
+
+    if (dryRun) {
+      resolutions.push({ ...baseRes, action: 'would_supersede', reason: confirm.reason });
+      continue;
+    }
+
+    try {
+      supersedeAtoms({
+        memoryDir,
+        oldAtomId: c.old_atom_id,
+        newAtomId,
+        agent_id: opts.agent_id ?? 'extract',
+        session_id: opts.session_id ?? 'mk-conflict-detect',
+      });
+      resolutions.push({ ...baseRes, action: 'superseded', reason: confirm.reason });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolutions.push({
+        ...baseRes,
+        action: 'not_a_conflict',
+        reason: `supersede failed: ${msg}`,
+      });
+    }
+  }
+
+  return { resolutions, llm_calls: llmCalls };
 }

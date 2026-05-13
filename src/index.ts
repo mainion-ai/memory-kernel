@@ -285,6 +285,14 @@ export { insertTriples, getTriplesForAtom, findCandidateConflicts } from './trip
 export type { EntityTriple, TripleInput } from './types.js';
 export type { ConflictCandidate } from './triples.js';
 
+// Conflict detection (Tier-2 LLM confirmation + auto-supersede orchestration)
+export { detectAndResolveConflicts, confirmConflictWithLLM } from './conflict-detect.js';
+export type {
+  ConflictResolution, ConflictAction,
+  DetectAndResolveOptions, DetectAndResolveResult,
+  ConfirmConflictInput, ConfirmConflictResult,
+} from './conflict-detect.js';
+
 // Obsidian-native compatibility
 export {
   RELATIONS_SENTINEL,
