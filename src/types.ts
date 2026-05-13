@@ -350,6 +350,8 @@ export interface ExtractedAtomResult {
   status: 'new' | 'skipped' | 'possible_duplicate';
   reason?: string;
   possible_duplicate_of?: string;
+  /** Conflict resolutions produced by Tier-1+Tier-2 on this atom (only when conflictDetect ran). */
+  conflicts?: import('./conflict-detect.js').ConflictResolution[];
 }
 
 /** Options for extractFromLog. */
@@ -364,6 +366,10 @@ export interface ExtractOptions {
   model?: string;
   maxAtoms?: number;
   skipLines?: number;
+  /** When true (default), run Tier-1 + Tier-2 conflict detection on every newly-created atom. */
+  conflictDetect?: boolean;
+  /** Model override for the Tier-2 LLM call. Falls back to `model` if omitted. */
+  conflictConfirmModel?: string;
 }
 
 /** Result returned by extractFromLog. */
@@ -371,6 +377,8 @@ export interface ExtractResult {
   extracted: number;
   skipped: number;
   possible_duplicates: number;
+  /** Total auto-supersede actions across all atoms (action === 'superseded'). */
+  conflicts: number;
   atoms: ExtractedAtomResult[];
 }
 

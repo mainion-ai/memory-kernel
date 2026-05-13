@@ -16,6 +16,8 @@ import { createAtom } from './retain.js';
 import { insertTriples } from './triples.js';
 import { indexExists, searchFts } from './index-db.js';
 import { generateAtomId, DEFAULT_TTLS } from './schema.js';
+import { detectAndResolveConflicts } from './conflict-detect.js';
+import type { ConflictResolution } from './conflict-detect.js';
 import type { AtomType, AtomFrontmatter } from './types.js';
 import type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
@@ -184,6 +186,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
       extracted: 0,
       skipped: 0,
       possible_duplicates: 0,
+      conflicts: 0,
       atoms: [],
     };
   }
@@ -298,6 +301,18 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
         insertTriples(memoryDir, atom.frontmatter.id, candidate.triples);
       }
 
+      let perAtomConflicts: ConflictResolution[] | undefined;
+      if (opts.conflictDetect !== false && candidate.triples && candidate.triples.length > 0) {
+        const dr = await detectAndResolveConflicts({
+          memoryDir,
+          newAtomId: atom.frontmatter.id,
+          model: opts.conflictConfirmModel ?? model,
+          agent_id: agentId,
+          session_id: sessionId,
+        });
+        perAtomConflicts = dr.resolutions;
+      }
+
       extracted++;
       atomResults.push({
         atom_id: atom.frontmatter.id,
@@ -306,6 +321,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
         status: isPossibleDuplicate ? 'possible_duplicate' : 'new',
         reason: isPossibleDuplicate ? `similar to ${duplicateId}` : undefined,
         possible_duplicate_of: isPossibleDuplicate ? (duplicateId ?? undefined) : undefined,
+        conflicts: perAtomConflicts,
       });
     } else {
       // Dry run: generate a placeholder ID for display
@@ -322,10 +338,16 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
     }
   }
 
+  const conflicts = atomResults.reduce(
+    (acc, a) => acc + (a.conflicts?.filter((c) => c.action === 'superseded').length ?? 0),
+    0,
+  );
+
   return {
     extracted,
     skipped,
     possible_duplicates: possibleDuplicates,
+    conflicts,
     atoms: atomResults,
   };
 }

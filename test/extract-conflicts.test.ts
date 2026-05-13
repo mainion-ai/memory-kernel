@@ -7,6 +7,8 @@ import {
 } from '../src/index.js';
 import { getTriplesForAtom } from '../src/triples.js';
 import { extractFromLog } from '../src/extract.js';
+import { readAtom, getRelationsForAtom, createAtom } from '../src/index.js';
+import { insertTriples } from '../src/triples.js';
 
 let testDir: string;
 let logFile: string;
@@ -75,5 +77,90 @@ describe('extractFromLog — triples persistence', () => {
     expect(r.extracted).toBe(1);
     const atomId = r.atoms[0].atom_id!;
     expect(getTriplesForAtom(testDir, atomId)).toHaveLength(0);
+  });
+});
+
+describe('extractFromLog — auto-supersede integration', () => {
+  it('supersedes an existing atom when the new atom conflicts and is newer', async () => {
+    // Seed an older atom with a triple
+    const oldAtom = createAtom({
+      memoryDir: testDir, agent_id: 'seed', session_id: 'seed',
+      type: 'fact', slug: 'old-cap', body: 'France capital is Lyon.',
+    });
+    insertTriples(testDir, oldAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Lyon' },
+    ]);
+
+    // Wait so created_at clearly differs
+    await new Promise((res) => setTimeout(res, 1100));
+
+    // First fetch response: the extraction LLM returns a new conflicting atom + triple
+    // Second fetch response: the Tier-2 confirmer says "yes, conflict"
+    const candidates = [{
+      type: 'fact',
+      slug: 'new-cap',
+      title: 'France capital',
+      body: '## Fact\nFrance capital is Paris.',
+      tags: [],
+      confidence: 1.0,
+      triples: [{ subject: 'France', predicate: 'has_capital', object: 'Paris' }],
+    }];
+    mockOllamaSequence([
+      JSON.stringify(candidates),
+      '{"conflict": true, "reason": "different capitals"}',
+    ]);
+
+    const r = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'qwen2.5:14b',
+    });
+
+    expect(r.extracted).toBe(1);
+    expect(r.conflicts).toBe(1);
+
+    // Old atom marked superseded
+    const reReadOld = readAtom(oldAtom.filePath!);
+    expect(reReadOld.frontmatter.status).toBe('superseded');
+
+    // New atom got the relation
+    const newAtomId = r.atoms[0].atom_id!;
+    const { outbound } = getRelationsForAtom(testDir, newAtomId);
+    expect(outbound.some((rel) => rel.target_id === oldAtom.frontmatter.id && rel.relation_type === 'supersedes')).toBe(true);
+
+    // Per-atom conflict info surfaced in the result
+    expect(r.atoms[0].conflicts).toBeDefined();
+    expect(r.atoms[0].conflicts).toHaveLength(1);
+    expect(r.atoms[0].conflicts![0].action).toBe('superseded');
+  });
+
+  it('does not run conflict detection when conflictDetect=false', async () => {
+    const oldAtom = createAtom({
+      memoryDir: testDir, agent_id: 'seed', session_id: 'seed',
+      type: 'fact', slug: 'old-cap', body: 'France capital is Lyon.',
+    });
+    insertTriples(testDir, oldAtom.frontmatter.id, [
+      { subject: 'France', predicate: 'has_capital', object: 'Lyon' },
+    ]);
+    await new Promise((res) => setTimeout(res, 1100));
+
+    const candidates = [{
+      type: 'fact', slug: 'new-cap', title: 't',
+      body: '## Fact\nFrance capital is Paris.',
+      tags: [], confidence: 1.0,
+      triples: [{ subject: 'France', predicate: 'has_capital', object: 'Paris' }],
+    }];
+    mockOllamaSequence([JSON.stringify(candidates)]);
+
+    const r = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'qwen2.5:14b',
+      conflictDetect: false,
+    });
+
+    expect(r.conflicts).toBe(0);
+    const reReadOld = readAtom(oldAtom.filePath!);
+    expect(reReadOld.frontmatter.status).not.toBe('superseded');
   });
 });
