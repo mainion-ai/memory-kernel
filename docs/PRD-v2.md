@@ -108,16 +108,43 @@ R12 diagnostic found: 70% of failures were at Layer 2 (recall). R13 (hybrid FTS 
 
 ### 3.2 Preference Ingestion Format (#47)
 
-**Problem:** single-session-preference is 0% across ALL runs (R1-R8d). This is a structural write-end failure — preferences are ingested but not stored in a format that supports preference-type queries.
+**Problem:** single-session-preference is 0% across ALL runs (R1-R8d). This is a structural write-end failure — preferences are ingested but not stored in a format that supports preference-type queries. The observer pipeline (R15b) improved this to 50% by capturing preferences in observation summaries, but the atom-level ingestion remains broken.
 
-**Solution:** Store preference atoms with structured format (key-value or tagged) that enables preference-specific recall.
+**Solution:** Two-part fix:
+1. **Observer prompt enhancement** — ensure the observer explicitly captures stated preferences with structured markers (e.g., "PREFERENCE: user prefers X over Y")
+2. **Atom ingestion** — when `mk extract` processes conversations, preferences should be stored as `type: preference` atoms with structured key-value frontmatter (subject, preference, context)
 
 **Acceptance criteria:**
-- Preference atoms stored with structured format (key-value or tagged)
-- single-session-preference > 0% on LongMemEval
-- mk recall returns relevant preference atoms for preference queries
+- Preference atoms stored with `type: preference` and structured frontmatter (subject, preference, context)
+- `mk extract` recognizes preference statements and creates preference-typed atoms
+- Observer prompt includes explicit preference-capture instructions
+- LongMemEval single-session-preference >= 60% (up from 50% R15b)
+- No regression on other types
 
-**Dependencies:** #46 (write-selection bias fix may surface additional preference ingestion issues)
+**Evidence:** R15b shows 50% on preferences via observer alone. The gap is that preferences captured as observations lack the structured format needed for precise preference-type queries. Structured atoms would enable both observer (broad capture) and recall (precise retrieval) to serve preference queries.
+
+### 3.3 Semantic Conflict Detection for mk supersede (#54)
+
+**Problem:** `mk supersede` infrastructure works (PR #69, #71) but is never triggered because the conflict detection heuristic is too naive. The MAB adapter uses first-5-words matching, which completely misses structural conflicts like knowledge-graph triples ("The capital of the country where X was born is Y"). MemoryAgentBench FactConsolidation score: ~1% (same as no-supersede baseline).
+
+**Evidence:** Taj ran 800 MAB contexts (May 12, 2026). Zero supersedes fired. The mk supersede command itself works perfectly (smoke-tested: old atom → superseded status, new atom gets relation, PR #66 filters superseded from recall). The gap is entirely in DETECTING which atoms conflict.
+
+**Solution:** Two candidate approaches (evaluate both, pick one):
+
+1. **LLM-based pairwise comparison** — At ingestion time, for each new fact atom, retrieve top-N semantically similar existing atoms, then ask a cheap model (Haiku/GPT-4o-mini) "do these two facts conflict?" for each pair. Accurate but O(N) LLM calls per ingestion (where N = number of similar existing atoms, typically 3-10).
+
+2. **Entity-triple extraction** — At ingestion time, extract subject-predicate-object triples from each atom. Store triples in SQLite index. On new atom ingestion, match on subject+predicate overlap. When a match is found with different object values, trigger `mk supersede`. Structured, no LLM cost at detection time, but requires NLP extraction at write time.
+
+**Hybrid approach (recommended):** Entity-triple extraction as Tier 1 filter (cheap, deterministic), LLM confirmation as Tier 2 for ambiguous cases. This follows the two-tier pattern: deterministic check first, escalate to probabilistic only when needed.
+
+**Acceptance criteria:**
+- Conflict detection integrated into `mk extract` or `mk observe` pipeline
+- Automatically invokes `mk supersede` when a newer fact contradicts an older one
+- MemoryAgentBench FactConsolidation >= 30% (up from ~1%)
+- LongMemEval knowledge-update >= 72% (no regression from R15b)
+- False positive rate < 10% (non-conflicting atoms incorrectly superseded)
+
+**Dependencies:** mk supersede (#69, #71) — ✅ delivered. mk extract (#36) — ✅ delivered.
 
 ---
 
@@ -222,6 +249,6 @@ R12 diagnostic found: 70% of failures were at Layer 2 (recall). R13 (hybrid FTS 
 | Priority | Issues | Rationale |
 |----------|--------|-----------|
 | **P0** — Critical | #44 (episode FTS) ✅, #45 (content-type decay) — reverted, #46 (assistant utterances) ✅ | Direct LongMemEval/production impact. Addresses the three weakest recall areas. |
-| **P1** — High | #47 (preference ingestion) | Daily usage impact. Preference recall is 0% across all runs. |
+| **P1** — High | #47 (preference ingestion), #54 (conflict detection) | #47: preference recall structural gap. #54: MAB FactConsolidation at ~1%, supersede infrastructure unused without detection. |
 | **P2** — Medium | #48 (answer health check), #49 (model/effort config), #50 (constitution pipeline), #51 (citations), #52 (consolidation automation) | Infrastructure and tooling. Enables confident iteration and cost optimization. |
 | **P3** — Research | #53 (additional test framework) | Research task. Identify complementary evaluation coverage for write-end blind spots. |

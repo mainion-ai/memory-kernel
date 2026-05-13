@@ -299,6 +299,12 @@ export interface CandidateAtom {
   tags?: string[];
   confidence?: number;
   rationale?: string;
+  /** For preference atoms: the subject of the preference (e.g. "coffee", "programming languages"). */
+  subject?: string;
+  /** For preference atoms: the preference statement (e.g. "prefers oat milk lattes"). */
+  preference?: string;
+  /** For preference atoms: context when/why the preference was expressed. */
+  context?: string;
 }
 
 /** Result for a single extracted atom candidate. */

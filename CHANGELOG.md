@@ -19,6 +19,27 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
 
+## [1.18.0] — 2026-05-12
+
+### Added — structured preference ingestion
+
+- **`mk extract` and `mk observe` now ingest preferences as structured atoms.** `CandidateAtom` gains three new optional fields — `subject?`, `preference?`, `context?` — populated by the LLM when a preference signal ("I prefer…", "my favorite…", "I always/never…") is detected. The extraction prompt asks the model to produce these fields explicitly; the runtime canonicalizes the body into a `## Preference` / `**Subject:** …` / `**Preference:** …` / `**Context:** …` template so all preference atoms share one queryable shape. The observer prompt was updated with explicit `PREFERENCE:` markers and concrete examples to keep the two pipelines aligned.
+- **Automatic `subject:<topic>` tag** is appended to every preference atom that has a `subject`. Topics are slugified with `[^a-z0-9]+` → `-` (matching `slugExists()`), so subjects like `"C++ / Rust (systems)"` produce a clean `subject:c-rust-systems` tag. Empty slugs after normalization are skipped — no `subject:` tag without a topic.
+
+### Fixed — review-driven hardening of the new preference path
+
+- **FTS possible-duplicate detection now queries the stored body.** Previously `checkPossibleDuplicate` ran against `candidate.body` *before* preference enrichment, so a re-extracted preference would query raw LLM text against an index built from the structured template — and miss. Moved the check to run on the final `body` variable so the query text matches what's indexed.
+- **LLM-supplied `subject` / `preference` / `context` are sanitized before template interpolation.** A new internal `sanitizeField()` collapses `\r`, `\n`, and `\t` runs to a single space and trims. An LLM returning a value with a literal newline can no longer inject extra `**…:**` marker lines into the preference body; the body always has exactly three structural lines under `## Preference`.
+- **Subject-tag normalization tightened.** The previous `subj.toLowerCase().replace(/\s+/g, '-')` only handled whitespace, so `"C++"` or `"food & drink"` produced malformed tags with raw `+`, `&`, `/`. Now uses the same character class as `slugExists()` and trims leading/trailing hyphens.
+
+### Public API
+
+- `src/types.ts` — `CandidateAtom` adds optional `subject?`, `preference?`, `context?`. Existing extractors that don't set these fields continue to work unchanged; the enrichment block only fires when both `subject` and `preference` are populated.
+
+### Tests
+
+- New tests in `test/extract.test.ts`: structured body generation, original-body fallback when fields are absent, kebab-case subject-tag normalization, special-character slugification (`C++ / Rust (systems)` → `subject:c-rust-systems`), and control-character sanitization (rejects `subject: "coffee\n**Injected:**"` injection). Suite: 1170 → 1176 passing.
+
 ## [1.17.1] — 2026-05-12
 
 ### Fixed — error-handling polish on `mk supersede` / `mk relate`

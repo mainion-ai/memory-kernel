@@ -274,4 +274,252 @@ describe('extractFromLog', () => {
     expect(capturedPrompt).toContain('For assistant responses');
     expect(capturedPrompt).toContain('Tag assistant-generated atoms with "role:assistant"');
   });
+
+  it('writes preference atoms with structured body and subject tag', async () => {
+    const prefCandidate = {
+      type: 'preference',
+      slug: 'prefers-oat-milk',
+      title: 'Prefers oat milk in coffee',
+      body: '## Preference\nPrefers oat milk.',
+      subject: 'coffee',
+      preference: 'prefers oat milk lattes',
+      context: 'mentioned during morning routine discussion',
+      tags: ['food'],
+      confidence: 1.0,
+      rationale: 'Personal preference worth remembering.',
+    };
+
+    writeLog('User: I always get oat milk in my lattes.\nAssistant: Noted, you prefer oat milk.');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: JSON.stringify([prefCandidate]) }),
+    } as Response);
+
+    const result = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: false,
+      agentId: 'test-agent',
+      sessionId: 'test-session',
+    });
+
+    expect(result.extracted).toBe(1);
+    const atoms = listAtoms(testDir);
+    expect(atoms).toHaveLength(1);
+
+    const atom = atoms[0];
+    expect(atom.frontmatter.type).toBe('preference');
+    expect(atom.frontmatter.status).toBe('draft');
+
+    // Structured body with template
+    expect(atom.body).toContain('## Preference');
+    expect(atom.body).toContain('**Subject:** coffee');
+    expect(atom.body).toContain('**Preference:** prefers oat milk lattes');
+    expect(atom.body).toContain('**Context:** mentioned during morning routine discussion');
+
+    // Subject tag added
+    expect(atom.frontmatter.scope?.tags).toContain('subject:coffee');
+    expect(atom.frontmatter.scope?.tags).toContain('auto-extracted');
+    expect(atom.frontmatter.scope?.tags).toContain('food');
+  });
+
+  it('does not enrich non-preference atoms with preference template', async () => {
+    writeLog('User: The API rate limit is 1000 RPM.');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: JSON.stringify([SAMPLE_CANDIDATES[0]]) }),
+    } as Response);
+
+    const result = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: false,
+    });
+
+    expect(result.extracted).toBe(1);
+    const atoms = listAtoms(testDir);
+    const atom = atoms[0];
+    expect(atom.frontmatter.type).toBe('fact');
+    // Body should be unchanged — no preference template
+    expect(atom.body).toContain('The API rate limit is 1000 requests per minute.');
+    expect(atom.body).not.toContain('**Subject:**');
+    // No subject tag
+    const subjectTags = (atom.frontmatter.scope?.tags ?? []).filter((t: string) => t.startsWith('subject:'));
+    expect(subjectTags).toHaveLength(0);
+  });
+
+  it('falls back to original body when preference atom lacks subject/preference fields', async () => {
+    const partialPrefCandidate = {
+      type: 'preference',
+      slug: 'likes-dark-mode',
+      title: 'Likes dark mode',
+      body: '## Preference\nUser likes dark mode in all editors.',
+      tags: ['ui'],
+      confidence: 1.0,
+      rationale: 'UI preference.',
+      // no subject, preference, or context fields
+    };
+
+    writeLog('User: I like dark mode in all my editors.');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: JSON.stringify([partialPrefCandidate]) }),
+    } as Response);
+
+    const result = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: false,
+    });
+
+    expect(result.extracted).toBe(1);
+    const atoms = listAtoms(testDir);
+    const atom = atoms[0];
+    expect(atom.frontmatter.type).toBe('preference');
+    // Body should be the original, not the structured template
+    expect(atom.body).toContain('User likes dark mode in all editors.');
+    expect(atom.body).not.toContain('**Subject:**');
+  });
+
+  it('extraction prompt includes preference-capture instructions', async () => {
+    writeLog('User: I prefer TypeScript over Python.');
+
+    let capturedPrompt = '';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, opts) => {
+      const body = JSON.parse((opts?.body as string) ?? '{}');
+      capturedPrompt = body.prompt ?? '';
+      return {
+        ok: true,
+        json: async () => ({ response: '[]' }),
+      } as Response;
+    });
+
+    await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: true,
+    });
+
+    // Verify the prompt instructs the LLM to capture preferences
+    expect(capturedPrompt).toContain('For PREFERENCE atoms specifically');
+    expect(capturedPrompt).toContain('"subject", "preference", and "context"');
+    expect(capturedPrompt).toContain('subject:<topic>');
+    expect(capturedPrompt).toContain('I prefer');
+    expect(capturedPrompt).toContain('my favorite');
+    expect(capturedPrompt).toContain('PREFERENCE: markers');
+  });
+
+  it('normalizes subject tag to lowercase kebab-case', async () => {
+    const prefCandidate = {
+      type: 'preference',
+      slug: 'prefers-typescript',
+      title: 'Prefers TypeScript',
+      body: '## Preference\nPrefers TypeScript.',
+      subject: 'Programming Languages',
+      preference: 'favors TypeScript over Python',
+      context: 'discussion about tech stack',
+      tags: [],
+      confidence: 1.0,
+      rationale: 'Tech preference.',
+    };
+
+    writeLog('User: I favor TypeScript over Python.');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: JSON.stringify([prefCandidate]) }),
+    } as Response);
+
+    const result = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: false,
+    });
+
+    expect(result.extracted).toBe(1);
+    const atoms = listAtoms(testDir);
+    const atom = atoms[0];
+    expect(atom.frontmatter.scope?.tags).toContain('subject:programming-languages');
+  });
+
+  it('strips special characters from subject when building the tag', async () => {
+    const prefCandidate = {
+      type: 'preference',
+      slug: 'prefers-cpp-over-rust',
+      title: 'Prefers C++ over Rust',
+      body: '## Preference\nPrefers C++.',
+      subject: 'C++ / Rust (systems)',
+      preference: 'favors C++',
+      context: 'systems-programming chat',
+      tags: [],
+      confidence: 1.0,
+      rationale: 'Language preference.',
+    };
+
+    writeLog('User: I prefer C++ over Rust for systems work.');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: JSON.stringify([prefCandidate]) }),
+    } as Response);
+
+    const result = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: false,
+    });
+
+    expect(result.extracted).toBe(1);
+    const atom = listAtoms(testDir)[0];
+    const subjectTags = (atom.frontmatter.scope?.tags ?? []).filter((t: string) => t.startsWith('subject:'));
+    expect(subjectTags).toEqual(['subject:c-rust-systems']);
+  });
+
+  it('sanitizes control characters in preference fields before interpolation', async () => {
+    const prefCandidate = {
+      type: 'preference',
+      slug: 'prefers-coffee',
+      title: 'Prefers coffee',
+      body: '## Preference\nPrefers coffee.',
+      subject: 'coffee\n**Injected:** bad',
+      preference: 'oat milk\nlattes',
+      context: 'morning\trant',
+      tags: [],
+      confidence: 1.0,
+      rationale: 'Coffee preference.',
+    };
+
+    writeLog('User: I like oat milk lattes.');
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: JSON.stringify([prefCandidate]) }),
+    } as Response);
+
+    const result = await extractFromLog({
+      logPath: logFile,
+      memoryDir: testDir,
+      model: 'test-model:latest',
+      dryRun: false,
+    });
+
+    expect(result.extracted).toBe(1);
+    const atom = listAtoms(testDir)[0];
+    // The sanitizer collapses control chars to a single space so the LLM cannot
+    // inject extra Markdown structure: the body still has exactly 3 marker lines.
+    const markerLines = atom.body.split('\n').filter((l) => l.startsWith('**'));
+    expect(markerLines).toHaveLength(3);
+    expect(atom.body).toContain('**Subject:** coffee **Injected:** bad');
+    expect(atom.body).toContain('**Preference:** oat milk lattes');
+    expect(atom.body).toContain('**Context:** morning rant');
+  });
 });

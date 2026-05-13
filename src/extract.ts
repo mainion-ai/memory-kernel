@@ -47,6 +47,24 @@ For each item, output a JSON object with:
 - confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions)
 - rationale: one sentence explaining why this is worth remembering
 
+For PREFERENCE atoms specifically:
+- Set type to "preference"
+- Add three extra fields: "subject", "preference", and "context"
+  - subject: the topic of the preference (e.g. "coffee", "programming languages", "music")
+  - preference: the preference statement (e.g. "prefers oat milk lattes", "favors TypeScript over Python")
+  - context: when/why the preference was expressed (e.g. "mentioned during morning routine discussion")
+- Add a tag "subject:<topic>" where <topic> is the subject in lowercase kebab-case
+- Use this body template:
+  ## Preference
+  **Subject:** <subject>
+  **Preference:** <preference statement>
+  **Context:** <when/why expressed>
+
+Look for preference signals: "I prefer", "I like", "I always", "I never", "my favorite", "I tend to",
+expressions of taste, habitual choices, strong opinions about tools/foods/workflows, or any statement
+where the user indicates a personal inclination or aversion. Also look for PREFERENCE: markers in
+observer output.
+
 Rules:
 - Only extract things that are genuinely worth remembering across sessions
 - Skip small talk, status updates, and transient information
@@ -102,6 +120,15 @@ function slugExists(memoryDir: string, type: AtomType, slug: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Collapse control characters (newlines, tabs) so an LLM-supplied field can't
+ * inject extra Markdown structure into the preference body template.
+ */
+function sanitizeField(value: string | undefined): string {
+  if (!value) return '';
+  return value.replace(/[\r\n\t]+/g, ' ').trim();
 }
 
 /**
@@ -215,21 +242,39 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
       continue;
     }
 
-    // Check FTS for possible duplicates
-    const duplicateId = checkPossibleDuplicate(memoryDir, candidate.body);
+    // Build scope with auto-extracted tag and extraction metadata
+    const tags: string[] = [
+      'auto-extracted',
+      ...(candidate.tags ?? []),
+    ];
+
+    // Preference enrichment: structured body + subject tag
+    let body = candidate.body;
+    if (type === 'preference') {
+      const subj = sanitizeField(candidate.subject);
+      const pref = sanitizeField(candidate.preference);
+      const ctx = sanitizeField(candidate.context);
+      if (subj && pref) {
+        body = `## Preference\n**Subject:** ${subj}\n**Preference:** ${pref}\n**Context:** ${ctx || 'not specified'}`;
+        const subjectSlug = subj.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        if (subjectSlug) {
+          const subjectTag = `subject:${subjectSlug}`;
+          if (!tags.includes(subjectTag)) {
+            tags.push(subjectTag);
+          }
+        }
+      }
+    }
+
+    // Check FTS for possible duplicates against the body that will be stored
+    const duplicateId = checkPossibleDuplicate(memoryDir, body);
     const isPossibleDuplicate = duplicateId !== null;
 
     if (isPossibleDuplicate) {
       possibleDuplicates++;
     }
 
-    // Build scope with auto-extracted tag and extraction metadata
-    const scope: AtomFrontmatter['scope'] = {
-      tags: [
-        'auto-extracted',
-        ...(candidate.tags ?? []),
-      ],
-    };
+    const scope: AtomFrontmatter['scope'] = { tags };
 
     if (!dryRun) {
       // Write atom as draft using createAtom (canonical creation path).
@@ -240,7 +285,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
         session_id: sessionId,
         type,
         slug,
-        body: candidate.body,
+        body,
         confidence: candidate.confidence ?? (type === 'belief' ? 0.5 : 1.0),
         ttl_days: DEFAULT_TTLS[type] ?? null,
         scope,
