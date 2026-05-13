@@ -9,6 +9,17 @@ import { insertTriples } from '../src/triples.js';
 
 let testDir: string;
 
+/**
+ * Backdate an atom's created_at in the SQLite index so that conflict-detect's
+ * direction guard sees a clear older-than / newer-than relationship.
+ * This replaces fragile 1 100 ms wall-clock sleeps that relied on
+ * second-precision timestamps differing across two Date.now() calls.
+ */
+function backdateAtom(dir: string, atomId: string, iso: string): void {
+  const db = openIndex(dir);
+  db.prepare('UPDATE atoms SET created_at = ? WHERE atom_id = ?').run(iso, atomId);
+}
+
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-conflict-'));
   initMemoryDir(testDir);
@@ -108,9 +119,7 @@ describe('detectAndResolveConflicts', () => {
     mockOllama('{"conflict": true, "reason": "x"}');
     const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'old-cap', body: 'France capital is Lyon.' });
     insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'France', predicate: 'has_capital', object: 'Lyon' }]);
-
-    // Force a clear created_at gap (timestamps are second-precision)
-    await new Promise((res) => setTimeout(res, 1100));
+    backdateAtom(testDir, oldAtom.frontmatter.id, '2024-01-01T00:00:00Z');
 
     const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'new-cap', body: 'France capital is Paris.' });
     insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'France', predicate: 'has_capital', object: 'Paris' }]);
@@ -138,8 +147,7 @@ describe('detectAndResolveConflicts', () => {
     mockOllama('{"conflict": false, "reason": "complementary"}');
     const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'old-p', body: 'Paris is a city.' });
     insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'Paris', predicate: 'is_a', object: 'City' }]);
-
-    await new Promise((res) => setTimeout(res, 1100));
+    backdateAtom(testDir, oldAtom.frontmatter.id, '2024-01-01T00:00:00Z');
 
     const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'new-p', body: 'Paris is a capital.' });
     insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'Paris', predicate: 'is_a', object: 'Capital' }]);
@@ -161,8 +169,7 @@ describe('detectAndResolveConflicts', () => {
   it('skips Tier 2 when new atom is OLDER than the candidate (defensive)', async () => {
     const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'new', body: 'A is B.' });
     insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'B' }]);
-
-    await new Promise((res) => setTimeout(res, 1100));
+    backdateAtom(testDir, newAtom.frontmatter.id, '2024-01-01T00:00:00Z');
 
     const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'old', body: 'A is C.' });
     insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'C' }]);
@@ -182,7 +189,7 @@ describe('detectAndResolveConflicts', () => {
     mockOllama('{"conflict": true, "reason": "x"}');
     const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'old', body: 'A is B.' });
     insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'B' }]);
-    await new Promise((res) => setTimeout(res, 1100));
+    backdateAtom(testDir, oldAtom.frontmatter.id, '2024-01-01T00:00:00Z');
     const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'new', body: 'A is C.' });
     insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'C' }]);
 
@@ -202,8 +209,7 @@ describe('detectAndResolveConflicts', () => {
     mockOllama('{"conflict": true, "reason": "x"}');
     const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'old-del', body: 'A is B.' });
     insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'B' }]);
-
-    await new Promise((res) => setTimeout(res, 1100));
+    backdateAtom(testDir, oldAtom.frontmatter.id, '2024-01-01T00:00:00Z');
 
     const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'new-del', body: 'A is C.' });
     insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'C' }]);
