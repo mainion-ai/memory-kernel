@@ -14,7 +14,7 @@ import { listAtoms } from './store.js';
 import { listEpisodes } from './episodes.js';
 
 const DB_FILENAME = '.memory-index.db';
-const SCHEMA_VERSION = 7; // Bump when schema changes to trigger auto-rebuild
+const SCHEMA_VERSION = 8; // Bump when schema changes to trigger auto-rebuild
 
 // --- Schema ---
 
@@ -109,6 +109,28 @@ const CREATE_RELATIONS_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_relations_type ON atom_relations(relation_type)',
 ];
 
+// Entity-triple table for Tier-1 semantic conflict detection (#75).
+// Each row is a (subject, predicate, object) triple extracted from an atom body
+// at ingestion time. Conflict detection queries: same (subject, predicate),
+// different object → candidate conflict (then Tier 2 LLM confirms).
+// Strings are stored lower-cased for case-insensitive matching.
+const CREATE_TRIPLES_TABLE = `
+CREATE TABLE IF NOT EXISTS entity_triples (
+  triple_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+  atom_id     TEXT NOT NULL,
+  subject     TEXT NOT NULL,
+  predicate   TEXT NOT NULL,
+  object      TEXT NOT NULL,
+  confidence  REAL NOT NULL DEFAULT 1.0,
+  created_at  TEXT NOT NULL,
+  FOREIGN KEY (atom_id) REFERENCES atoms(atom_id) ON DELETE CASCADE
+)`;
+
+const CREATE_TRIPLES_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_triples_atom ON entity_triples(atom_id)',
+  'CREATE INDEX IF NOT EXISTS idx_triples_sp ON entity_triples(subject, predicate)',
+];
+
 // Citations table for concept-name and atom-ID citation counts (ACT-R frequency).
 // Populated by `mk citations` or `indexCitations()`. Used by wander for base_activation.
 const CREATE_CITATIONS_TABLE = `
@@ -195,6 +217,7 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   if (currentVersion !== SCHEMA_VERSION) {
     // Drop and recreate all tables for clean schema upgrade.
     // Drop order: dependent tables first (FK CASCADE), then atoms last.
+    db.exec('DROP TABLE IF EXISTS entity_triples');
     db.exec('DROP TABLE IF EXISTS atom_citations');
     db.exec('DROP TABLE IF EXISTS atom_relations');
     db.exec('DROP TABLE IF EXISTS atom_embeddings');
@@ -221,6 +244,10 @@ function openIndexRaw(resolvedDir: string): Database.Database {
   }
   db.exec(CREATE_CITATIONS_TABLE);
   for (const idx of CREATE_CITATIONS_INDEXES) {
+    db.exec(idx);
+  }
+  db.exec(CREATE_TRIPLES_TABLE);
+  for (const idx of CREATE_TRIPLES_INDEXES) {
     db.exec(idx);
   }
 
@@ -300,6 +327,7 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     db.pragma('foreign_keys = OFF');
     try {
       // Clear existing data
+      db.exec('DELETE FROM entity_triples');
       db.exec('DELETE FROM atom_citations');
       db.exec('DELETE FROM atom_relations');
       db.exec('DELETE FROM episode_fts');
