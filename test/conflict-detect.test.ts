@@ -197,4 +197,30 @@ describe('detectAndResolveConflicts', () => {
     const reReadOld = readAtom(oldAtom.filePath!);
     expect(reReadOld.frontmatter.status).not.toBe('superseded');
   });
+
+  it('records supersede_failed when supersedeAtoms throws (e.g. atom file deleted)', async () => {
+    mockOllama('{"conflict": true, "reason": "x"}');
+    const oldAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'old-del', body: 'A is B.' });
+    insertTriples(testDir, oldAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'B' }]);
+
+    await new Promise((res) => setTimeout(res, 1100));
+
+    const newAtom = createAtom({ ...base(testDir), type: 'fact', slug: 'new-del', body: 'A is C.' });
+    insertTriples(testDir, newAtom.frontmatter.id, [{ subject: 'A', predicate: 'is', object: 'C' }]);
+
+    // Simulate a torn-state: the old atom's file disappears between Tier-1
+    // detection and the supersede write. supersedeAtoms() should throw and
+    // the orchestrator should record `supersede_failed`.
+    fs.unlinkSync(oldAtom.filePath!);
+
+    const r = await detectAndResolveConflicts({
+      memoryDir: testDir,
+      newAtomId: newAtom.frontmatter.id,
+      model: 'qwen2.5:14b',
+    });
+
+    expect(r.resolutions).toHaveLength(1);
+    expect(r.resolutions[0].action).toBe('supersede_failed');
+    expect(r.resolutions[0].reason).toMatch(/supersede failed/);
+  });
 });

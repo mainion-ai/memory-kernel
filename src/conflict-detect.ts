@@ -90,7 +90,8 @@ export type ConflictAction =
   | 'would_supersede'         // dry-run; supersede would have fired
   | 'not_a_conflict'          // Tier 2 LLM said no
   | 'skipped_wrong_direction' // new atom is older than the candidate → skip
-  | 'skipped_self';           // candidate is the same atom (defensive)
+  | 'skipped_self'            // candidate is the same atom (defensive — Tier-1 SQL already excludes this; here for safety)
+  | 'supersede_failed';       // Tier 2 confirmed but the supersede write threw (e.g. atom file deleted between detection and write)
 
 export interface ConflictResolution {
   old_atom_id: string;
@@ -210,7 +211,7 @@ export async function detectAndResolveConflicts(
       const msg = err instanceof Error ? err.message : String(err);
       resolutions.push({
         ...baseRes,
-        action: 'not_a_conflict',
+        action: 'supersede_failed',
         reason: `supersede failed: ${msg}`,
       });
     }
