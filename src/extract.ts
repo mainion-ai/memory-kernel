@@ -96,7 +96,7 @@ function callClaude(
   const claudeBin = process.env.CLAUDE_PATH ?? 'claude';
   const output = execFileSync(
     claudeBin,
-    ['-p', '--system-prompt', systemPrompt],
+    ['-p', '--output-format', 'text', '--system-prompt', systemPrompt],
     { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 120_000, input: userPrompt },
   );
 
