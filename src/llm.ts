@@ -84,15 +84,12 @@ async function callClaude(
     args.push('--model', opts.model);
   }
 
-  // User prompt as positional argument (last element).
-  // Claude CLI treats stdin as conversation input, not as a way to pass
-  // system+user prompts. The --system-prompt flag sets the system prompt,
-  // and the positional argument sets the user prompt.
-  args.push(userPrompt);
-
+  // User prompt is piped via stdin (not as a positional arg) because
+  // extract.ts sends full conversation logs that can exceed the ~128KB
+  // ARG_MAX limit on Linux/macOS. See commit f3afa4186c.
   return new Promise<string>((resolve, reject) => {
     const proc = spawn(claudeBin, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 120_000,
     });
 
@@ -109,6 +106,10 @@ async function callClaude(
       }
       resolve(stdout.trim());
     });
+
+    // Write user prompt to stdin and close.
+    proc.stdin.write(userPrompt);
+    proc.stdin.end();
   });
 }
 

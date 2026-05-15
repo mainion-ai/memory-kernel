@@ -99,7 +99,7 @@ export function createAtom(
   // Runs before event emission so the snapshot includes extracted relations.
   // Skips if the caller already provided explicit relations to avoid double-linking.
   // Extracts both atom-ID references and concept-name references.
-  if (!opts.relations?.length && indexExists(opts.memoryDir)) {
+  if (!opts.relations?.length) {
     const knownIds = getAllAtomIds(opts.memoryDir);
     const idRefs = extractBodyReferences(atom.body, id, knownIds);
 

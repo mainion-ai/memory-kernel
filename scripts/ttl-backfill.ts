@@ -22,6 +22,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseArgs } from 'node:util';
+import { assertWithinDir } from '../src/store.js';
 
 const { values } = parseArgs({
   options: {
@@ -66,6 +67,7 @@ let alreadyHasTtl = 0;
 
 for (const file of files) {
   const fp = path.join(entitiesDir, file);
+  assertWithinDir(memoryDir, fp);
   const content = fs.readFileSync(fp, 'utf-8');
 
   // Parse frontmatter
