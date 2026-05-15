@@ -96,10 +96,38 @@ export function findCandidateConflicts(
         AND a.status NOT IN ('superseded', 'archived', 'expired')`,
   );
 
+  // Fallback: match on predicate alone when subjects differ but are likely aliases.
+  // E.g. "alex lives_in NYC" vs "user lives_in Boston" — same entity, different naming.
+  const stmtFuzzy = db.prepare(
+    `SELECT t.atom_id, t.subject, t.predicate, t.object, t.confidence, t.created_at
+       FROM entity_triples t
+       JOIN atoms a ON a.atom_id = t.atom_id
+      WHERE t.predicate = ?
+        AND t.object <> ?
+        AND t.atom_id <> ?
+        AND t.subject <> ?
+        AND a.status NOT IN ('superseded', 'archived', 'expired')`,
+  );
+
   const out: ConflictCandidate[] = [];
+  const seen = new Set<string>(); // track old_atom_id + predicate pairs to avoid duplicates
+
   for (const nt of newTriples) {
+    // Exact subject match first (high confidence)
     const rows = stmt.all(nt.subject, nt.predicate, nt.object, newAtomId) as EntityTriple[];
     for (const ot of rows) {
+      const key = `${ot.atom_id}:${ot.predicate}`;
+      seen.add(key);
+      out.push({ old_atom_id: ot.atom_id, old_triple: ot, new_triple: nt });
+    }
+
+    // Fuzzy subject match: same predicate, different subject, different object.
+    // Only include if not already matched exactly.
+    const fuzzyRows = stmtFuzzy.all(nt.predicate, nt.object, newAtomId, nt.subject) as EntityTriple[];
+    for (const ot of fuzzyRows) {
+      const key = `${ot.atom_id}:${ot.predicate}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push({ old_atom_id: ot.atom_id, old_triple: ot, new_triple: nt });
     }
   }

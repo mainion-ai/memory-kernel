@@ -49,7 +49,7 @@ For each item, output a JSON object with:
 - tags: string[] of relevant tags (use "role:assistant" for assistant-generated content, "role:user" for user-provided content)
 - confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions)
 - rationale: one sentence explaining why this is worth remembering
-- triples (optional): array of {subject, predicate, object} entity-relation triples extracted from the body. Use stable lower-cased predicates like "has_capital", "born_in", "works_at", "is_a". Triples enable semantic conflict detection so newer facts can supersede older ones.
+- triples (optional): array of {subject, predicate, object} entity-relation triples extracted from the body. Use stable lower-cased predicates like "has_capital", "born_in", "works_at", "is_a". Triples enable semantic conflict detection so newer facts can supersede older ones. IMPORTANT: Use the person's actual name as the subject (e.g. "alex", "maria"), NEVER use generic terms like "user", "the user", or "they". Consistent subject naming across extractions is critical for conflict detection to work.
 
 For PREFERENCE atoms specifically:
 - Set type to "preference"
@@ -193,7 +193,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
 
   // --- Call LLM ---
   const systemPrompt = EXTRACTION_SYSTEM_PROMPT.replace('{{max_atoms}}', String(maxAtoms));
-  const userPrompt = `Here is the conversation log to extract atoms from:\n\n${logContent}`;
+  const userPrompt = `Analyze the following document and extract atoms as a JSON array. Do NOT respond conversationally — output ONLY a JSON array.\n\n<document>\n${logContent}\n</document>\n\nRespond with a JSON array of extracted atoms. If nothing is worth extracting, respond with [].`;
   let candidates: CandidateAtom[];
   try {
     const raw = await callLLM(systemPrompt, userPrompt, { model });

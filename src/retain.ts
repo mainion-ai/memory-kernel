@@ -91,10 +91,9 @@ export function createAtom(
   writeAtom(atom, fp);
   atom.filePath = fp;
 
-  // Index first so this atom's ID is available for lookups
-  if (indexExists(opts.memoryDir)) {
-    indexAtom(opts.memoryDir, atom);
-  }
+  // Index so this atom's ID is available for lookups.
+  // Always index — openIndex() creates the DB on demand if it doesn't exist.
+  indexAtom(opts.memoryDir, atom);
 
   // Auto-relink: extract body-text references and add as relations.
   // Runs before event emission so the snapshot includes extracted relations.

@@ -910,8 +910,9 @@ program
   .description('Render memory atoms as a CLAUDE.md context file')
   .argument('<memory-dir>', 'Memory directory')
   .argument('<output-path>', 'Output file path')
-  .option('--max-tokens <n>', 'Token budget for recall', '8000')
-  .action((memoryDir: string, outputPath: string, opts: { maxTokens: string }) => {
+  .option('--max-tokens <n>', 'Token budget for recall', '16000')
+  .option('--fill', 'Fill mode: bypass recall, load all active atoms sorted by recency up to budget')
+  .action((memoryDir: string, outputPath: string, opts: { maxTokens: string; fill?: boolean }) => {
     const resolvedDir = resolveDir(memoryDir, getAgent());
     const resolvedOutput = path.resolve(outputPath);
 
@@ -931,8 +932,8 @@ program
       const agent = getAgent();
       const baseDir = path.resolve(memoryDir);
       const content = agent && isIsolated(baseDir)
-        ? renderAgentClaudeMd(baseDir, agent, { maxTokens })
-        : renderClaudeMd(resolvedDir, { maxTokens });
+        ? renderAgentClaudeMd(baseDir, agent, { maxTokens, fill: opts.fill })
+        : renderClaudeMd(resolvedDir, { maxTokens, fill: opts.fill });
       fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
       fs.writeFileSync(resolvedOutput, content);
       const lineCount = content.split('\n').length - 1;

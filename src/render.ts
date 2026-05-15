@@ -8,6 +8,7 @@ import { recallIsolated } from './isolation-recall.js';
 import { countEvents } from './event-log.js';
 import { getAllRelations } from './index-db.js';
 import { isIsolated, resolveAgentDir, loadRenderConfig } from './isolation.js';
+import { listAtoms } from './store.js';
 import type { Atom, RenderConfig } from './types.js';
 
 // --- Belief arc helpers ---
@@ -147,6 +148,8 @@ export interface RenderClaudeMdOptions {
   maxTokens?: number;
   /** Per-type score multipliers for recall ranking. */
   typeWeights?: Partial<Record<string, number>>;
+  /** Fill mode: bypass recall(), load all active atoms sorted by recency up to budget. */
+  fill?: boolean;
 }
 
 /**
@@ -157,6 +160,10 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
   const maxTokens = opts.maxTokens
     ?? (parseInt(process.env.MK_RENDER_BUDGET || '0', 10) || 16000);
 
+  if (opts.fill) {
+    return renderFill(memoryDir, maxTokens);
+  }
+
   // Recall with token budget — applies privacy filtering (no SECRET/PERSONAL) and token cap.
   const bundle = recall(memoryDir, {
     max_tokens: maxTokens,
@@ -164,6 +171,47 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
   });
 
   return renderFromAtoms(memoryDir, bundle.atoms);
+}
+
+/**
+ * Greedy fill mode: load all active atoms sorted by recency, fill until token
+ * budget is exhausted. Does NOT require a task query — suitable for unconditional
+ * CLAUDE.md renders (cron, sync).
+ *
+ * This replaces the deprecated render-claude-md.ts script behavior.
+ */
+export function renderFill(memoryDir: string, maxTokens: number): string {
+  const CHARS_PER_TOKEN = 4;
+
+  const atoms = listAtoms(memoryDir);
+  const candidates = atoms
+    .filter((a) => a.frontmatter.status !== 'archived'
+      && a.frontmatter.status !== 'expired'
+      && a.frontmatter.status !== 'superseded'
+      && a.frontmatter.classification !== 'SECRET'
+      && a.frontmatter.classification !== 'PERSONAL')
+    .sort((a, b) => (b.frontmatter.updated_at || '').localeCompare(a.frontmatter.updated_at || ''));
+
+  let usedTokens = 0;
+  const active: Atom[] = [];
+  for (const a of candidates) {
+    const estimate = Math.ceil((a.frontmatter.id.length + 10 + a.body.trim().length) / CHARS_PER_TOKEN);
+    if (usedTokens + estimate > maxTokens) break;
+    active.push(a);
+    usedTokens += estimate;
+  }
+
+  const content = renderFromAtoms(memoryDir, active);
+  // Inject fill stats into the banner
+  const banner = `> Auto-generated from memory-kernel. ${active.length} of ${candidates.length} atoms (budget ${maxTokens} tokens, used ~${usedTokens}), ${countEvents(memoryDir)} events.`;
+  // Replace the first line that starts with "> Auto-generated" if present
+  const lines = content.split('\n');
+  const bannerIdx = lines.findIndex(l => l.startsWith('> Auto-generated'));
+  if (bannerIdx >= 0) {
+    lines[bannerIdx] = banner;
+    return lines.join('\n');
+  }
+  return `${banner}\n${content}`;
 }
 
 /**
