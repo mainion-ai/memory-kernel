@@ -325,7 +325,8 @@ export function reindex(memoryDir: string): { indexed: number; timeMs: number } 
     db.exec('CREATE TEMP TABLE IF NOT EXISTS _saved_triples AS SELECT * FROM entity_triples');
 
     // Disable FK enforcement during the batch delete so that the explicit DELETE FROM
-    // atom_relations (below) isn't redundantly cascade-fired again when atoms are deleted.
+    // atom_relations and DELETE FROM entity_triples (below) — both ON DELETE CASCADE on
+    // atoms.atom_id — aren't redundantly cascade-fired again when atoms are deleted.
     // Re-enabled in finally to ensure the connection is never left with FKs off on error.
     db.pragma('foreign_keys = OFF');
     try {

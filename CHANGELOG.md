@@ -25,6 +25,9 @@ All notable changes to this project will be documented in this file.
 
 - **`reindex()` no longer wipes `entity_triples`.** Triples are LLM-extracted at ingestion and are not serialized in atom markdown, so the previous behaviour (clear without repopulate) silently destroyed all triple data and disabled Tier-1 conflict detection on every `mk reindex`. Triples are now snapshotted to a temp table at the start of reindex and restored at the end for atoms that still exist (orphaned triples are dropped, matching the embedding-preservation pattern in the same transaction).
 - **`findCandidateConflicts` now excludes `expired` atoms** in addition to `superseded` and `archived`, bringing it in line with `queryIndex()` / `wander` and the rest of the active-status convention. Previously an expired atom could be returned as a conflict candidate and silently auto-superseded.
+- **`mk render --fill` now honored in isolated mode.** `renderAgentClaudeMd` previously accepted `fill` via `RenderClaudeMdOptions` but never destructured or forwarded it, so `--fill` silently fell back to recall-based rendering for any agent in per-agent isolation. Adds `renderFillIsolated()` for the agent ∪ shared union path; for agents with `include_shared: false` the call delegates to `renderClaudeMd(..., { fill: true })`.
+- **Removed dead `mockClaude` helper in `test/extract.test.ts`.** It mocked `execFile`, but the shared `callLLM` layer now uses `spawn` — so the mock would have been ineffective if ever called. It was unused; deleting avoids future confusion.
+- **Doc fixes:** `loadAtomGraph` JSDoc now mentions `superseded` exclusion; `reindex()` FK-OFF comment now names `entity_triples` alongside `atom_relations`; `CODING_INSTRUCTIONS.md` updated to reflect that `createAtom()` always indexes (the previous "indexExists no-op" gotcha is gone).
 
 ## [1.18.1] — 2026-05-13
 

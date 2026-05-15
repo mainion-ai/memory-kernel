@@ -166,8 +166,9 @@ function baseLevelActivation(
 
 /**
  * Build the tag co-occurrence graph from the SQLite index.
- * Only includes active, non-SECRET/PERSONAL, non-conflict atoms. Tags are
- * joined to the filtered atom set to avoid scanning archived/expired tags.
+ * Only includes active, non-SECRET/PERSONAL, non-conflict atoms (status NOT IN
+ * archived/expired/superseded). Tags are joined to the filtered atom set to
+ * avoid scanning archived/expired/superseded tags.
  *
  * Both queries run inside a single transaction to guarantee a consistent
  * snapshot (SQLite WAL mode can otherwise return different snapshots for

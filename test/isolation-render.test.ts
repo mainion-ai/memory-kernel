@@ -150,4 +150,42 @@ describe('renderAgentClaudeMd', () => {
     const md = renderAgentClaudeMd(testDir, 'huston');
     expect(md).toContain('Getting Started');
   });
+
+  it('--fill with include_shared unions agent + shared atoms (bypasses recall)', () => {
+    const hustonDir = agentDir('huston');
+    const shared = sharedDir();
+    openIndex(hustonDir);
+    openIndex(shared);
+
+    createAtom({ ...base(hustonDir), type: 'fact', slug: 'agent-only', body: 'Agent fact body.' });
+    createAtom({ ...base(shared), type: 'fact', slug: 'shared-only', body: 'Shared fact body.' });
+
+    const md = renderAgentClaudeMd(testDir, 'huston', { fill: true });
+    expect(md).toContain('Agent fact body');
+    expect(md).toContain('Shared fact body');
+    // Fill banner is emitted by renderFillIsolated when --fill is honored.
+    expect(md).toMatch(/budget \d+ tokens, used ~\d+/);
+  });
+
+  it('--fill without include_shared falls back to agent-only fill', () => {
+    const hustonDir = agentDir('huston');
+    const shared = sharedDir();
+    openIndex(hustonDir);
+    openIndex(shared);
+
+    writeRenderConfig(hustonDir, {
+      mode: 'operational',
+      max_tokens: 8000,
+      include_shared: false,
+      type_weights: {},
+    });
+
+    createAtom({ ...base(hustonDir), type: 'fact', slug: 'agent-only', body: 'Agent fact body.' });
+    createAtom({ ...base(shared), type: 'fact', slug: 'shared-only', body: 'Shared fact body.' });
+
+    const md = renderAgentClaudeMd(testDir, 'huston', { fill: true });
+    expect(md).toContain('Agent fact body');
+    expect(md).not.toContain('Shared fact body');
+    expect(md).toMatch(/budget \d+ tokens, used ~\d+/);
+  });
 });

@@ -212,15 +212,15 @@ recall(dir, { task: 'auth', decay_weight: 0 });
 recall(dir, { task: 'deploy', type_weights: { constraint: 4.5 } });
 ```
 
-### `openIndex()` required before `indexAtom()` in tests with relations
+### Indexing in tests
 
-`indexAtom()` calls `indexExists()` and no-ops when no index file exists. Tests that create atoms and then assert on relations must call `openIndex(testDir)` in `beforeEach`:
+`createAtom()` always calls `indexAtom()`, which opens (and creates on demand) the SQLite index. An explicit `openIndex(testDir)` in `beforeEach` is therefore *not* required for `createAtom` to index, but it remains useful when a test asserts on the index *before* writing any atoms (e.g. seeding via `reindex()` or running `queryIndex` on an empty store):
 
 ```typescript
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-test-'));
   initMemoryDir(testDir);
-  openIndex(testDir);  // required for indexAtom to actually index
+  openIndex(testDir);  // optional — only needed when querying before any createAtom() call
 });
 ```
 

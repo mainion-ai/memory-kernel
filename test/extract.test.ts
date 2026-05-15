@@ -21,15 +21,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Mock Claude CLI (execFile async) to return a fixed JSON response. */
-function mockClaude(candidates: object[]) {
-  return vi.mock('child_process', () => ({
-    execFile: (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error | null, stdout: string, stderr: string) => void) => {
-      callback(null, JSON.stringify(candidates), '');
-    },
-  }));
-}
-
 /** Write a simple log file with given content. */
 function writeLog(content: string) {
   fs.writeFileSync(logFile, content, 'utf-8');

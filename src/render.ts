@@ -3,11 +3,12 @@
  * Used by `mk render <memory-dir> <output-path>`.
  */
 
+import fs from 'fs';
 import { recall } from './recall.js';
 import { recallIsolated } from './isolation-recall.js';
 import { countEvents } from './event-log.js';
 import { getAllRelations } from './index-db.js';
-import { isIsolated, resolveAgentDir, loadRenderConfig } from './isolation.js';
+import { isIsolated, resolveAgentDir, loadRenderConfig, getSharedDir } from './isolation.js';
 import { listAtoms } from './store.js';
 import type { Atom, RenderConfig } from './types.js';
 
@@ -173,6 +174,43 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
   return renderFromAtoms(memoryDir, bundle.atoms);
 }
 
+const FILL_CHARS_PER_TOKEN = 4;
+
+/** Active, renderable atoms sorted newest-first. */
+function collectFillCandidates(memoryDir: string): Atom[] {
+  return listAtoms(memoryDir)
+    .filter((a) => a.frontmatter.status !== 'archived'
+      && a.frontmatter.status !== 'expired'
+      && a.frontmatter.status !== 'superseded'
+      && a.frontmatter.classification !== 'SECRET'
+      && a.frontmatter.classification !== 'PERSONAL')
+    .sort((a, b) => (b.frontmatter.updated_at || '').localeCompare(a.frontmatter.updated_at || ''));
+}
+
+/** Greedy token-budget fill — returns selected atoms and used token estimate. */
+function greedyFill(candidates: Atom[], maxTokens: number): { active: Atom[]; usedTokens: number } {
+  let usedTokens = 0;
+  const active: Atom[] = [];
+  for (const a of candidates) {
+    const estimate = Math.ceil((a.frontmatter.id.length + 10 + a.body.trim().length) / FILL_CHARS_PER_TOKEN);
+    if (usedTokens + estimate > maxTokens) break;
+    active.push(a);
+    usedTokens += estimate;
+  }
+  return { active, usedTokens };
+}
+
+/** Replace or prepend the `> Auto-generated …` banner line with fill stats. */
+function injectFillBanner(content: string, banner: string): string {
+  const lines = content.split('\n');
+  const bannerIdx = lines.findIndex(l => l.startsWith('> Auto-generated'));
+  if (bannerIdx >= 0) {
+    lines[bannerIdx] = banner;
+    return lines.join('\n');
+  }
+  return `${banner}\n${content}`;
+}
+
 /**
  * Greedy fill mode: load all active atoms sorted by recency, fill until token
  * budget is exhausted. Does NOT require a task query — suitable for unconditional
@@ -181,37 +219,43 @@ export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = 
  * This replaces the deprecated render-claude-md.ts script behavior.
  */
 export function renderFill(memoryDir: string, maxTokens: number): string {
-  const CHARS_PER_TOKEN = 4;
-
-  const atoms = listAtoms(memoryDir);
-  const candidates = atoms
-    .filter((a) => a.frontmatter.status !== 'archived'
-      && a.frontmatter.status !== 'expired'
-      && a.frontmatter.status !== 'superseded'
-      && a.frontmatter.classification !== 'SECRET'
-      && a.frontmatter.classification !== 'PERSONAL')
-    .sort((a, b) => (b.frontmatter.updated_at || '').localeCompare(a.frontmatter.updated_at || ''));
-
-  let usedTokens = 0;
-  const active: Atom[] = [];
-  for (const a of candidates) {
-    const estimate = Math.ceil((a.frontmatter.id.length + 10 + a.body.trim().length) / CHARS_PER_TOKEN);
-    if (usedTokens + estimate > maxTokens) break;
-    active.push(a);
-    usedTokens += estimate;
-  }
+  const candidates = collectFillCandidates(memoryDir);
+  const { active, usedTokens } = greedyFill(candidates, maxTokens);
 
   const content = renderFromAtoms(memoryDir, active);
-  // Inject fill stats into the banner
   const banner = `> Auto-generated from memory-kernel. ${active.length} of ${candidates.length} atoms (budget ${maxTokens} tokens, used ~${usedTokens}), ${countEvents(memoryDir)} events.`;
-  // Replace the first line that starts with "> Auto-generated" if present
-  const lines = content.split('\n');
-  const bannerIdx = lines.findIndex(l => l.startsWith('> Auto-generated'));
-  if (bannerIdx >= 0) {
-    lines[bannerIdx] = banner;
-    return lines.join('\n');
+  return injectFillBanner(content, banner);
+}
+
+/**
+ * Greedy fill across an isolated agent's store union'd with the shared namespace.
+ * Agent atoms win on ID collision. Sorted newest-first, then budget-capped.
+ */
+export function renderFillIsolated(agentDir: string, baseDir: string, maxTokens: number): string {
+  const agentCandidates = collectFillCandidates(agentDir);
+
+  const sharedDir = getSharedDir(baseDir);
+  let sharedCandidates: Atom[] = [];
+  if (fs.existsSync(sharedDir)) {
+    try {
+      sharedCandidates = collectFillCandidates(sharedDir);
+    } catch {
+      // Shared store missing or unreadable — treat as empty
+    }
   }
-  return `${banner}\n${content}`;
+
+  const agentIds = new Set(agentCandidates.map((a) => a.frontmatter.id));
+  const merged = [
+    ...agentCandidates,
+    ...sharedCandidates.filter((a) => !agentIds.has(a.frontmatter.id)),
+  ].sort((a, b) => (b.frontmatter.updated_at || '').localeCompare(a.frontmatter.updated_at || ''));
+
+  const { active, usedTokens } = greedyFill(merged, maxTokens);
+
+  // Render against agentDir so events/relations come from the agent's primary store.
+  const content = renderFromAtoms(agentDir, active);
+  const banner = `> Auto-generated from memory-kernel. ${active.length} of ${merged.length} atoms (budget ${maxTokens} tokens, used ~${usedTokens}), ${countEvents(agentDir)} events.`;
+  return injectFillBanner(content, banner);
 }
 
 /**
@@ -236,7 +280,17 @@ export function renderAgentClaudeMd(
     Object.keys(renderConfig.type_weights).length > 0 ? renderConfig.type_weights : undefined
   );
 
-  if (renderConfig.include_shared && isIsolated(baseDir)) {
+  const sharedInclusion = renderConfig.include_shared && isIsolated(baseDir);
+
+  if (opts.fill) {
+    // Fill mode bypasses recall entirely. Take the agent ∪ shared union when
+    // shared inclusion is on, otherwise fill from the agent store alone.
+    return sharedInclusion
+      ? renderFillIsolated(agentDir, baseDir, maxTokens)
+      : renderClaudeMd(agentDir, { maxTokens, typeWeights, fill: true });
+  }
+
+  if (sharedInclusion) {
     // Use isolated recall (agent + shared union), then render from the merged bundle
     const bundle = recallIsolated(agentDir, baseDir, {
       max_tokens: maxTokens,
