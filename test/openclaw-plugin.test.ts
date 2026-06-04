@@ -136,12 +136,15 @@ describe('mk_recall', () => {
     const { api, tools } = createMockApi(testDir);
     plugin.register(api);
 
-    // Seed some atoms
+    // Seed two atoms whose bodies both FTS-match the task. Pre-#214 the
+    // task "coding standards" matched neither body but both atoms still
+    // surfaced via score-0 fallback; that path is gone. Both atom bodies
+    // now mention "TypeScript" so the task hits each one legitimately.
     createAtom({ memoryDir: testDir, ...BASE_OPTS, type: 'decision', slug: 'use-ts', body: 'Use TypeScript for all modules' });
-    createAtom({ memoryDir: testDir, ...BASE_OPTS, type: 'constraint', slug: 'max-lines', body: 'Max 200 lines per file' });
+    createAtom({ memoryDir: testDir, ...BASE_OPTS, type: 'constraint', slug: 'max-lines', body: 'Max 200 lines per TypeScript module' });
 
     const result = await tools['mk_recall'].execute('call-1', {
-      task: 'coding standards',
+      task: 'TypeScript',
       max_tokens: 4000,
     });
 
@@ -519,7 +522,6 @@ describe('plugin configSchema — SecretRef resolution', () => {
 
   it('warns (not fails) when vault file mode is group/world readable', () => {
     fs.writeFileSync(vaultFile, JSON.stringify({ 'openai-key': 'sk-loose' }), { mode: 0o644 });
-    fs.chmodSync(vaultFile, 0o644);
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const cfg = plugin.configSchema.parse({

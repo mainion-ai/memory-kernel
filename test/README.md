@@ -22,7 +22,7 @@ This directory also includes:
 npm test
 ```
 
-**Total: 690 tests across 33 files** (as of v1.4.0). See `CODING_INSTRUCTIONS.md` for the full test file inventory and what each file covers.
+**Total: 1587 tests across 106 files** (as of unreleased, 2026-05-24 — adds `doctor-fix-orchestrator.test.ts`, `doctor-fix-checks.test.ts`, and 7 new cases in `cli-doctor-e2e.test.ts` for `mk doctor --fix`/`--dry-run`). See `CODING_INSTRUCTIONS.md` for the full test file inventory and what each file covers.
 
 ## Notes
 

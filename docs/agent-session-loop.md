@@ -48,7 +48,7 @@ mk remember "The cache layer may reduce p99 by ~40% — untested" \
   -d {dir} -t belief --confidence 0.5 --tags performance,cache
 
 # A stable user preference
-mk remember "Nenad approves infrastructure changes with a single word, no spec required" \
+mk remember "The repo owner approves infrastructure changes with a single word, no spec required" \
   -d {dir} -t preference --tags workflow,communication
 ```
 

@@ -22,7 +22,9 @@ export const AtomFrontmatterSchema = z.object({
   confidence: z.number().min(0).max(1),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
-  ttl_days: z.number().int().min(0).nullable(),
+  // #108: ttl_days >= 1 (zero meant "expire on next reflect" — meaningless;
+  //        use null for no-expiry, or a positive integer day count).
+  ttl_days: z.number().int().min(1).nullable(),
   scope: z
     .object({
       paths: z.array(z.string()).optional(),
@@ -81,6 +83,13 @@ export const MUTATION_ACTIONS = [
   'atom_promoted',
   'atom_expired',
   'atom_imported',
+  // #109: conflict_resolved is a terminal mutation — it archives the
+  //       conflict atom and carries a full atom_snapshot of the final
+  //       (status=resolved) state. Replay treats it like atom_archived
+  //       (removes from atom map); compactLog now sees it as a mutation
+  //       and keeps the latest per atom_ref (it's always terminal, so
+  //       this just means the resolved event survives compaction).
+  'conflict_resolved',
 ] as const;
 
 export function isMutationAction(action: string): boolean {
@@ -173,4 +182,27 @@ export const DEFAULT_TYPE_RESERVATIONS: Partial<Record<AtomType, number>> = {
   decision:   800, // ~2–3 decisions always present
   constraint: 400, // Constraints always visible
   conflict:   400, // Active conflicts always surfaced
+};
+
+/**
+ * Default token reservations for fill-mode CLAUDE.md render.
+ *
+ * Unlike DEFAULT_TYPE_RESERVATIONS (tuned for task-driven recall), fill mode
+ * has no relevance signal — every atom type that exists in the store needs
+ * a guaranteed slice or beliefs monopolise the budget (issue #154).
+ *
+ * Raw totals here sum well above MAX_RESERVATION_RATIO * budget; the
+ * selector scales them down so they fit. The ratios between types are what
+ * matter, not the absolute values.
+ */
+export const DEFAULT_FILL_TYPE_RESERVATIONS: Partial<Record<AtomType, number>> = {
+  decision:   800,
+  fact:       1200,
+  procedure:  600,
+  constraint: 400,
+  conflict:   400,
+  preference: 400,
+  belief:     4000,
+  open_question: 200,
+  // entity_summary intentionally omitted — usually large, low signal in fills.
 };

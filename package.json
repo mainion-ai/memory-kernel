@@ -1,6 +1,6 @@
 {
   "name": "memory-kernel",
-  "version": "1.16.1",
+  "version": "1.28.0",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "pretest": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc --noEmit",
@@ -25,6 +26,9 @@
     "mcp": "tsx src/mcp/server.ts",
     "bench": "tsx scripts/bench.ts",
     "bench:baseline": "tsx scripts/bench.ts > scripts/bench-baseline.json"
+  },
+  "engines": {
+    "node": ">=22.16"
   },
   "keywords": [
     "memory",
@@ -42,17 +46,21 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "better-sqlite3": "^12.6.2",
-    "commander": "^14.0.3",
-    "gray-matter": "^4.0.3",
+    "commander": "^15.0.0",
     "js-yaml": "^4.1.1",
+    "proper-lockfile": "^4.1.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.48",
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
+    "@types/proper-lockfile": "^4.1.4",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.3",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "qs": "^6.15.2"
   }
 }

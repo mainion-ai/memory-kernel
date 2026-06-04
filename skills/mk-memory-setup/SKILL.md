@@ -5,143 +5,111 @@ description: Set up memory-kernel — persistent, file-based agent memory — fo
 
 # Memory-Kernel Setup
 
-Set up persistent, typed memory for an AI agent. The skill has a **universal core** that works for every host (install CLI → init store → seed atoms → schedule reflect) and **host-specific extensions** for the three integration paths memory-kernel is designed around:
+Set up persistent, typed memory for an AI agent. The skill runs the **universal core** first (preflight, configure, install, init, seed) for every host, then **branches** into a host-specific track depending on what's consuming the memory.
 
-| Host | What it consumes | Reference file |
-|------|------------------|----------------|
-| **NanoClaw** (container agent) | Rendered `CLAUDE.md` loaded at session start | `references/nanoclaw.md` |
-| **OpenClaw** (plugin-based agent) | Native `openclaw-memory-kernel` plugin + AGENTS.md / MEMORY.md doctrine | `references/openclaw.md` |
-| **MCP client** (Claude Desktop, Cursor, etc.) | `mk-mcp` server launched by the client over stdio | `references/mcp-client.md` |
-| **Generic / other** | The agent (or operator) wires up memory-kernel themselves using the SDK or CLI | — |
+| Host | What it consumes | Branch | Reference file |
+|------|------------------|--------|----------------|
+| **NanoClaw** (container agent) | Rendered `CLAUDE.md` loaded at session start | A | [`references/nanoclaw.md`](references/nanoclaw.md) |
+| **OpenClaw** (plugin-based agent) | Native `openclaw-memory-kernel` plugin + `AGENTS.md` / `MEMORY.md` doctrine | B | [`references/openclaw.md`](references/openclaw.md) |
+| **MCP client** (Claude Desktop, Cursor, Continue) | `mk-mcp` server launched by the client over stdio | C | [`references/mcp-client.md`](references/mcp-client.md) |
+| **Generic / other** | Operator wires consumption manually via SDK or CLI | D | — |
 
 This skill runs on the **host machine** via Claude Code, not inside a container. It needs host-level access to install software, write config files, and (for NanoClaw) update databases and cron.
 
-**Principle:** when something is broken or missing, fix it. Don't tell the user to go fix it themselves. Ask permission via `AskUserQuestion` for anything that touches their config or installs software, then do the work.
+**Principle:** when something is missing or broken, fix it. Don't tell the user to go fix it. Ask permission via `AskUserQuestion` for anything that touches their config or installs software — then do the work.
+
+The skill is structured as:
+
+- **Part 1 — Universal core** (steps 1–6). Same for every host.
+- **Part 2 — Pick a host branch** (step 7+). Pick one of A / B / C / D and skip the others.
 
 ---
 
-## Step 0: Preflight
+# Part 1 — Universal core
 
-Universal regardless of host:
+## Step 1: Preflight
+
+Check tools are present at the versions memory-kernel needs:
 
 ```bash
-node --version    # need >= 20.0.0
+node --version    # need >= 22.16
 git --version
 ```
 
-NanoClaw and OpenClaw also need:
+NanoClaw and OpenClaw branches also need:
 
 ```bash
 sqlite3 --version # NanoClaw stores config in SQLite
-docker --version  # NanoClaw container runtime; OpenClaw may use it depending on distribution
+docker --version  # NanoClaw container runtime; OpenClaw may use depending on distribution
 ```
 
 GitHub backup of the memory directory is optional:
 
 ```bash
-gh auth status    # only needed if user wants GitHub backup
+gh auth status
 ```
 
-If anything's missing, install before proceeding (`brew install`, `apt install`, or distribution-appropriate). Don't proceed without `node ≥ 20`.
+If anything's missing, install it before proceeding (`brew install`, `apt install`, distribution-appropriate). Don't proceed without **`node >= 22.16`** — memory-kernel uses APIs that aren't stable on earlier Node and Node 20 reached end-of-life 2026-04-30.
 
 ---
 
-## Step 1: Detect / select the host
+## Step 2: Configuration questions
 
-Auto-detect first; ask only if ambiguous.
+These apply to every host. Use `AskUserQuestion` for all four; record answers as `{MEMORY_DIR}`, `{AGENT_NAME}`, `{IDENTITY_DESCRIPTION}`, and the version-control flag.
 
-```bash
-HOST_HINTS=()
+### Q1 — Memory directory *(all hosts)*
 
-# NanoClaw
-[ -d /workspace/group ] && [ -f /.dockerenv ] && HOST_HINTS+=("nanoclaw")  # inside the container
-[ -f ~/.config/nanoclaw/mount-allowlist.json ] && HOST_HINTS+=("nanoclaw")
-pgrep -f nanoclaw >/dev/null 2>&1 && HOST_HINTS+=("nanoclaw")
-
-# OpenClaw — package.json deps or dedicated config dir
-[ -f ./package.json ] && grep -q "openclaw-memory-kernel" ./package.json 2>/dev/null && HOST_HINTS+=("openclaw")
-[ -d ~/openclaw ] || [ -d ~/.config/openclaw ] && HOST_HINTS+=("openclaw")
-
-# MCP clients — Claude Desktop config in canonical locations
-[ -f "$HOME/Library/Application Support/Claude/claude_desktop_config.json" ] && HOST_HINTS+=("mcp-client")
-[ -f "$HOME/.config/Claude/claude_desktop_config.json" ] && HOST_HINTS+=("mcp-client")
-
-echo "Detected: ${HOST_HINTS[*]:-none}"
-```
-
-Then run `AskUserQuestion`:
-
-> *"Which host will use this memory?"*
+> *"Where should the memory data live on disk?"*
 >
-> - **NanoClaw container agent** *(memory rendered into `CLAUDE.md`)*
-> - **OpenClaw agent** *(loads the `openclaw-memory-kernel` plugin)*
-> - **MCP client** *(Claude Desktop, Cursor, Continue — runs `mk-mcp` over stdio)*
-> - **Other / generic** *(I just want the memory store; I'll wire up consumption myself)*
+> - **`~/mk-memory`** *(recommended — simple, top-level, easy to back up)*
+> - **`~/repos/memory/kernel`** *(under your repos folder if you prefer that layout)*
+> - **Custom path**
 
-If exactly one host was auto-detected, propose it as the default (recommended) option and let the user confirm or override. Store the answer as `{HOST}` for use in subsequent steps.
+Expand to an absolute path; do not keep the `~`. The directory will be created in Step 4. Store as `{MEMORY_DIR}`.
 
----
+### Q2 — Agent name *(all hosts)*
 
-## Step 2: Configuration
+> *"What is the agent's name? Used in commits, cron IDs, and as the seed for the identity atom."*
 
-Use `AskUserQuestion` for these. Some questions only apply to certain hosts.
+Free text; alphanumeric + dashes/underscores only (memory-kernel constraint on agent IDs). Store as `{AGENT_NAME}`.
 
-**Q1: Memory directory** *(all hosts)*
-"Where should the memory data be stored?"
-- `~/mk-memory` *(recommended — simple, top-level)*
-- `~/repos/memory/kernel`
-- Custom path
+> **Trade-off (agent identity).** Once seeded, atoms reference this name in their `agent_id`. Renaming later is mechanical but requires rewriting frontmatter across the store and re-seeding lifecycle atoms — easier to pick the name you'll keep. If unsure between a personal name and a role name (e.g. `alice` vs `code-reviewer`), prefer the role: roles outlive seats.
 
-Store as `{MEMORY_DIR}` (expand to absolute path; do not keep `~`).
+### Q3 — Version control *(all hosts)*
 
-**Q2: Agent name** *(all hosts)*
-"What is the agent's name? Used in commits, cron IDs, and as the seed for the identity atom."
-- Free text; alphanumeric + dashes/underscores only (memory-kernel constraint).
+> *"Back up the memory directory to GitHub?"*
+>
+> - **Yes** *(recommended)* — `git init` plus a private GitHub repo, with nightly auto-commit
+> - **No** — local only
 
-**Q3: Version control** *(all hosts)*
-"Back up the memory directory to GitHub?"
-- **Yes** *(recommended)* — `git init` + private GitHub repo
-- **No** — local only
+If yes, also ask **Q3a — GitHub username** (free text). Store as `{GITHUB_USER}`.
 
-If yes, also ask **Q3a:** GitHub username.
+### Q4 — Identity description *(all hosts)*
 
-**Q4: Identity description** *(all hosts)*
-"Describe this agent in 1–2 sentences. This becomes the identity atom seeded in Step 6."
-- Free text.
+> *"Describe this agent in 1–2 sentences. This becomes the identity atom seeded in Step 6."*
 
-**Q5: Host-specific config** — load the appropriate reference file:
-
-| `{HOST}` | What to read |
-|----------|--------------|
-| `nanoclaw` | `references/nanoclaw.md` Step N1 (locate NanoClaw, ask for `{NANOCLAW_DIR}`) |
-| `openclaw` | `references/openclaw.md` Step O1–O2 (plugin install + isolation mode) |
-| `mcp-client` | `references/mcp-client.md` Step M1 (locate the client config file) |
-| `other` | Skip — universal flow only |
+Free text, 1–2 sentences. The seeded atom is `type: fact`, tagged `identity` and `agent-setup`. Store as `{IDENTITY_DESCRIPTION}`.
 
 ---
 
-## Step 3: Install memory-kernel CLI
-
-Universal:
+## Step 3: Install the CLI
 
 ```bash
 npm install -g memory-kernel
 npx mk --version  # verify
 ```
 
-If install fails with `EACCES`, fix npm prefix:
+If install fails with `EACCES`, fix the npm prefix (one-line setup, then retry):
 
 ```bash
 mkdir -p ~/.npm-global && npm config set prefix '~/.npm-global'
-export PATH=~/.npm-global/bin:$PATH   # add to user's shell profile too
+export PATH=~/.npm-global/bin:$PATH    # add this to the user's shell profile
 npm install -g memory-kernel
 ```
 
 ---
 
-## Step 4: Initialise memory directory
-
-Universal:
+## Step 4: Init the memory directory
 
 ```bash
 mkdir -p {MEMORY_DIR}
@@ -149,19 +117,19 @@ cd {MEMORY_DIR}
 npx mk init .
 ```
 
-This creates `ENTITIES/`, `CONFLICTS/`, `ARCHIVE/`, `EVIDENCE/`, `EPISODES/`, `events.ndjson`, and `.memory-index.db`. Verify:
+`mk init` is idempotent — running it twice on an existing store is safe.
+
+Verify the layout:
 
 ```bash
 ls -la {MEMORY_DIR}
 ```
 
-If anything's missing, `mkdir -p` the missing subdirectories. The init is idempotent — running it again on an existing store is safe.
+Expected: `ENTITIES/`, `CONFLICTS/`, `ARCHIVE/`, `EVIDENCE/`, `EPISODES/`, `events.ndjson`, and `.memory-index.db`. Create any missing subdirs manually with `mkdir -p` — `mk init` respects existing ones on re-run.
 
 ---
 
-## Step 5: Optional — Git init + GitHub backup
-
-**Skip entirely if the user said "No" to version control in Step 2.**
+## Step 5: Git + GitHub backup *(skip if Q3 was "No")*
 
 ```bash
 cd {MEMORY_DIR}
@@ -187,24 +155,9 @@ git push -u origin main
 
 ---
 
-## Step 6: Host-specific plumbing
+## Step 6: Seed identity + lifecycle atoms
 
-Now the host actually needs different things. Read the appropriate reference file and follow its steps.
-
-| `{HOST}` | Reference | What it covers |
-|----------|-----------|----------------|
-| `nanoclaw` | [`references/nanoclaw.md`](references/nanoclaw.md) | Mount allowlist, container_config in NanoClaw DB, conversation/impulse symlinks, render-path resolution, restart |
-| `openclaw` | [`references/openclaw.md`](references/openclaw.md) | Plugin install, isolation config, AGENTS.md / MEMORY.md / compaction-prompt doctrine, plugin verification |
-| `mcp-client` | [`references/mcp-client.md`](references/mcp-client.md) | Add `memory-kernel` server entry to `claude_desktop_config.json` (or equivalent), restart client, verify tools appear |
-| `other` | — | Skip — the operator is wiring it up themselves; tell them how `mk render` writes to a path or how `mk-mcp` exposes the same operations over stdio |
-
-After Step 6, the host knows where to find memory-kernel and how to consume it. The remaining steps are universal again.
-
----
-
-## Step 7: Seed initial atoms
-
-### 7a. Identity and preference
+### 6a — Identity and preference *(universal)*
 
 ```bash
 npx mk remember "{IDENTITY_DESCRIPTION}" \
@@ -216,18 +169,18 @@ npx mk remember "Created by {CREATOR_NAME}. Prefers direct communication, values
   --tags communication creator
 ```
 
-Customise the preference body if you know the operator's actual preferences. Add infrastructure facts if useful:
+Customize the preference body if you know the operator's actual preferences. Add infrastructure facts if useful:
 
 ```bash
 npx mk remember "Running on {hostname}, {OS}, IP {IP}" \
   -d {MEMORY_DIR} -t fact --tags infrastructure
 ```
 
-### 7b. Lifecycle atoms (universal — works for every host)
+### 6b — Lifecycle atoms *(universal — works for every host)*
 
-Seed the agent's operating manual as typed memory so the lifecycle is recallable from inside memory-kernel itself rather than living only in `docs/agent-session-loop.md`. Without this step, a freshly-bootstrapped agent has no idea when to run `wander`, the order of `citations` → `relink`, that `lint` exists, or the A2A handoff protocol — it has to be told out of band.
+Seed the agent's *operating manual* as typed memory so the lifecycle is recallable from inside memory-kernel itself rather than living only in `docs/agent-session-loop.md`. Without this step, a freshly-bootstrapped agent has no idea when to run `wander`, the order of `citations` → `relink`, that `lint` exists, or the A2A handoff protocol — it has to be told out of band.
 
-The bundled `seed-atoms/seed-lifecycle.sh` script reads each file in `seed-atoms/lifecycle/` and seeds an atom with a stable `--slug`. Run it with the absolute path of this skill directory:
+The bundled `seed-atoms/seed-lifecycle.sh` script reads each file in `seed-atoms/lifecycle/` and seeds an atom with a stable slug. Run it with the absolute path of this skill directory:
 
 ```bash
 # Replace <SKILL_DIR> with the absolute path of the directory containing
@@ -236,132 +189,315 @@ SKILL_DIR="<SKILL_DIR>"
 bash "$SKILL_DIR/seed-atoms/seed-lifecycle.sh" "{MEMORY_DIR}"
 ```
 
-The script seeds 7 procedure atoms (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics) and 1 constraint atom (Session-Loop Pitfalls). Constraint type carries 1.5× recall weight and reserved token budget, so the hard rules surface even on tight renders.
+The script seeds 7 procedure atoms (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics) and 1 constraint atom (Session-Loop Pitfalls). The constraint type carries 1.5× recall weight and reserved token budget, so the hard rules surface even on tight renders.
 
 **Verify:**
 
 ```bash
-npx mk recall -d "{MEMORY_DIR}" --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
+npx mk recall -d "{MEMORY_DIR}" --types procedure,constraint --json \
+  | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
 # Expected: 8 (7 procedures + 1 constraint)
 ```
 
-These atoms are host-agnostic — the same lifecycle applies whether the agent runs in NanoClaw, OpenClaw, or an MCP client. Re-seed instructions live in [`seed-atoms/lifecycle/README.md`](seed-atoms/lifecycle/README.md).
+Re-seed instructions live in [`seed-atoms/lifecycle/README.md`](seed-atoms/lifecycle/README.md).
 
 ---
 
-## Step 8: Render or expose memory
+# Part 2 — Pick a host branch
 
-How memory reaches the agent depends on the host:
+The universal core is done. The host determines how the agent actually *consumes* this memory. Auto-detect first, then ask.
 
-| `{HOST}` | What to do | Resulting surface |
-|----------|------------|-------------------|
-| `nanoclaw` | `npx mk render "{MEMORY_DIR}" "$CLAUDE_MD"` (CLAUDE_MD resolved in `references/nanoclaw.md` Step N5) | `/workspace/group/CLAUDE.md` inside the container |
-| `openclaw` | Nothing to render — the plugin's bootstrap hook injects atoms at session start. Just confirm via `mk_recall` returns atoms. | Plugin tool calls |
-| `mcp-client` | Nothing to render — the client launches `mk-mcp` and calls tools. Confirm by asking the agent to recall a seeded atom. | MCP tool calls |
-| `other` | If the operator wants a rendered snapshot: `npx mk render "{MEMORY_DIR}" "<path>"`. Otherwise expose `mk-mcp` or use the SDK directly. | Operator's choice |
+```bash
+HOST_HINTS=()
+[ -d /workspace/group ] && [ -f /.dockerenv ] && HOST_HINTS+=("nanoclaw")
+[ -f ~/.config/nanoclaw/mount-allowlist.json ] && HOST_HINTS+=("nanoclaw")
+pgrep -f nanoclaw >/dev/null 2>&1 && HOST_HINTS+=("nanoclaw")
+[ -f ./package.json ] && grep -q "openclaw-memory-kernel" ./package.json && HOST_HINTS+=("openclaw")
+{ [ -d ~/openclaw ] || [ -d ~/.config/openclaw ]; } && HOST_HINTS+=("openclaw")
+[ -f "$HOME/Library/Application Support/Claude/claude_desktop_config.json" ] && HOST_HINTS+=("mcp-client")
+[ -f "$HOME/.config/Claude/claude_desktop_config.json" ] && HOST_HINTS+=("mcp-client")
+echo "Detected: ${HOST_HINTS[*]:-none}"
+```
 
-Verify the render (NanoClaw / generic):
+Then run `AskUserQuestion`:
+
+> **Which host will use this memory?**
+>
+> - **NanoClaw container agent** *(memory rendered into `CLAUDE.md`)* → **Branch A**
+> - **OpenClaw agent** *(loads the `openclaw-memory-kernel` plugin)* → **Branch B**
+> - **MCP client** *(Claude Desktop, Cursor, Continue — runs `mk-mcp` over stdio)* → **Branch C**
+> - **Other / generic** *(I just want the memory store; I'll wire up consumption myself)* → **Branch D**
+
+If exactly one host was auto-detected, propose it as the recommended option in the question. Store the answer as `{HOST}` and jump to the matching branch. Skip the other three.
+
+---
+
+## Branch A — NanoClaw
+
+NanoClaw consumes memory through a rendered `CLAUDE.md` that the container loads at session start. The steps below wire memory-kernel into NanoClaw's mount allowlist, the `container_config` row in the NanoClaw DB, and conversation/impulse symlinks. Most of the per-host plumbing lives in [`references/nanoclaw.md`](references/nanoclaw.md).
+
+### A1 — Locate NanoClaw
+
+```bash
+ls -d ~/nanoclaw ~/repos/nanoclaw 2>/dev/null
+```
+
+If neither exists, ask:
+
+> *"Where is your NanoClaw installation?"* — full path. The skill needs to write to the mount allowlist and update the `container_config` DB row.
+
+Store as `{NANOCLAW_DIR}`. Then follow [`references/nanoclaw.md`](references/nanoclaw.md) Steps N1–N5 — mount allowlist, `container_config` DB row, conversation/impulse symlinks, render-path resolution.
+
+### A2 — Render `CLAUDE.md`
+
+```bash
+npx mk render "{MEMORY_DIR}" "$CLAUDE_MD"
+# CLAUDE_MD path resolved in references/nanoclaw.md Step N5
+```
+
+**Verify:**
 
 ```bash
 head -20 "$CLAUDE_MD"
-# Should start with:
+# Expected first lines:
 # # Memory
 # > Auto-generated from memory-kernel. X atoms, Y events.
-```
 
-Confirm the lifecycle atoms made it in:
-
-```bash
 grep -c session-loop "$CLAUDE_MD"
-# Expect ≥ 1 (at least the constraint atom should always surface).
+# Expect >= 1 — the constraint atom should always surface.
 ```
 
----
+### A3 — Schedule nightly reflect + render + git push
 
-## Step 9: Schedule periodic reflect + render (universal command, host-aware paths)
-
-A nightly cron keeps memory consolidated and (for NanoClaw / generic) keeps the rendered file fresh.
-
-**With git backup** (replace `<CLAUDE_MD>` with the host-appropriate render target, or omit `&& mk render ...` for OpenClaw / MCP-only setups):
+**With git backup:**
 
 ```bash
-(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} <CLAUDE_MD> && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} <CLAUDE_MD_PATH> && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
 ```
 
-**Without git:**
-
-```bash
-(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && npx mk render {MEMORY_DIR} <CLAUDE_MD> 2>&1 | logger -t memory-sync") | crontab -
-```
-
-Verify the line is in place and matches what `/mk-doctor` will look for later:
-
-```bash
-crontab -l | grep memory
-```
-
-If the cron doesn't run, common causes: the user's PATH doesn't include the global `npx`. Add it explicitly to the cron line:
+**Without git** — drop the `git ...` chain. If the cron doesn't run, the most common cause is a missing PATH in the cron environment. Add it explicitly:
 
 ```bash
 0 23 * * * PATH=/usr/local/bin:/usr/bin:$HOME/.nvm/versions/node/v22.*/bin cd {MEMORY_DIR} && ...
 ```
 
----
-
-## Step 10: Verify
-
-Universal verification — runs for every host:
+### A4 — Verify
 
 ```bash
 npx mk status -d {MEMORY_DIR}
 npx mk doctor -d {MEMORY_DIR}
-npx mk lint -d {MEMORY_DIR} --json | jq '.warnings | length'
+crontab -l | grep memory
 ```
 
-Expected:
-- `mk status` reports atom counts by type (≥ 7 procedure, ≥ 1 constraint, ≥ 1 fact, ≥ 1 preference).
-- `mk doctor` reports no issues.
-- `mk lint` warnings count ≥ 0 (zero is best; small numbers on a fresh store are normal).
+Plus the NanoClaw-specific verification in [`references/nanoclaw.md`](references/nanoclaw.md) Step N6 — mount allowlist check, `container_config` row check, conversation/impulse symlinks, restart confirmation.
 
-For host-specific verification, run the verify step from the appropriate reference file (Step N6 in `nanoclaw.md`, Step O4 in `openclaw.md`, Step M4 in `mcp-client.md`).
-
-If any verification fails, run the `/mk-doctor` skill — it has a triage flow that maps symptoms to remediation steps.
-
----
-
-## Step 11: Commit and finish
-
-If using git, commit the final state:
-
-```bash
-cd {MEMORY_DIR}
-git add -A
-git commit -m "Memory-kernel setup complete"
-git push
-```
-
-Then print a host-aware summary. The shape:
+### A5 — Finish
 
 ```
-✅ Memory-Kernel Setup Complete
+✅ Memory-Kernel Setup Complete (NanoClaw)
 
-  Host:         {HOST}
   Agent:        {AGENT_NAME}
   Memory dir:   {MEMORY_DIR}
   GitHub repo:  {GITHUB_USER}/memory (private)  [or "Local only"]
-  Cron:         Nightly sync at 23:00
+  Mounts:       /workspace/extra/memory (rw), /workspace/group/CLAUDE.md (auto-loaded)
+  Cron:         Nightly at 23:00 — reflect → render → push
 ```
 
-Plus host-specific lines:
+> Health-check any time with `/mk-doctor`. The agent's full operating loop is already inside memory as 8 typed atoms: `mk recall --types procedure,constraint`.
 
-- **NanoClaw:** mount allowlist path, container_config status, render target path inside the container, "/workspace/extra/memory (read-write)" + "/workspace/group/CLAUDE.md (auto-loaded)".
-- **OpenClaw:** plugin loaded confirmation, isolation mode in use, AGENTS.md / MEMORY.md / compaction-prompt status.
-- **MCP client:** which client config was edited, the agent ID set in `MCP_AGENT_ID`, "restart your client to pick up the new server".
-- **Other:** the absolute path to the memory directory and how to call `mk render` or `mk-mcp` later.
+---
 
-Close the summary with:
+## Branch B — OpenClaw
 
-> Verify health any time with the `/mk-doctor` skill. The agent's full operating loop is already inside memory as 8 typed atoms (`mk recall --types procedure,constraint`).
+OpenClaw consumes memory through a native plugin — no rendering, no `CLAUDE.md`. The plugin's bootstrap hook injects atoms at session start. Setup focuses on plugin install, isolation mode, and the AGENTS.md / MEMORY.md / compaction-prompt doctrine. Most of the per-host plumbing lives in [`references/openclaw.md`](references/openclaw.md).
+
+### B1 — Locate OpenClaw
+
+```bash
+ls -d ~/openclaw ~/repos/openclaw 2>/dev/null
+```
+
+Ask if not auto-detected. Store as `{OPENCLAW_DIR}`. Then follow [`references/openclaw.md`](references/openclaw.md) for the full flow.
+
+### B2 — Choose isolation mode
+
+`AskUserQuestion`:
+
+> **How should this agent's memory be isolated?**
+>
+> - **Shared** *(default — single store, all agents see all atoms)*
+> - **Per-agent** *(each agent gets its own private store with a shared corkboard for explicit cross-agent atoms)*
+
+> **Trade-off (isolation mode).** Shared mode is the simpler default — one store, no routing logic, all atoms recallable. Per-agent mode prevents two agents from silently overwriting each other's beliefs and lets each agent develop its own understanding, but requires a stable `agent_id` for every caller and adds a `shared/` directory for explicit cross-agent atoms. Pick **per-agent** if you'll have two or more distinct agents sharing the directory; pick **shared** if it's just one agent (or you're not sure yet — migration to per-agent later is supported via `mk migrate`).
+
+If per-agent: ask for the `agent_id` to pin (free text, alphanumeric + dashes/underscores). Store as `{OPENCLAW_AGENT_ID}`.
+
+### B3 — Plugin install + isolation config
+
+Follow [`references/openclaw.md`](references/openclaw.md) Steps O1–O2 verbatim. The skill writes the appropriate plugin config block based on B2's answer.
+
+### B4 — Doctrine (AGENTS.md / MEMORY.md / compaction prompt)
+
+Follow [`references/openclaw.md`](references/openclaw.md) Step O3 — the doctrine files steer the host's `AGENTS.md`, `MEMORY.md`, and compaction prompts so the agent uses memory consistently.
+
+### B5 — Schedule nightly reflect *(no render needed)*
+
+```bash
+(crontab -l 2>/dev/null; echo "0 23 * * * cd {MEMORY_DIR} && npx mk reflect -d . --agent-id {AGENT_NAME} --session-id nightly-\$(date +\%Y\%m\%d) && git add -A && git commit -m \"nightly sync \$(date +\%Y-\%m-\%d)\" --allow-empty && git push 2>&1 | logger -t memory-sync") | crontab -
+```
+
+Drop the `git ...` chain if no GitHub backup.
+
+### B6 — Verify
+
+```bash
+npx mk status -d {MEMORY_DIR}
+npx mk doctor -d {MEMORY_DIR}
+```
+
+Plus the OpenClaw-specific verification in [`references/openclaw.md`](references/openclaw.md) Step O4 — plugin loaded confirmation, bootstrap hook called, `mk_recall` returns atoms.
+
+### B7 — Finish
+
+```
+✅ Memory-Kernel Setup Complete (OpenClaw)
+
+  Agent:        {AGENT_NAME}
+  Memory dir:   {MEMORY_DIR}
+  GitHub repo:  {GITHUB_USER}/memory (private)  [or "Local only"]
+  Plugin:       openclaw-memory-kernel loaded
+  Isolation:    {shared | per-agent — id: {OPENCLAW_AGENT_ID}}
+  Cron:         Nightly at 23:00 — reflect → push
+```
+
+> Health-check any time with `/mk-doctor`. AGENTS.md / MEMORY.md / compaction-prompt doctrine wired.
+
+---
+
+## Branch C — MCP client (Claude Desktop, Cursor, Continue)
+
+The client launches `mk-mcp` as an MCP server over stdio. Setup is one config-file edit plus a client restart.
+
+### C1 — Locate the client config
+
+Common paths:
+
+- macOS Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Linux Claude Desktop: `~/.config/Claude/claude_desktop_config.json`
+- Cursor / Continue: client-specific — see [`references/mcp-client.md`](references/mcp-client.md) Step M1
+
+Store the resolved path as `{CLIENT_CONFIG}`.
+
+### C2 — Choose embedding provider
+
+`AskUserQuestion`:
+
+> **Enable semantic search via embeddings?** Embeddings let recall match by *meaning*, not just keywords. Costs an API call per atom (re-embed on each change) and an API key.
+>
+> - **No embeddings — FTS only** *(recommended for getting started — works fully without any API key)*
+> - **Voyage** *(`voyage-3-lite`, 512-dim — lower cost, smaller index. Needs `EMBEDDING_API_KEY`.)*
+> - **OpenAI** *(`text-embedding-3-small`, 1536-dim — higher cost, larger index, broader vocabulary. Needs `EMBEDDING_API_KEY`.)*
+
+> **Trade-off (embedding provider).** FTS-only works perfectly for keyword-rich queries and stores under ~500 atoms — most agents never need more. Embeddings start to pay off when atoms grow longer and prose-heavier, or when the agent asks queries that paraphrase rather than echo the stored text. Add later by setting `EMBEDDING_PROVIDER` + key and running `mk reindex --embed`; no need to decide now.
+
+Record the answer as `{EMBEDDING_BLOCK}` (a JSON snippet to inject into the client config's `env`, or empty if FTS-only).
+
+### C3 — Edit the client config
+
+Add a `memory-kernel` server entry. Skeleton:
+
+```json
+{
+  "mcpServers": {
+    "memory-kernel": {
+      "command": "npx",
+      "args": ["-y", "memory-kernel", "mcp"],
+      "env": {
+        "MEMORY_DIR": "{MEMORY_DIR}",
+        "MCP_AGENT_ID": "{AGENT_NAME}"
+      }
+    }
+  }
+}
+```
+
+If C2 picked an embedding provider, merge `EMBEDDING_PROVIDER` and `EMBEDDING_API_KEY` into the `env` block. The JSON-merge logic and per-client config-path table live in [`references/mcp-client.md`](references/mcp-client.md) Step M2.
+
+### C4 — Restart the client
+
+Tell the user explicitly: *"Restart Claude Desktop / Cursor / Continue now. The new server doesn't load until restart."*
+
+### C5 — Verify
+
+After restart, prompt the agent to recall a seeded atom (the identity atom is a good probe):
+
+```
+Agent prompt: "What do you know about yourself?"
+Expected: cites the identity atom seeded in Step 6.
+```
+
+Plus the MCP-specific verification in [`references/mcp-client.md`](references/mcp-client.md) Step M4.
+
+### C6 — Finish
+
+```
+✅ Memory-Kernel Setup Complete (MCP client)
+
+  Agent:        {AGENT_NAME}
+  Memory dir:   {MEMORY_DIR}
+  GitHub repo:  {GITHUB_USER}/memory (private)  [or "Local only"]
+  Client config: {CLIENT_CONFIG}
+  Embeddings:   {none | voyage | openai}
+  Agent ID:     {AGENT_NAME}  (via MCP_AGENT_ID)
+```
+
+> Restart your client to pick up the new server. Health-check any time with `/mk-doctor`.
+
+---
+
+## Branch D — Generic / other
+
+The agent (or operator) wires up consumption manually — no host-specific config edit, no plugin install, no client restart. Two paths from here:
+
+### D1 — `mk render` to a path
+
+If the agent reads a single markdown file at session start, render to that path on a cron:
+
+```bash
+npx mk render "{MEMORY_DIR}" "/path/to/agent-context.md"
+```
+
+Schedule it nightly the same way Branch A does, but render to your chosen path instead of the NanoClaw `CLAUDE_MD` location. The render output is identical.
+
+### D2 — `mk-mcp` over stdio
+
+If the agent speaks MCP, launch the server directly:
+
+```bash
+MEMORY_DIR={MEMORY_DIR} MCP_AGENT_ID={AGENT_NAME} npx mk mcp
+```
+
+Connect your agent's MCP client to this stdio. The tool surface is identical to Branch C.
+
+### D3 — Verify
+
+```bash
+npx mk status -d {MEMORY_DIR}
+npx mk doctor -d {MEMORY_DIR}
+```
+
+### D4 — Finish
+
+```
+✅ Memory-Kernel Setup Complete (Generic)
+
+  Agent:        {AGENT_NAME}
+  Memory dir:   {MEMORY_DIR}
+  GitHub repo:  {GITHUB_USER}/memory (private)  [or "Local only"]
+  Consumption:  manual (mk render to <path> or mk-mcp over stdio)
+```
+
+> Health-check any time with `/mk-doctor`. The agent's full operating loop is already inside memory as 8 typed atoms.
 
 ---
 
@@ -369,7 +505,7 @@ Close the summary with:
 
 Host-specific troubleshooting lives in each reference file. The items below are universal.
 
-**`npm install -g` fails with `EACCES`:** fix npm prefix as in Step 3.
+**`npm install -g` fails with `EACCES`:** fix the npm prefix as in Step 3.
 
 **`npx mk init -d .` fails:** the correct syntax is `npx mk init .` (positional argument, not a `-d` flag).
 

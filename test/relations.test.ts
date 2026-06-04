@@ -14,13 +14,13 @@ import {
   closeAllIndexes,
   openIndex,
   indexStats,
-  indexAtom,
   getRelationsForAtom,
   reindex,
   getAllRelations,
   writeAtom,
   readAtom,
 } from '../src/index.js';
+import { indexAtom } from '../src/index-db.js';
 import { recall } from '../src/recall.js';
 import type { Relation } from '../src/types.js';
 
@@ -46,10 +46,10 @@ describe('atom_relations DDL', () => {
     expect(tables).toHaveLength(1);
   });
 
-  it('schema version is 6', () => {
+  it('schema version is 8', () => {
     const db = openIndex(testDir);
     const version = db.pragma('user_version', { simple: true }) as number;
-    expect(version).toBe(6);
+    expect(version).toBe(8);
   });
 
   it('indexStats includes relations count', () => {
@@ -248,21 +248,29 @@ describe('graph-walk boost in recall', () => {
       graph_boost: false,
     });
 
-    // B should rank higher relative to C when boost is on (B is A's neighbor)
+    // Per #214, the candidate pool is now restricted to FTS-matched atoms
+    // (and, when graph_boost is on, their 1-hop neighbours). C is unrelated
+    // to the task AND not a graph neighbour of A — under the new semantics
+    // it correctly stays out of both results.
+    //
+    // Boost test now: B (A's neighbour) IS in the with-boost result via
+    // graph expansion, but is NOT in the no-boost result (no FTS match,
+    // no expansion). That's the cleaner signal that graph_boost actually
+    // does something.
     const withBoostIds = withBoost.atoms.map((a) => a.frontmatter.id);
     const noBoostIds = noBoost.atoms.map((a) => a.frontmatter.id);
 
-    const bRankWithBoost = withBoostIds.indexOf(atomB.frontmatter.id);
-    const cRankWithBoost = withBoostIds.indexOf(atomC.frontmatter.id);
-    const bRankNoBoost = noBoostIds.indexOf(atomB.frontmatter.id);
-    const cRankNoBoost = noBoostIds.indexOf(atomC.frontmatter.id);
+    // C is unrelated — never appears.
+    expect(withBoostIds).not.toContain(atomC.frontmatter.id);
+    expect(noBoostIds).not.toContain(atomC.frontmatter.id);
 
-    // Both should be present
-    expect(bRankWithBoost).toBeGreaterThanOrEqual(0);
-    expect(cRankWithBoost).toBeGreaterThanOrEqual(0);
+    // B surfaces only when graph_boost is on (A's neighbour expansion).
+    expect(withBoostIds).toContain(atomB.frontmatter.id);
+    expect(noBoostIds).not.toContain(atomB.frontmatter.id);
 
-    // With boost: B should rank at least as well as C (neighbor boost lifts B)
-    expect(bRankWithBoost).toBeLessThanOrEqual(cRankWithBoost);
+    // A (the direct FTS match) is present in both.
+    expect(withBoostIds).toContain(atomA.frontmatter.id);
+    expect(noBoostIds).toContain(atomA.frontmatter.id);
   });
 
   it('graph_boost=false disables boost entirely', () => {

@@ -39,9 +39,18 @@ export {
   DEFAULT_TYPE_WEIGHTS,
   DEFAULT_CONFIDENCE_FLOOR,
   DEFAULT_TYPE_RESERVATIONS,
+  DEFAULT_FILL_TYPE_RESERVATIONS,
   MUTATION_ACTIONS,
   isMutationAction,
 } from './schema.js';
+
+// Budget (two-pass type-aware token allocator shared by recall + render fill)
+export {
+  selectAtomsWithReservations,
+  estimateTokens,
+  MAX_RESERVATION_RATIO,
+} from './budget.js';
+export type { Pass2Mode } from './budget.js';
 
 // Format
 export {
@@ -84,8 +93,6 @@ export {
   closeAllIndexes,
   indexExists,
   reindex,
-  indexAtom,
-  removeFromIndex,
   queryIndex,
   indexStats,
   searchFts,
@@ -97,9 +104,6 @@ export {
   addRelation,
   getAllRelations,
   getAllAtomIds,
-  getTermDocumentFrequencies,
-  getCorpusSize,
-  getAtomsMatchingTerm,
 } from './index-db.js';
 export type { IndexQueryResult, AtomRelation } from './index-db.js';
 
@@ -134,7 +138,7 @@ export { replay, replayFromFile } from './replay.js';
 export { bootstrapEvents } from './bootstrap.js';
 
 // Operations
-export { createAtom, updateAtom, archiveAtom, resolveConflict } from './retain.js';
+export { createAtom, updateAtom, archiveAtom, resolveConflict, snapshotAtom } from './retain.js';
 export type {
   RetainOptions,
   ResolveConflictOptions,
@@ -179,6 +183,8 @@ export {
   embedText,
   embedBatch,
   cosineSimilarity,
+  normalizeVector,
+  dotProduct,
   serializeVector,
   deserializeVector,
   atomToEmbeddingText,
@@ -195,12 +201,13 @@ export {
   extractBodyReferences,
   extractConceptReferences,
   buildConceptMap,
+  compileConceptPatterns,
   deduplicateRefs,
   inferRelationType,
-  ATOM_ID_PATTERN,
+  createAtomIdPattern,
   RELATION_CONTEXT,
 } from './relink.js';
-export type { ProposedRelation, RelinkResult } from './relink.js';
+export type { ProposedRelation, RelinkResult, CompiledConceptPattern } from './relink.js';
 
 // Citations (concept-name citation extraction)
 export {
@@ -261,9 +268,34 @@ export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.j
 export { extractFromLog } from './extract.js';
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
+// LLM abstraction — runtime helpers (callLLM, resolveProvider) became internal
+// in v1.19.0; types stay public for advanced consumers wiring custom providers.
+export type { LLMProvider, CallLLMOptions } from './llm.js';
+
+// Observe (extract compressed observations from conversation logs)
+export { observeConversation } from './observe.js';
+export type { ObserveOptions, ObserveResult } from './observe.js';
+
+// Query classification (lightweight routing for recall strategies)
+export { classifyQuery } from './classify-query.js';
+export type { QueryRoute, ClassifyResult } from './classify-query.js';
+
 // Consolidate (lifecycle pipeline for promoting draft atoms)
 export { consolidateAtoms } from './consolidate.js';
 export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, ConsolidateAtomStatus } from './types.js';
+
+// Triples (entity-relation store for Tier-1 semantic conflict detection)
+export { insertTriples, getTriplesForAtom, findCandidateConflicts } from './triples.js';
+export type { EntityTriple, TripleInput } from './types.js';
+export type { ConflictCandidate } from './triples.js';
+
+// Conflict detection (Tier-2 LLM confirmation + auto-supersede orchestration)
+export { detectAndResolveConflicts, confirmConflictWithLLM } from './conflict-detect.js';
+export type {
+  ConflictResolution, ConflictAction,
+  DetectAndResolveOptions, DetectAndResolveResult,
+  ConfirmConflictInput, ConfirmConflictResult,
+} from './conflict-detect.js';
 
 // Obsidian-native compatibility
 export {

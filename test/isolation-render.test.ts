@@ -5,6 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import yaml from 'js-yaml';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   initIsolatedBase,
@@ -15,6 +16,7 @@ import {
   writeRenderConfig,
   renderClaudeMd,
   renderAgentClaudeMd,
+  loadRenderConfig,
 } from '../src/index.js';
 
 const AGENT = 'test-agent';
@@ -75,6 +77,7 @@ describe('renderAgentClaudeMd', () => {
       max_tokens: 8000,
       include_shared: false,
       type_weights: {},
+      type_reservations: {},
     });
 
     createAtom({ ...base(hustonDir), type: 'fact', slug: 'private', body: 'Private huston fact.' });
@@ -94,6 +97,7 @@ describe('renderAgentClaudeMd', () => {
       max_tokens: 500,
       include_shared: true,
       type_weights: {},
+      type_reservations: {},
     });
 
     // Create many atoms to exceed small budget
@@ -116,6 +120,7 @@ describe('renderAgentClaudeMd', () => {
       max_tokens: 100, // Very small in config
       include_shared: true,
       type_weights: {},
+      type_reservations: {},
     });
 
     for (let i = 0; i < 5; i++) {
@@ -149,5 +154,50 @@ describe('renderAgentClaudeMd', () => {
   it('renders empty memory with getting started guidance', () => {
     const md = renderAgentClaudeMd(testDir, 'huston');
     expect(md).toContain('Getting Started');
+  });
+});
+
+describe('loadRenderConfig — type_reservations', () => {
+  it('parses type_reservations from render.yaml', () => {
+    const agentDir = path.join(testDir, 'agents', 'a1');
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir, 'render.yaml'),
+      yaml.dump({
+        mode: 'balanced',
+        max_tokens: 16000,
+        include_shared: true,
+        type_weights: {},
+        type_reservations: { fact: 1200, belief: 4000 },
+      }),
+    );
+    const cfg = loadRenderConfig(agentDir);
+    expect(cfg.type_reservations).toEqual({ fact: 1200, belief: 4000 });
+  });
+
+  it('drops invalid type_reservations entries (unknown type, non-numeric, or negative)', () => {
+    const agentDir = path.join(testDir, 'agents', 'a2');
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir, 'render.yaml'),
+      yaml.dump({
+        type_reservations: {
+          fact: 1200,
+          not_a_type: 9999,
+          belief: 'oops',
+          procedure: -10,
+        },
+      }),
+    );
+    const cfg = loadRenderConfig(agentDir);
+    expect(cfg.type_reservations).toEqual({ fact: 1200 });
+  });
+
+  it('falls back to empty type_reservations when missing', () => {
+    const agentDir = path.join(testDir, 'agents', 'a3');
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, 'render.yaml'), yaml.dump({ mode: 'balanced' }));
+    const cfg = loadRenderConfig(agentDir);
+    expect(cfg.type_reservations).toEqual({});
   });
 });

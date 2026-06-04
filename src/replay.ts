@@ -16,7 +16,7 @@ import {
   renderHandoff,
 } from './renderers.js';
 import { assertWithinDir, writeFileAtomic, writeAtom, atomFilePath } from './store.js';
-import { isEncrypted, decryptAtom, resolveKey } from './crypto.js';
+import { isEncrypted, decryptAtomWithCredential } from './crypto.js';
 import type { Atom, MemoryEvent, ReplayResult } from './types.js';
 
 /**
@@ -57,9 +57,12 @@ export function replay(
     }
 
     if (!snapshot) {
-      // V1 event without snapshot — handle archive/expire by removing atom
+      // V1 event without snapshot — handle terminal mutations by removing atom
       if (
-        (event.action === 'atom_archived' || event.action === 'atom_expired') &&
+        (event.action === 'atom_archived' ||
+          event.action === 'atom_expired' ||
+          // #109: V1 conflict_resolved (no snapshot) also archives
+          event.action === 'conflict_resolved') &&
         event.atom_refs
       ) {
         for (const ref of event.atom_refs) {
@@ -75,15 +78,15 @@ export function replay(
 
     // Decrypt snapshot if encrypted (SECRET atoms)
     if (isEncrypted(snapshot)) {
-      const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
-      if (!key) {
+      const cred = process.env.MEMORY_ENCRYPTION_KEY;
+      if (!cred) {
         errors.push(
           `Event ${event.event_id}: encrypted snapshot requires MEMORY_ENCRYPTION_KEY`,
         );
         continue;
       }
       try {
-        snapshot = decryptAtom(snapshot, key);
+        snapshot = decryptAtomWithCredential(snapshot, cred);
       } catch (err) {
         errors.push(
           `Event ${event.event_id}: failed to decrypt snapshot: ${String(err)}`,
@@ -107,7 +110,11 @@ export function replay(
 
       if (
         event.action === 'atom_archived' ||
-        event.action === 'atom_expired'
+        event.action === 'atom_expired' ||
+        // #109: conflict_resolved archives the conflict atom (moves to
+        // ARCHIVE/ and sets status=resolved). Like the other terminal
+        // mutations, it must remove the atom from the reconstructed map.
+        event.action === 'conflict_resolved'
       ) {
         atoms.delete(id);
       } else {

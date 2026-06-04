@@ -224,14 +224,16 @@ describe('recall() with task parameter', () => {
     }
   });
 
-  it('task with no FTS matches still returns atoms (sorted by status priority)', () => {
+  it('task with no FTS matches returns empty atoms + no_match status (issue #214)', () => {
     createAtom({ ...base(testDir), type: 'fact', slug: 'something', body: 'Something about the system.' });
     reindex(testDir);
 
-    // Task that matches nothing in FTS
+    // Task that matches nothing in FTS. Pre-#214 fix, this used to return the
+    // single seeded atom anyway via a score-0 fallback — that's exactly the
+    // hallucination-scaffolding behaviour we removed.
     const bundle = recall(testDir, { task: 'xyzzy-nonexistent-topic' });
-    // Should still return atoms, just without FTS re-ranking
-    expect(bundle.atoms.length).toBeGreaterThanOrEqual(1);
+    expect(bundle.atoms).toEqual([]);
+    expect(bundle.recall_status).toBe('no_match');
   });
 
   it('task recall without index falls back to non-ranked results', () => {

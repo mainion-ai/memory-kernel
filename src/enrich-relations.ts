@@ -10,10 +10,10 @@ import {
   getAllRelations,
   listAtoms,
   writeAtom,
-  indexAtom,
   indexExists,
   assertWithinDir,
 } from './index.js';
+import { indexAtom } from './index-db.js';
 import type { Atom } from './types.js';
 import type { AtomRelation } from './index-db.js';
 import type { RelationType } from './types.js';
@@ -46,6 +46,26 @@ const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 const DEFAULT_MODEL = 'qwen2.5:14b-instruct-q4_K_M';
 const DEFAULT_MIN_CONFIDENCE = 0.7;
 const DEFAULT_BATCH_SIZE = 5;
+
+/**
+ * Maximum number of characters retained from the LLM `reasoning` field.
+ *
+ * LLMs occasionally return verbose multi-paragraph reasoning even when asked
+ * for "one sentence". Without a cap, this would inflate event-log snapshots
+ * (rendered into atom YAML frontmatter via the apply path) and bloat any
+ * downstream UI that surfaces proposals. 2000 chars is enough for a
+ * paragraph or two — anything longer is noise.
+ */
+export const MAX_REASONING_LEN = 2000;
+
+/** Marker appended to truncated reasoning so consumers can detect the cap was hit. */
+const TRUNCATION_MARKER = ' …[truncated]';
+
+/** Cap `reasoning` to MAX_REASONING_LEN, appending a marker when truncated. */
+function capReasoning(reasoning: string): string {
+  if (reasoning.length <= MAX_REASONING_LEN) return reasoning;
+  return reasoning.slice(0, MAX_REASONING_LEN) + TRUNCATION_MARKER;
+}
 
 function buildPrompt(sourceId: string, sourceBody: string, targetId: string, targetBody: string): string {
   const srcSnippet = sourceBody.slice(0, 500);
@@ -94,6 +114,10 @@ function parseOllamaResponse(raw: string): OllamaResponse | null {
     if (parsed.confidence < 0 || parsed.confidence > 1) {
       return null;
     }
+    // Defensive cap: LLMs sometimes return verbose multi-paragraph reasoning
+    // even when asked for one sentence. Truncate here so callers (and the
+    // event-log snapshots that capture proposal text) never see runaway sizes.
+    parsed.reasoning = capReasoning(parsed.reasoning);
     return parsed as OllamaResponse;
   } catch {
     return null;

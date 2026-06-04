@@ -9,11 +9,12 @@
  */
 
 import { readView, listAtoms, readAtom } from './store.js';
-import { queryIndex, searchFts, getAllEmbeddings, getAllRelations, getTermDocumentFrequencies, getCorpusSize, getAtomsMatchingTerm } from './index-db.js';
+import { queryIndex, searchFts, searchEpisodeFts, getAllEmbeddings, getAllRelations, getTermDocumentFrequencies, getCorpusSize, getAtomsMatchingTerm } from './index-db.js';
 import { listEpisodes } from './episodes.js';
 import { appendEvent } from './event-log.js';
-import { cosineSimilarity, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
+import { dotProduct, normalizeVector, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import { DEFAULT_TYPE_WEIGHTS, DEFAULT_CONFIDENCE_FLOOR, DEFAULT_TYPE_RESERVATIONS } from './schema.js';
+import { selectAtomsWithReservations, estimateTokens, frontmatterJson } from './budget.js';
 import type { Atom, ContextBundle, Episode, RecallQuery, AtomType } from './types.js';
 
 // --- Configurable hybrid ranking parameters ---
@@ -28,8 +29,19 @@ const DEFAULT_DECAY_HALF_LIFE = 30;
 const DEFAULT_DECAY_WEIGHT = 0.2;
 /** Default neighbor boost factor for graph-walk spreading activation. */
 const DEFAULT_NEIGHBOR_BOOST = 0.15;
-/** Maximum fraction of total token budget that episodes may consume. */
-const MAX_EPISODE_BUDGET_RATIO = 0.2;
+/** Default fraction of total token budget that episodes may consume. */
+const DEFAULT_EPISODE_BUDGET_RATIO = 0.2;
+
+function getEpisodeBudgetRatio(query: RecallQueryInternal): number {
+  // Per-call override takes precedence
+  if (query.episode_budget_ratio !== undefined && Number.isFinite(query.episode_budget_ratio)) {
+    return Math.max(0, Math.min(1, query.episode_budget_ratio));
+  }
+  // Env var override
+  const v = parseFloat(process.env.EPISODE_BUDGET_RATIO || '');
+  if (Number.isFinite(v) && v >= 0 && v <= 1) return v;
+  return DEFAULT_EPISODE_BUDGET_RATIO;
+}
 
 function getSemanticWeight(): number {
   const v = parseFloat(process.env.SEMANTIC_WEIGHT || '');
@@ -68,6 +80,16 @@ function getTypeWeights(query: RecallQueryInternal): Record<AtomType, number> {
     }
   }
   if (query.type_weights) Object.assign(base, query.type_weights);
+  // Issue #113: reject non-finite (NaN/Infinity/null) weights — they corrupt
+  // the score comparator and produce a non-deterministic sort. Explicit beats
+  // silent.
+  for (const [t, v] of Object.entries(base) as [string, unknown][]) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(
+        `memory-kernel: type_weights["${t}"] must be a finite number, got ${String(v)}`,
+      );
+    }
+  }
   return base;
 }
 
@@ -496,6 +518,7 @@ interface ScoredEpisode {
 }
 
 function scoreEpisodes(
+  memoryDir: string,
   episodes: Episode[],
   task: string | undefined,
   halfLifeDays: number,
@@ -503,7 +526,25 @@ function scoreEpisodes(
 ): ScoredEpisode[] {
   const scored: ScoredEpisode[] = [];
 
-  // Tokenize query once
+  // Try FTS-based scoring first (BM25 with porter stemming)
+  let ftsScores: Map<string, number> | null = null;
+  if (task) {
+    const ftsResults = searchEpisodeFts(memoryDir, task, 50);
+    if (ftsResults && ftsResults.length > 0) {
+      ftsScores = new Map<string, number>();
+      // FTS5 rank is negative (more negative = better match). Normalize to 0-1.
+      const minRank = Math.min(...ftsResults.map(r => r.rank));
+      const maxRank = Math.max(...ftsResults.map(r => r.rank));
+      const range = maxRank - minRank;
+      for (const r of ftsResults) {
+        // Normalize: best match → 1.0, worst → close to 0
+        const normalized = range > 0 ? (maxRank - r.rank) / range : 1.0;
+        ftsScores.set(r.episode_id, Math.max(0.01, normalized)); // Floor at 0.01 to distinguish from zero-match
+      }
+    }
+  }
+
+  // Tokenize query for fallback term-overlap scoring
   const queryTerms = task
     ? task.toLowerCase().split(/\s+/).filter(t => t.length > 1)
     : [];
@@ -521,14 +562,20 @@ function scoreEpisodes(
       continue;
     }
 
-    // Term-overlap relevance: fraction of query terms found in the summary.
-    // Case-insensitive substring match (same behaviour as before, but normalized).
-    const summaryLower = ep.summary.toLowerCase();
-    let hits = 0;
-    for (const term of queryTerms) {
-      if (summaryLower.includes(term)) hits++;
+    let relevance: number;
+
+    if (ftsScores !== null) {
+      // FTS-based scoring (BM25 with stemming)
+      relevance = ftsScores.get(ep.id) ?? 0;
+    } else {
+      // Fallback: naive term-overlap scoring (graceful degradation)
+      const summaryLower = ep.summary.toLowerCase();
+      let hits = 0;
+      for (const term of queryTerms) {
+        if (summaryLower.includes(term)) hits++;
+      }
+      relevance = hits / queryTerms.length;
     }
-    const relevance = hits / queryTerms.length;
 
     // Temporal decay
     const recency = ep.metadata.started_at
@@ -598,6 +645,11 @@ export function recall(
   const typeWeights = getTypeWeights(query);
   const confFloor = getConfidenceFloor();
 
+  // Outcome signal — populated only on the task path. Default to undefined for the
+  // no-task path (constitution / render / listing flows) where "match vs no_match"
+  // isn't meaningful.
+  let recallStatus: 'match' | 'no_match' | 'fts_unavailable' | undefined;
+
   // Task-aware re-ranking: if a task is provided, use FTS BM25 scores to re-order.
   // When embeddings are available and a query vector is provided, combine FTS + semantic scores.
   // FTS5 rank is negative (lower = better match in SQLite BM25 convention).
@@ -648,8 +700,12 @@ export function recall(
       const minSim = getMinSimilarity();
       const stored = getAllEmbeddings(memoryDir);
       if (stored && stored.length > 0) {
+        // Pre-normalize the query once; stored vectors are already normalized
+        // (lazy-migrated on first read). The inner loop is then a pure dot
+        // product — no per-call sqrt. (#95)
+        const q = normalizeVector(query.queryVector);
         for (const { atom_id, embedding } of stored) {
-          const similarity = cosineSimilarity(query.queryVector, deserializeVector(embedding));
+          const similarity = dotProduct(q, deserializeVector(embedding));
           if (similarity >= minSim) {
             semanticScoreMap.set(atom_id, similarity);
           }
@@ -659,6 +715,60 @@ export function recall(
 
     const hasFts = ftsScoreMap.size > 0;
     const hasSemantic = semanticScoreMap.size > 0;
+
+    // ISSUE #214 — restrict candidate pool to actually-matched atoms when task is set.
+    //
+    // Previously: queryIndex returned ALL status-filtered atoms; FTS only re-ranked
+    // them; atoms with no FTS hit got score 0 and the token budget filled with
+    // whatever sorted first by status priority + recency. This produced confidently-
+    // irrelevant fallback results that scaffold LLM hallucination on no-match
+    // queries, and polluted real-match results with non-matched noise atoms.
+    //
+    // Now: take the union of FTS-matched + semantic-matched atom IDs (the "anchor
+    // set"). When graph_boost is enabled, expand the pool with 1-hop neighbours of
+    // the anchor set — these atoms are legitimately related-by-graph even if they
+    // don't FTS-match themselves, and the existing applyGraphBoost code expects
+    // them in the pool to score them. If the anchor set is empty AND searchFts
+    // didn't crash, report `no_match` and return [] for atoms. If searchFts
+    // returned null (FTS table missing or query crashed beyond our sanitisation
+    // layer), fall back to the prior file-scan-style behaviour so the caller still
+    // gets something — same rationale as the original `filtered.length, 200` cap.
+    const useGraphBoostForPool = query.graph_boost !== undefined
+      ? query.graph_boost
+      : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
+
+    if (ftsResults === null) {
+      // FTS unavailable (missing table or unparseable query that slipped past
+      // the sanitiser). Don't restrict the pool — caller is left with the
+      // file-scan candidate set scored by recency/type. This is a degradation
+      // path, not a regression path.
+      recallStatus = 'fts_unavailable';
+    } else if (!hasFts && !hasSemantic) {
+      // No anchors → no_match. Graph expansion needs anchors to expand from,
+      // so there's nothing to do here either.
+      recallStatus = 'no_match';
+      filtered = [];
+    } else {
+      recallStatus = 'match';
+      const anchorIds = new Set<string>([
+        ...ftsScoreMap.keys(),
+        ...semanticScoreMap.keys(),
+      ]);
+      const poolIds = new Set<string>(anchorIds);
+
+      if (useGraphBoostForPool) {
+        // Expand pool by 1-hop neighbours (both directions). The graph-boost
+        // scorer (applied later) then lifts these neighbours' scores; they
+        // get a discounted boost relative to direct matches.
+        const allRelations = getAllRelations(memoryDir);
+        for (const rel of allRelations) {
+          if (anchorIds.has(rel.source_id)) poolIds.add(rel.target_id);
+          if (anchorIds.has(rel.target_id)) poolIds.add(rel.source_id);
+        }
+      }
+
+      filtered = filtered.filter((a) => poolIds.has(a.frontmatter.id));
+    }
 
     // finalScoreMap is populated when signals exist; stays empty otherwise.
     // An empty map degrades gracefully: applyTokenBudget falls back to
@@ -737,7 +847,7 @@ export function recall(
       const baseTokens = estimateTokens(index + handoff + constraints);
       // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
       const episodeReservation = query.include_episodes
-        ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+        ? Math.floor(query.max_tokens * getEpisodeBudgetRatio(query))
         : 0;
       const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
       filtered = applyTokenBudget(filtered, atomBudget, query, finalScoreMap);
@@ -776,13 +886,22 @@ export function recall(
   if (query.max_tokens && !(query.task && query.task.trim().length > 0)) {
     // Reserve the episode slice up-front so atoms + episodes together stay within max_tokens.
     const episodeReservation = query.include_episodes
-      ? Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO)
+      ? Math.floor(query.max_tokens * getEpisodeBudgetRatio(query))
       : 0;
     const atomBudget = Math.max(0, query.max_tokens - baseTokens - episodeReservation);
+    // Note: with no task query and reservations enabled, the budget helper
+    // orders atoms by updated_at within Pass 1 / Pass 2 (mode: 'recency').
+    // Pre-refactor (commit aeeef7f^) the upstream insertion order — status
+    // priority + temporalDecay(created_at) — was preserved through the
+    // greedy fill. Tests pass for both orderings; if a future caller needs
+    // the prior behaviour, pass an explicit scoreMap derived from
+    // status-priority + decay to force `mode: 'score'`.
     filtered = applyTokenBudget(filtered, atomBudget, query, new Map());
   }
   const atomTokens = filtered.reduce(
-    (sum, a) => sum + estimateTokens(a.body + JSON.stringify(a.frontmatter)),
+    // Issue #114: use the WeakMap-memoized helper instead of calling
+    // JSON.stringify on every reduce iteration. Same value as before.
+    (sum, a) => sum + estimateTokens(a.body + frontmatterJson(a.frontmatter)),
     0,
   );
 
@@ -796,12 +915,12 @@ export function recall(
     const episodes = listEpisodes(memoryDir, { limit: 20 });
     const halfLife = getDecayHalfLife(query);
     const dw = getDecayWeight(query);
-    const scored = scoreEpisodes(episodes, query.task, halfLife, dw);
+    const scored = scoreEpisodes(memoryDir, episodes, query.task, halfLife, dw);
 
-    // Budget-aware greedy fill: episodes get at most MAX_EPISODE_BUDGET_RATIO of total budget.
+    // Budget-aware greedy fill: episodes get at most episode_budget_ratio of total budget.
     // When no max_tokens is set, include all scored episodes (backward-compatible).
     if (query.max_tokens) {
-      const episodeBudget = Math.floor(query.max_tokens * MAX_EPISODE_BUDGET_RATIO);
+      const episodeBudget = Math.floor(query.max_tokens * getEpisodeBudgetRatio(query));
       const selected: ScoredEpisode[] = [];
       let used = 0;
       for (const ep of scored) {
@@ -826,6 +945,7 @@ export function recall(
     atoms: filtered,
     ...(episodeStrings !== undefined && { episodes: episodeStrings }),
     token_estimate: baseTokens + atomTokens + episodeTokens,
+    ...(recallStatus !== undefined && { recall_status: recallStatus }),
   };
 
   // Emit read audit event if caller supplied provenance fields
@@ -880,8 +1000,15 @@ function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
   return atoms.filter((atom) => {
     const fm = atom.frontmatter;
 
-    // Exclude archived/expired by default
-    if (fm.status === 'archived' || fm.status === 'expired') return false;
+    // Exclude archived/expired/superseded by default — only when no explicit status filter is given
+    if (!query.statuses || query.statuses.length === 0) {
+      if (
+        fm.status === 'archived' ||
+        fm.status === 'expired' ||
+        fm.status === 'superseded'
+      )
+        return false;
+    }
 
     // Exclude SECRET and PERSONAL by default
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') return false;
@@ -889,7 +1016,7 @@ function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
     // Filter by type
     if (query.types && !query.types.includes(fm.type)) return false;
 
-    // Filter by status
+    // Filter by status (explicit filter overrides the default exclusion above)
     if (query.statuses && !query.statuses.includes(fm.status)) return false;
 
     // Filter by tags
@@ -941,22 +1068,16 @@ function getStatusPriority(status: string): number {
   return priorities[status] ?? 99;
 }
 
-/** Maximum fraction of total token budget that reservations may consume. */
-const MAX_RESERVATION_RATIO = 0.3;
-
 /**
  * Trim atom list to fit within token budget.
  *
- * Two-pass reservation-aware algorithm (Phase 2):
- * Pass 1: fill reserved type quotas from atoms of that type (sorted by score).
- * Pass 2: merge remaining atoms, greedy fill with remaining budget, re-sort by score.
+ * Delegates to the shared two-pass type-aware budget helper in `src/budget.ts`.
+ * Pass 1 fills reserved per-type quotas, Pass 2 fills remainder by score.
+ * Reservations are auto-scaled so they never consume more than 30% of the
+ * total budget.
  *
- * Fixes (v1.9):
- * - Fix 3: Atoms with high relevance scores bypass reservation priority.
- * - Fix 4: Total reservation budget capped at MAX_RESERVATION_RATIO (30%) of maxTokens.
- *
- * When finalScoreMap is empty (no-task path), reservation logic degrades to
- * insertion-order greedy fill (scores all 0 → stable sort).
+ * When finalScoreMap is empty (no-task path), the helper degrades to a
+ * recency-ranked greedy fill.
  */
 function applyTokenBudget(
   atoms: Atom[],
@@ -965,96 +1086,14 @@ function applyTokenBudget(
   finalScoreMap: Map<string, number>,
 ): Atom[] {
   const reservations = getTypeReservations(query);
-  const reservedTypes = Object.keys(reservations) as AtomType[];
-
-  if (reservedTypes.length === 0) {
-    return greedyFill(atoms, maxTokens);
-  }
-
-  // Fix 4: Cap total reservation budget at 30% of maxTokens to prevent
-  // reservations from consuming the majority of a small budget.
-  const maxReservationBudget = Math.floor(maxTokens * MAX_RESERVATION_RATIO);
-  const rawReservationTotal = reservedTypes.reduce(
-    (sum, t) => sum + (reservations[t as AtomType] ?? 0), 0,
+  return selectAtomsWithReservations(
+    atoms,
+    maxTokens,
+    reservations,
+    finalScoreMap.size > 0
+      ? { mode: 'score', scores: finalScoreMap }
+      : { mode: 'recency' },
   );
-  const scaleFactor = rawReservationTotal > maxReservationBudget
-    ? maxReservationBudget / rawReservationTotal
-    : 1.0;
-  const scaledReservations: Partial<Record<AtomType, number>> = {};
-  for (const t of reservedTypes) {
-    scaledReservations[t as AtomType] = Math.floor((reservations[t as AtomType] ?? 0) * scaleFactor);
-  }
-
-  // Fix 3: Compute high-relevance threshold. Atoms scoring above this bypass
-  // reservation priority and compete purely by score in Pass 2.
-  // Threshold = 70th percentile of non-zero scores (top 30% are "high relevance").
-  let highRelevanceThreshold = Infinity;
-  if (finalScoreMap.size > 0) {
-    const scores = [...finalScoreMap.values()].filter(s => s > 0).sort((a, b) => a - b);
-    if (scores.length > 0) {
-      const p70Index = Math.floor(scores.length * 0.7);
-      highRelevanceThreshold = scores[Math.min(p70Index, scores.length - 1)];
-    }
-  }
-
-  // Pass 1: fill reserved slots per type, but let high-scoring atoms bypass
-  const reserved: Atom[] = [];
-  const unreserved: Atom[] = [];
-  const reservedUsed: Partial<Record<AtomType, number>> = {};
-
-  for (const atom of atoms) {
-    const id = atom.frontmatter.id;
-    const score = finalScoreMap.get(id) ?? 0;
-
-    // Fix 3: High-relevance atoms go straight to unreserved pool regardless of type
-    if (score >= highRelevanceThreshold && highRelevanceThreshold < Infinity) {
-      unreserved.push(atom);
-      continue;
-    }
-
-    const quota = scaledReservations[atom.frontmatter.type];
-    if (quota !== undefined && quota > 0) {
-      const used = reservedUsed[atom.frontmatter.type] ?? 0;
-      const tokens = estimateTokens(atom.body + JSON.stringify(atom.frontmatter));
-      if (used + tokens <= quota) {
-        reserved.push(atom);
-        reservedUsed[atom.frontmatter.type] = used + tokens;
-        continue;
-      }
-    }
-    unreserved.push(atom);
-  }
-
-  const reservedTokens = reserved.reduce(
-    (sum, a) => sum + estimateTokens(a.body + JSON.stringify(a.frontmatter)),
-    0,
-  );
-  const remainingBudget = Math.max(0, maxTokens - reservedTokens);
-
-  // Pass 2: sort unreserved by score, fill remaining budget
-  unreserved.sort((a, b) =>
-    (finalScoreMap.get(b.frontmatter.id) ?? 0) - (finalScoreMap.get(a.frontmatter.id) ?? 0),
-  );
-  const fromUnreserved = greedyFill(unreserved, remainingBudget);
-
-  // Merge and re-sort by score for output ordering
-  const merged = [...reserved, ...fromUnreserved];
-  merged.sort((a, b) =>
-    (finalScoreMap.get(b.frontmatter.id) ?? 0) - (finalScoreMap.get(a.frontmatter.id) ?? 0),
-  );
-  return merged;
-}
-
-function greedyFill(atoms: Atom[], maxTokens: number): Atom[] {
-  const result: Atom[] = [];
-  let total = 0;
-  for (const atom of atoms) {
-    const tokens = estimateTokens(atom.body + JSON.stringify(atom.frontmatter));
-    if (total + tokens > maxTokens) break;
-    result.push(atom);
-    total += tokens;
-  }
-  return result;
 }
 
 /**
@@ -1095,9 +1134,3 @@ function applyGraphBoost(
   }
 }
 
-/**
- * Rough token estimate (4 chars per token).
- */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}

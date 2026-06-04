@@ -59,11 +59,11 @@ nanoclaw:
   dir: "~/nanoclaw"
 
   # Group folder name (must match registered group in NanoClaw)
-  group: "telegram_main"
+  group: "<group>"
 
   # CLAUDE.md output path (rendered from memory-kernel atoms)
   # Default: {nanoclaw.dir}/groups/{nanoclaw.group}/CLAUDE.md
-  claude_md: "~/nanoclaw/groups/telegram_main/CLAUDE.md"
+  claude_md: "~/nanoclaw/groups/<group>/CLAUDE.md"
 
   # Service manager for restart after config changes
   # Options: "systemd-user", "launchd", "manual"
@@ -135,12 +135,12 @@ mount_allowlist:
 symlinks:
   # Conversation archives
   - source: "~/repos/memory/kernel/conversations"
-    target: "~/nanoclaw/groups/telegram_main/conversations"
+    target: "~/nanoclaw/groups/<group>/conversations"
     create_source_dir: true
 
   # Optional: impulse capture
   # - source: "~/repos/memory/kernel/impulses.ndjson"
-  #   target: "~/nanoclaw/groups/telegram_main/impulses.ndjson"
+  #   target: "~/nanoclaw/groups/<group>/impulses.ndjson"
   #   create_source_file: true
 
 # =============================================================================

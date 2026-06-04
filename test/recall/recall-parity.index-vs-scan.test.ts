@@ -69,4 +69,40 @@ describe('recall parity: index vs file scan', () => {
     expect(idxBodies).toContain('Team-visible');
     expect(idxBodies).not.toContain('Personal-only');
   });
+
+  it('explicit status filter retrieves superseded atoms in both scan and index paths', () => {
+    const base: RetainOptions = { memoryDir: testDir, agent_id: 'a', session_id: 's' };
+
+    createAtom({ ...base, type: 'fact', slug: 'live', body: 'Live atom', status: 'active' });
+    createAtom({ ...base, type: 'fact', slug: 'old', body: 'Old atom', status: 'superseded' });
+
+    // Default query — superseded excluded in both paths
+    const defaultQuery: RecallQuery = { types: ['fact'] };
+
+    const scanDefault = recall(testDir, defaultQuery);
+    const scanDefaultIds = (scanDefault.atoms ?? []).map((a) => a.frontmatter.id).sort();
+    expect(scanDefaultIds.length).toBe(1);
+    expect((scanDefault.atoms ?? [])[0].body).toContain('Live');
+
+    reindex(testDir);
+    const idxDefault = recall(testDir, defaultQuery);
+    const idxDefaultIds = (idxDefault.atoms ?? []).map((a) => a.frontmatter.id).sort();
+    expect(idxDefaultIds).toEqual(scanDefaultIds);
+
+    // Explicit status filter — superseded returned by both paths
+    const explicitQuery: RecallQuery = { types: ['fact'], statuses: ['superseded'] };
+
+    const idxExplicit = recall(testDir, explicitQuery);
+    const idxExplicitIds = (idxExplicit.atoms ?? []).map((a) => a.frontmatter.id).sort();
+    expect(idxExplicitIds.length).toBe(1);
+    expect((idxExplicit.atoms ?? [])[0].body).toContain('Old');
+
+    // Drop index to force file-scan path
+    closeAllIndexes();
+    fs.rmSync(path.join(testDir, '.memory-index.db'), { force: true });
+
+    const scanExplicit = recall(testDir, explicitQuery);
+    const scanExplicitIds = (scanExplicit.atoms ?? []).map((a) => a.frontmatter.id).sort();
+    expect(scanExplicitIds).toEqual(idxExplicitIds);
+  });
 });

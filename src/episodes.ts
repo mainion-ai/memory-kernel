@@ -8,10 +8,11 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
-import matter from 'gray-matter';
+import { parseFrontmatter } from './internal/frontmatter.js';
 import { writeFileAtomic, assertWithinDir } from './store.js';
 import { normalizeTimestamp } from './format.js';
 import { appendEvent } from './event-log.js';
+import { indexEpisode } from './index-db.js';
 import type { Episode } from './types.js';
 
 export type { Episode } from './types.js';
@@ -65,16 +66,24 @@ export function writeEpisode(
 
   const filePath = path.join(episodesDir, `${episodeId}.md`);
 
-  // Preserve created_at from an existing episode — only set fresh on first write.
+  // Preserve created_at and started_at from an existing episode — only set
+  // fresh on first write. #119: previously started_at was silently
+  // overwritten with `normalizeTimestamp()` on every repeated writeEpisode,
+  // losing the original session-start timestamp. An explicit opts.started_at
+  // still takes precedence so callers can correct a wrong start.
   let createdAt = normalizeTimestamp();
+  let preservedStartedAt: string | undefined;
   if (fs.existsSync(filePath)) {
     try {
-      const existing = matter(fs.readFileSync(filePath, 'utf-8'));
+      const existing = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
       if (existing.data.created_at) createdAt = existing.data.created_at as string;
+      if (typeof existing.data.started_at === 'string' && existing.data.started_at) {
+        preservedStartedAt = existing.data.started_at;
+      }
     } catch { /* ignore — fall back to current timestamp */ }
   }
 
-  const startedAt = opts.started_at ?? normalizeTimestamp();
+  const startedAt = opts.started_at ?? preservedStartedAt ?? normalizeTimestamp();
 
   const frontmatter: Record<string, unknown> = {
     id: episodeId,
@@ -99,6 +108,9 @@ export function writeEpisode(
   const content = `---\n${fm}\n---\n\n${summary.trim()}\n`;
   writeFileAtomic(filePath, content);
 
+  // Index episode body for FTS search (best-effort — non-critical)
+  try { indexEpisode(memoryDir, episodeId, summary.trim()); } catch { /* best-effort */ }
+
   // Emit a session_ended event so the episode is traceable in the event log.
   appendEvent(memoryDir, 'session_ended', {
     agent_id: agentId ?? 'episodestore',
@@ -118,7 +130,7 @@ export function readEpisode(memoryDir: string, episodeId: string): Episode | nul
 
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
-    const parsed = matter(content);
+    const parsed = parseFrontmatter(content);
     const d = parsed.data as Record<string, unknown>;
     return {
       id: (d.id as string) ?? episodeId,
@@ -160,7 +172,7 @@ export function listEpisodes(
   for (const filePath of files) {
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
-      const parsed = matter(content);
+      const parsed = parseFrontmatter(content);
       const d = parsed.data as Record<string, unknown>;
       episodes.push({
         id: (d.id as string) ?? path.basename(filePath, '.md'),
@@ -206,7 +218,7 @@ export function linkEpisodeToAtom(
 
   try {
     const content = fs.readFileSync(atomFilePath, 'utf-8');
-    const parsed = matter(content);
+    const parsed = parseFrontmatter(content);
     const data = parsed.data as Record<string, unknown>;
 
     // Update provenance.episodes

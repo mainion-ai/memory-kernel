@@ -12,16 +12,8 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import { enrichRelations } from '../enrich-relations.js';
-
-function exitWithError(message: string, json?: boolean): never {
-  if (json) {
-    console.log(JSON.stringify({ error: message }, null, 2));
-  } else {
-    console.error(`✗ ${message}`);
-  }
-  process.exit(1);
-}
 
 export function registerEnrichRelationsCommand(program: Command): void {
   program

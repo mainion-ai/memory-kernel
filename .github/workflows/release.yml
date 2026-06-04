@@ -1,0 +1,236 @@
+# Release workflow (#142 upstream half, #152 first public release).
+#
+# Two-job structure routes by tag prefix per #197:
+#   v*                          -> release-main (publishes memory-kernel)
+#   openclaw-memory-kernel-v*   -> release-subpackage (publishes openclaw-memory-kernel)
+#
+# Each job runs the full test suite, sanity-checks that the tag matches
+# the relevant package.json version, publishes to npm with provenance,
+# and creates a GitHub release with auto-generated notes.
+#
+# Both jobs are guarded by `github.repository == 'mainion-ai/memory-kernel'`
+# so the workflow is a no-op on `-dev`. The sync workflow (sync-on-tag.yml)
+# replicates the tag onto public; the public-side checkout of this file
+# is what actually fires the publish job.
+#
+# Downstream half — the per-host polling script that consumes these releases
+# — lives in a follow-up PR (`fleet/mk-fleet-upgrade.sh`). This workflow is
+# the source of truth: the only place new versions appear on npm is from
+# these jobs, with signed provenance attestations tying the artifacts to
+# the synced commit.
+#
+# Required one-time setup (documented in RELEASING.md):
+#   - npm OIDC trusted publisher MUST be configured PER PACKAGE on
+#     npmjs.com for repo=mainion-ai/memory-kernel, workflow=release.yml.
+#     `npm publish --provenance` requires the sigstore OIDC flow — it
+#     will not fall back to NPM_TOKEN. If OIDC isn't set up for a package,
+#     that package's publish step fails 403.
+#   - NPM_TOKEN is wired up in `NODE_AUTH_TOKEN` below as a *secondary*
+#     auth mechanism (e.g. for future jobs that publish without
+#     `--provenance`), not as a fallback for these jobs.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'openclaw-memory-kernel-v*'
+
+# Serialize releases. If two release tags arrive in quick succession we still
+# run both, but never simultaneously — npm publish is not idempotent and
+# two parallel publishes can race on the version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# id-token: needed for npm provenance attestation (sigstore signing).
+# contents: needed to create the GitHub release.
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  # Main `memory-kernel` package. Fires on v* tags.
+  # The `startsWith(..., 'openclaw-memory-kernel-')` check is defensive — `v*`
+  # would not match a subpackage tag anyway (starts with `o`), but explicit
+  # exclusion makes the routing self-documenting in the conditions.
+  release-main:
+    if: |
+      github.repository == 'mainion-ai/memory-kernel' &&
+      startsWith(github.ref_name, 'v') &&
+      !startsWith(github.ref_name, 'openclaw-memory-kernel-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        # `gh release create --generate-notes` builds notes from PR
+        # metadata, not git history, so the default shallow checkout is
+        # enough.
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # Belt-and-braces guard: CLAUDE.md (Versioning section) requires five
+      # places to be bumped together for any release. This step refuses to
+      # publish unless all five agree with the pushed tag.
+      #
+      #   1. package.json "version"
+      #   2. package-lock.json top-level "version"
+      #   3. package-lock.json packages[""].version (self-entry)
+      #   4. packages/openclaw-memory-kernel/package.json
+      #      dependencies["memory-kernel"] == "^X.Y.Z"
+      #      (caret sync is a project convention — see CLAUDE.md)
+      #   5. CHANGELOG.md has a "## [X.Y.Z]" heading
+      #
+      # We only read GITHUB_REF_NAME (a controlled env var matching the
+      # `v*` tag glob) and static file contents via `node -p`, so there
+      # is no untrusted user input flowing into the shell here.
+      - name: Verify all five release-version places agree
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version=$(node -p "require('./package.json').version")
+          lock_top=$(node -p "require('./package-lock.json').version")
+          lock_self=$(node -p "require('./package-lock.json').packages[''].version")
+          oc_pin=$(node -p "require('./packages/openclaw-memory-kernel/package.json').dependencies['memory-kernel']")
+          expected_pin="^${tag_version}"
+
+          fail=0
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::package.json version (${pkg_version}) does not match tag (${tag_version})"
+            fail=1
+          fi
+          if [ "$lock_top" != "$tag_version" ]; then
+            echo "::error::package-lock.json top-level version (${lock_top}) does not match tag (${tag_version})"
+            fail=1
+          fi
+          if [ "$lock_self" != "$tag_version" ]; then
+            echo "::error::package-lock.json packages[''].version (${lock_self}) does not match tag (${tag_version})"
+            fail=1
+          fi
+          if [ "$oc_pin" != "$expected_pin" ]; then
+            echo "::error::packages/openclaw-memory-kernel/package.json dependencies.memory-kernel (${oc_pin}) is not ${expected_pin}"
+            fail=1
+          fi
+          if ! grep -q "^## \[${tag_version}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md is missing a '## [${tag_version}]' section"
+            fail=1
+          fi
+
+          if [ "$fail" = "1" ]; then
+            echo "::error::Release aborted: not all five version places agree. See CLAUDE.md > Versioning."
+            exit 1
+          fi
+          echo "All five version places agree on ${tag_version} — OK"
+
+      # Pre-req: OIDC trusted publisher for `memory-kernel` package must be
+      # configured on npmjs.com for repo=mainion-ai/memory-kernel,
+      # workflow=release.yml. Without it, 403.
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+  # Subpackage `openclaw-memory-kernel`. Fires on openclaw-memory-kernel-v* tags
+  # per #197's independent-tag-track policy. Different working directory,
+  # different version check (subpackage doesn't track its own lockfile per
+  # .gitignore — only package.json + CHANGELOG.md).
+  #
+  # Pre-req for this job to succeed: npm OIDC trusted publisher must be
+  # configured separately for the `openclaw-memory-kernel` package on
+  # npmjs.com. Per #152's Phase 0.2 (subpackage row), this is DEFERRED to
+  # whenever the maintainer first publishes the subpackage. Pushing an
+  # `openclaw-memory-kernel-v*` tag before that config is in place will
+  # 403 at the publish step — that's by design; configure OIDC first,
+  # then tag.
+  release-subpackage:
+    if: |
+      github.repository == 'mainion-ai/memory-kernel' &&
+      startsWith(github.ref_name, 'openclaw-memory-kernel-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/openclaw-memory-kernel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/openclaw-memory-kernel/package.json
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        # No package-lock.json in the subpackage (intentional — see
+        # .gitignore). `npm install --no-audit --no-fund` reads the
+        # package.json dep tree freshly; the resolved versions are
+        # transitive and not part of the published artifact.
+        run: npm install --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      # Subpackage version check — only two places (subpackage doesn't ship
+      # its own lockfile):
+      #   1. packages/openclaw-memory-kernel/package.json "version"
+      #   2. packages/openclaw-memory-kernel/CHANGELOG.md has a
+      #      "## [X.Y.Z]" heading
+      - name: Verify subpackage version places agree
+        run: |
+          # Strip the openclaw-memory-kernel-v prefix to get the version.
+          tag_version="${GITHUB_REF_NAME#openclaw-memory-kernel-v}"
+          sub_pkg_version=$(node -p "require('./package.json').version")
+
+          fail=0
+          if [ "$tag_version" != "$sub_pkg_version" ]; then
+            echo "::error::subpackage package.json version (${sub_pkg_version}) does not match tag (${tag_version})"
+            fail=1
+          fi
+          if ! grep -q "^## \[${tag_version}\]" CHANGELOG.md; then
+            echo "::error::subpackage CHANGELOG.md is missing a '## [${tag_version}]' section"
+            fail=1
+          fi
+
+          if [ "$fail" = "1" ]; then
+            echo "::error::Subpackage release aborted: version places disagree."
+            exit 1
+          fi
+          echo "Subpackage version ${tag_version} verified — OK"
+
+      - name: Publish subpackage to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release for subpackage
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Subpackage release. See packages/openclaw-memory-kernel/CHANGELOG.md for details."

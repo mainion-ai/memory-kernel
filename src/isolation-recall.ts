@@ -10,6 +10,7 @@ import fs from 'fs';
 import { recall, recallWithEmbeddings } from './recall.js';
 import { getSharedDir, DEFAULT_RENDER_CONFIG } from './isolation.js';
 import { listAtomFiles } from './store.js';
+import { estimateTokens as estimateTextTokens } from './budget.js';
 import type { Atom, ContextBundle, RecallQuery } from './types.js';
 
 export interface IsolatedRecallOptions {
@@ -74,14 +75,21 @@ export function recallIsolated(
     }
   }
 
-  // Apply token budget on merged set (single budget application point)
+  // Apply token budget on merged set (single budget application point).
+  // Issue #116: subtract view tokens from the cap. The bundle delivered to the
+  // caller is views + atoms + episodes — counting only atoms would let the
+  // combined context blow past `max_tokens`.
   const maxTokens = query.max_tokens ?? DEFAULT_RENDER_CONFIG.max_tokens;
+  const viewTokens = estimateTextTokens(
+    agentBundle.index + agentBundle.handoff + agentBundle.constraints,
+  );
+  const atomBudget = Math.max(0, maxTokens - viewTokens);
   let tokenCount = 0;
   const budgetedAtoms: Atom[] = [];
 
   for (const atom of mergedAtoms) {
     const est = estimateTokens(atom);
-    if (tokenCount + est > maxTokens && budgetedAtoms.length > 0) break;
+    if (tokenCount + est > atomBudget) break;
     budgetedAtoms.push(atom);
     tokenCount += est;
   }
@@ -126,13 +134,21 @@ function mergeIsolatedBundles(
     }
   }
 
+  // Issue #116: subtract view tokens from the cap so the combined bundle
+  // stays within max_tokens.
+  const viewTokens = estimateTextTokens(
+    agentBundle.index + agentBundle.handoff + agentBundle.constraints,
+  );
+  const atomBudget = Math.max(0, maxTokens - viewTokens);
+
   // Apply token budget on merged set
   let tokenCount = 0;
   const budgetedAtoms: Atom[] = [];
 
   for (const atom of mergedAtoms) {
     const est = estimateTokens(atom);
-    if (tokenCount + est > maxTokens && budgetedAtoms.length > 0) break;
+    if (tokenCount + est > atomBudget && budgetedAtoms.length > 0) break;
+    if (tokenCount + est > atomBudget && budgetedAtoms.length === 0) break;
     budgetedAtoms.push(atom);
     tokenCount += est;
   }

@@ -9,6 +9,773 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.28.0] — 2026-06-03
+
+### Added — `mk extract --preference-pass` dedicated preference extraction pass ([#213](https://github.com/mainion-ai/memory-kernel-dev/issues/213))
+
+Per-layer diagnostic (BEN-008) confirmed that the 86.7% IDK rate on preference questions is an extraction failure, not a retrieval failure: preferences were either never stored or their vocabulary was diluted into generic belief atoms during the general extraction pass (where they compete with facts, decisions, and beliefs for the `max_atoms` budget).
+
+- **`src/extract.ts`** — exports a new `PREFERENCE_EXTRACTION_SYSTEM_PROMPT` constant and runs it as a second LLM call when `preferencePass: true`. The prompt enforces specific vocabulary preservation ("prefers quinoa and roasted vegetables for meal prep" not "enjoys healthy food"), covers all preference signal types (explicit, habitual, aversions, tool/software choices, food/drink specifics), and forces subject/preference/context structured fields on every atom. Second-pass candidates are merged with first-pass candidates via in-memory slug dedup before the reconcile loop, so on-disk slug collision detection still handles cross-run dedup as normal.
+- **`src/types.ts`** — `ExtractOptions` gains `preferencePass?: boolean` (default `false`).
+- **`src/cli/extract.ts`** — `mk extract` gains `--preference-pass` flag that passes through to `extractFromLog`.
+- **+11 tests** in `test/extract-preference-pass.test.ts`: single vs double LLM call count; correct system-prompt routing (general vs preference-focused); second-pass atoms get preference enrichment (subject tag, structured body); dry-run correct with preference pass; in-pass slug dedup; cross-run slug dedup; preference pass error propagation; empty log early-return skips preference pass entirely.
+
+**Version bump:** MINOR — `preferencePass` in `ExtractOptions` is new public API.
+
+## [1.27.0] — 2026-05-31
+
+First release after the v1.16.1 → v1.27.0 force-reset on the public mirror (per [ADR 0001](docs/decisions/0001-force-reset-public-main.md)). MINOR for the observable `mk recall` semantics change in #214; carries forward the docs/policy/privacy work that accumulated between v1.26.1 and now.
+
+### Fixed — `mk recall` no longer returns confidently-irrelevant fallback ([#214](https://github.com/mainion-ai/memory-kernel-dev/issues/214))
+
+Two failure modes were folded into one root cause: `queryIndex` returned all status-filtered atoms as the candidate pool, FTS only re-ranked them, atoms with no FTS hit got score 0, and the token budget filled with whatever sorted first by status priority + recency. Result: confidently-irrelevant atoms served as hallucination scaffolds, and matched queries got polluted with non-matched noise.
+
+- **`src/recall.ts`** — when `task` is set, restrict the candidate pool to `(ftsHits ∪ semanticHits)`. When `graph_boost` is enabled, expand with 1-hop neighbours of the anchor set so legitimately-related atoms still surface. Empty anchor set + healthy FTS → return `atoms: []`. Empty anchor set + `searchFts` returned null (FTS unavailable / unparseable post-sanitisation) → file-scan degradation, unchanged.
+- **`src/index-db.ts`** — `searchFts()` sanitisation extended to strip `.`, `,`, `;`, `?`, `!` (in addition to the existing FTS5 syntax chars). Pre-fix, `192.168.1.136` crashed with `fts5: syntax error near "."` and the catch block returned `null` — indistinguishable from "FTS table missing", which dropped queries into the no-FTS fallback. Post-fix, dots are stripped and the query becomes a clean OR-token match against the (similarly-tokenised) atom body.
+- **`src/types.ts`** — `ContextBundle` gains an optional `recall_status?: "match" | "no_match" | "fts_unavailable"` so callers can distinguish the three outcomes without relying on `atoms.length === 0` semantics.
+- **+7 regression tests** in `test/recall-issue-214-task-pool.test.ts`: no-FTS-match returns empty + `no_match`; matched query returns only matched atoms (no noise); dotted-IP query doesn't crash; no-task path preserves old full-pool behaviour; noise atoms don't pollute matched results regardless of pool size; `graph_boost: true` expands the pool with 1-hop neighbours of matched anchors (unrelated atoms still excluded); the existing status filter prevents `supersedes`-chained stale atoms from leaking into the pool via graph expansion.
+- **Test-suite update**: nine pre-existing tests in `fts.test.ts`, `recall-scoring.test.ts`, `recall-temporal-decay.test.ts`, `relations.test.ts`, `embedding-knn-normalized.test.ts`, `mcp-isolation.test.ts`, `openclaw-plugin.test.ts`, and `openclaw/openclaw-like.integration.test.ts` were updated. They asserted the old fallback behaviour (off-topic atoms surfacing alongside on-topic ones); fixtures now seed bodies that actually FTS-match the test task so the underlying functionality (reservations, isolation merging, temporal decay, etc.) is exercised on a real matched pool.
+- **Diagnostic note**: the original mode-2 report from internal test stores ("single keywords like `NanoClaw` return 0 atoms") does not reproduce on a clean v1.26.1 store — the indexing path was correct. The clean-store reproduction surfaced the three above bugs instead; once `no_match` becomes the new behaviour for unmatched queries, the on-store report would either resolve cleanly (the bug WAS the fallback) or surface as an honest `no_match` revealing a separate per-store indexing degradation. Either outcome unblocks diagnosis.
+
+Full suite: **1653 → 1660** tests across 113 files.
+
+### Privacy — Redact-list expansion for internal sync infra + operator docs
+
+Triggered by the 2026-05-26 sync dry-run on `dryrun-2026-05-26` (workflow run succeeded in 7s; diff stat reviewed). 11 new redact entries added to `.privacy/redact-paths.txt`, grouped into two sections:
+
+- **Internal sync + CI plumbing** (operates on `-dev`, no functional value on public): `.github/workflows/sync-on-tag.yml`, `.github/workflows/docs-hygiene.yml`, `.github/workflows/privacy-scan.yml`, `scripts/sync-to-public.sh`, `scripts/docs-hygiene-check.sh`, `scripts/privacy-scan.sh`, `test/sync-to-public.test.ts`, `test/docs-hygiene-check.test.ts`, `test/privacy-scan.test.ts`.
+- **Internal operator + audit docs** (documents our setup, not user-facing reference).
+
+Kept public (explicit decisions documented in `.privacy/audit-v1.26.0.md`):
+
+- `docs/decisions/0001-force-reset-public-main.md` — transparency-positive for early v1.x pinners.
+- `docs/dep-watchlist.md` — contributor-useful project hygiene.
+- `docs/branding/social-preview.{svg,png}` — public branding.
+- `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/CODEOWNERS`, `.github/ISSUE_TEMPLATE/**`, `.github/PULL_REQUEST_TEMPLATE.md` — public-facing CI/governance scaffolding, intended.
+
+Decision rationale recorded in `.privacy/audit-v1.26.0.md` under a new "Additions 2026-05-26 (post-sync-dry-run review)" subsection, with both REDACT and explicit-RETAIN rows for symmetry.
+
+No source changes. No version bump.
+
+### Docs / governance — Public-repo settings doc + ruleset names + social preview ([PR #209](https://github.com/mainion-ai/memory-kernel-dev/pull/209))
+
+Companion follow-up to the #199 decisions PR. Expands `docs/public-repo-settings.md` from a 6-section sketch into a UI-verbatim 10-subsection runbook covering rulesets, Actions, CODEOWNERS, Code-security, and General settings — each section flagging public-vs-dev deltas inline. Walks the GitHub Settings UI top-to-bottom in the order an operator clicks through.
+
+- **Ruleset naming convention.** Public: `main: synced-only (sync-app writes)`. Dev: `main: maintainer fast-loop`. Pattern: lead with branch scope (`main:`), follow with one short intent descriptor; distinct names make the org-wide rulesets list self-explanatory at a glance.
+- **`.github/CODEOWNERS`** — `@NePav @mainion-taj` (two-maintainer routing). Initial draft tried `@mainion-ai/maintainers` team routing but `mainion-ai` is a User account, not an Organization — teams aren't available. Comment in the file documents the org-conversion upgrade path.
+- **`docs/branding/social-preview.svg` + `social-preview.png`** *(new)* — 1280×640 social-card asset with project title, tagline, event-stream atom motif, and footer. SVG is the design source; PNG is the upload-ready render. Re-render via `rsvg-convert -w 1280 -h 640 social-preview.svg -o social-preview.png`.
+- **Doc expansions:**
+  - **§1 Ruleset:** end-state bypass list with explicit keep/remove tables (Repository admin / Maintain / Write roles all "remove"; sync App + maintainer "keep"); rule-by-rule recommendations across all 12 GitHub-Ruleset toggles; target-branches walkthrough; "Two-ruleset variant (future)" appendix for stricter force-push posture when a second maintainer joins.
+  - **§2 Actions:** 5 sub-sections (2a–2e) matching the UI. **Fork-PR workflows §2c flagged as security-critical** — *Send write tokens off, Send secrets off* are hard "no, ever" with the supply-chain attack class spelled out (malicious fork PR workflow → exfiltrates `MK_SYNC_APP_PRIVATE_KEY` / future `NPM_TOKEN`).
+  - **§3 CODEOWNERS:** two-maintainer routing + the "why not a team" explanation + future-org-conversion upgrade path.
+  - **§4 Code security and analysis:** 5 sub-sections (4a–4e) matching the UI: Advanced Security, Dependency graph, Dependabot (incl. malware alerts + grouped updates + Dependabot rules + the UI gotcha that "off" for version updates means "don't commit `dependabot.yml`"), Code scanning (CodeQL on, Copilot Autofix off), Secret Protection. Quick post-apply checklist at the end.
+  - **§5 General:** 10 sub-sections (5a–5j) matching the page top-to-bottom. Notable additions: Release immutability on (with "if available" qualifier — historically Enterprise-only, rolled out to public in waves); Preserve this repository (GitHub Archive Program) on; Sponsorships off; Require sign-off on web commits off (matches no-DCO stance); auto-close issues with merged linked PRs on; "Danger Zone: don't click anything" note.
+- **Public vs dev delta summaries** added across sections — confirms that only Section 1 (ruleset), Section 4 (Private vuln reporting off on dev; CodeQL optional on dev), and Section 5 (Discussions off on dev; Preserve repository N/A on private) actually differ. Most settings are identical between repos.
+- **`CODING_INSTRUCTIONS.md`** hygiene table already includes `docs/public-repo-settings.md` (from PR #208) — no additional row needed.
+
+### Docs / governance — Public-repo decisions pass ([#199](https://github.com/mainion-ai/memory-kernel-dev/issues/199) parts a + b + d + e)
+
+Closes [#199](https://github.com/mainion-ai/memory-kernel-dev/issues/199) fully (parts c + f shipped in [PR #207](https://github.com/mainion-ai/memory-kernel-dev/pull/207)).
+
+- **`docs/decisions/0001-force-reset-public-main.md`** *(new)* — ADR for part (a). First sync force-resets public `mainion-ai/memory-kernel` main; pre-sync HEAD (`9305088b`, v1.16.1) and earlier tag SHAs (`v1.15.0`, `v1.12.0`) preserved in the ADR for audit. Subsequent syncs are fast-forward only.
+- **`docs/public-repo-settings.md`** *(new)* — operator-facing snapshot of required public-repo GitHub settings for part (b). Branch protection on `main` (require linear history, restrict pushes, allowlist the sync App, allow force-push from the App only), GHA permissions (read+write, fork PRs require approval), Dependabot + secret scanning + private vulnerability reporting all on, Wikis off, Discussions on. Single source of truth — both checklist for first apply and snapshot for ongoing audit.
+- **`docs/governance.md`** *(new)* — triage doctrine (part d) and contributor-licensing stance (part e). Doctrine: direct-on-public + back-route — issues and PRs land on the public repo; the maintainer applies accepted PRs through dev with author attribution preserved. Licensing: no CLA, no DCO required; Apache-2.0 §5 inbound-licensing grant is sufficient. Code-of-Conduct reference: Contributor Covenant 2.1.
+- **`CONTRIBUTING.md`** — links to `docs/governance.md` and clarifies that the inbound-licensing grant is the Apache-2.0 contribution itself (no separate signing step).
+- **`RELEASING.md`** — references the ADR; "Required one-time setup" now points at `docs/public-repo-settings.md` instead of inline TODO.
+- **`CODING_INSTRUCTIONS.md`** + `.privacy/public-overrides/CODING_INSTRUCTIONS.md` — Documentation hygiene table gains three rows: `docs/decisions/*.md`, `docs/public-repo-settings.md`, `docs/governance.md`.
+- Release-tagging chain narrows to its terminal node: [#152](https://github.com/mainion-ai/memory-kernel-dev/issues/152) public-repo npm publish + OIDC.
+
+### Docs / governance — Public-repo templates pass ([#199](https://github.com/mainion-ai/memory-kernel-dev/issues/199) parts c + f)
+
+- **`.github/CODEOWNERS`** *(new)* — wildcard owner (`* @NePav`). Per-directory routing deferred until the project grows more maintainers.
+- **`.github/ISSUE_TEMPLATE/bug_report.md`** *(new)* — mirrors the "Reporting Bugs" checklist from `CONTRIBUTING.md` (version via `npm ls memory-kernel`, Node, OS, repro, expected vs actual, logs).
+- **`.github/ISSUE_TEMPLATE/feature_request.md`** *(new)* — what / why / sketch / out-of-scope / alternatives / related.
+- **`.github/ISSUE_TEMPLATE/config.yml`** *(new)* — disables blank issues; adds a "Security vulnerability" contact link pointing at `SECURITY.md` so the public tracker doesn't get used for security reports.
+- **`.github/PULL_REQUEST_TEMPLATE.md`** *(new)* — mirrors the PR checklist in `CONTRIBUTING.md` (tests, build, docs hygiene, CHANGELOG, version-bump proposal).
+- **`SECURITY.md`** — adds an explicit **90-day coordinated disclosure window** ("Patch or mitigation: 90 days from acknowledgement unless otherwise agreed") so external researchers know the upper bound. Existing 48-hour ack / 7-day triage targets unchanged.
+- **`CODING_INSTRUCTIONS.md`** — Documentation hygiene table gains three rows: issue/PR templates, CODEOWNERS, SECURITY.md. Same edit applied to the `.privacy/public-overrides/` swap-in.
+- Partial-closes #199 (parts c + f). Deferred: (a) initial-state reconciliation, (b) public-repo GH settings (operator), (d) triage doctrine, (e) CLA/DCO stance — each gets its own follow-up.
+
+## [1.26.1] — 2026-05-25
+
+Transitive security fix + docs/policy carry-over from the post-v1.26.0 work. PATCH — no public API change, no source code change.
+
+### Security
+
+- **`qs` forced to `^6.15.2` via `package.json` `overrides`** ([Dependabot alert #33](https://github.com/mainion-ai/memory-kernel-dev/security/dependabot/33), [GHSA-q8mj-m7cp-5q26](https://github.com/advisories/GHSA-q8mj-m7cp-5q26), CVE-2026-8723, medium / CVSS 5.3). The transitive came in via `@modelcontextprotocol/sdk` → `express` → `qs@6.15.0`. The vuln is in `qs.stringify` with `arrayFormat: 'comma'` + `encodeValuesOnly: true` on null/undefined array entries — a code path not reached from this project (we don't call `qs.stringify`; the SDK's express middleware consumes `qs.parse`). Patched defensively to keep the public release surface free of open alerts ([#152](https://github.com/mainion-ai/memory-kernel-dev/issues/152)). `npm ls qs` now shows `6.15.2` at every site; `npm audit` reports 0 vulnerabilities.
+
+### Docs / policy — Subpackage publish strategy locked ([#197](https://github.com/mainion-ai/memory-kernel-dev/issues/197))
+
+Shipped via [PR #205](https://github.com/mainion-ai/memory-kernel-dev/pull/205) (no version bump at the time; carried forward here).
+
+- **`packages/openclaw-memory-kernel/CHANGELOG.md`** — new file, extracted from main-package CHANGELOG entries that mention the subpackage. Versions 0.1.0 → 0.3.0 backfilled with cross-links to the carrying main-package releases.
+- **`packages/openclaw-memory-kernel/INSTALL.md`** — gains a *Compat matrix* (subpackage × `memory-kernel` × `openclaw` × `@sinclair/typebox` × Node) and a *Deprecation policy* section restating the soft-warn-then-remove rule.
+- **`RELEASING.md`** — gains a *Subpackage releases* section covering the independent `openclaw-memory-kernel-vX.Y.Z` tag prefix, the per-bump rule (MAJOR/MINOR/PATCH keyed off the subpackage's contract, not main-package version), the four-file release checklist for subpackage bumps, and the deprecation policy. Public-repo placement decision (Option A monorepo) recorded. Includes a "Not yet wired — sync-on-tag.yml currently triggers on `v*` only" callout pointing to #152.
+- Sixth of the seven release-tagging prereqs landed; two remain ([#199](https://github.com/mainion-ai/memory-kernel-dev/issues/199) public-repo bootstrap → [#152](https://github.com/mainion-ai/memory-kernel-dev/issues/152) npm OIDC + `release.yml` port).
+
+## [1.26.0] — 2026-05-25
+
+**Breaking-ish runtime change** — `engines.node` floor bumped from `>=18` to `>=22.16` ([#198](https://github.com/mainion-ai/memory-kernel-dev/issues/198)). MINOR because no public npm consumers exist pre-[#152](https://github.com/mainion-ai/memory-kernel-dev/issues/152); a strict-SemVer project would treat this as MAJOR.
+
+### Changed
+
+- **`engines.node` is now `>=22.16`** for both the main package and `packages/openclaw-memory-kernel/`. Aligns with OpenClaw's official runtime requirement (Node 22.16+, Node 24 recommended). NanoClaw's `>=20` requirement is looser but moot — Node 20 reached end-of-life 2026-04-30 and NanoClaw users on it should upgrade regardless.
+- CI matrix updated from `[18, 20]` to `[22, 24]`. Both Node 18 (EOL 2025-04-30) and Node 20 (EOL 2026-04-30) are now out of support and no longer tested.
+- `CONTRIBUTING.md` prerequisite + `README.md` install section updated; `RELEASING.md` gains a SemVer guidance note on engine bumps.
+
+### Out of scope (follow-ups)
+
+- Adopting Node 22+ built-ins (`fetch`, `node:test`, `node:sqlite`, stable `--watch`) in the codebase. Possible once this floor lands; intentionally not bundled with the engine bump.
+- Re-evaluating [#177](https://github.com/mainion-ai/memory-kernel-dev/issues/177) (`prebuild-install` deprecation watch). Node 22's stable `node:sqlite` could obviate the `better-sqlite3` dependency entirely — separate experiment.
+
+## [1.25.2] — 2026-05-25
+
+Tier-3 survivors bundle — closes the three issues left after the 2026-05-21 four-bundle drain. PATCH because the only code change ([#176](https://github.com/mainion-ai/memory-kernel-dev/issues/176)) is a behaviour-preserving internal refactor; [#174](https://github.com/mainion-ai/memory-kernel-dev/issues/174) and [#177](https://github.com/mainion-ai/memory-kernel-dev/issues/177) are docs-only.
+
+### Changed
+
+- [#176](https://github.com/mainion-ai/memory-kernel-dev/issues/176) — Removed the `gray-matter` dependency. Atom + episode frontmatter parsing now goes through a thin internal splitter (`src/internal/frontmatter.ts`) backed by the existing `js-yaml@4.x` direct dep. Result: `npm ls js-yaml` shows only `js-yaml@4.x` (the transitive `js-yaml@3.x` from gray-matter is gone). The new module mirrors gray-matter's `parseFrontmatter(raw) → { data, content }` surface so no caller had to change shape. Benchmark on the 100-atom workload (`npm run bench`): recall p95 39.38 ms, well under the 50 ms target.
+  - Internal-only — `src/internal/` is not exported from the package entrypoint. PATCH.
+
+### Docs
+
+- [#174](https://github.com/mainion-ai/memory-kernel-dev/issues/174) — New canonical statement of the "files are truth, index is derived cache, `entity_triples` is the exception" invariant in [`docs/invariants.md`](docs/invariants.md). Cross-linked from `CONTRIBUTING.md`, `README.md`, `docs/migration.md`, `docs/agent-quickref-{native,container}.md`, `docs/host-integration-doctrine.md`, `scripts/activate-memory.ts`, and the `src/index-db.ts` header (which previously had the only inline write-up).
+- [#177](https://github.com/mainion-ai/memory-kernel-dev/issues/177) — New [`docs/dep-watchlist.md`](docs/dep-watchlist.md) capturing the upstream `prebuild-install` deprecation warning emitted by `better-sqlite3`'s install path. Documents revisit triggers and acceptance criteria so the watch item lives next to the rest of the project docs rather than as a long-lived GitHub issue. Cross-linked from `CONTRIBUTING.md` under a new "Dependency hygiene" sub-heading.
+
+### Tests
+
+- +14 in [`test/internal-frontmatter.test.ts`](test/internal-frontmatter.test.ts) covering edge cases that previously came for free with `gray-matter`: no-fence, empty input, empty frontmatter block, body containing `---`, CRLF line endings, leading UTF-8 BOM (including in the no-fence fallthrough — see PR #193 review), opening fence with no terminating newline, missing closing fence, invalid YAML, scalar/array frontmatter (rejected), nested structures.
+- Total **1617 → 1631**.
+
+## [1.25.1] — 2026-05-24
+
+`mk doctor --fix` Phase 2 ([#191](https://github.com/mainion-ai/memory-kernel-dev/issues/191)) — atom-schema migrations. PATCH because no new public CLI flags or exported APIs; `--fix`/`--dry-run` already shipped in v1.25.0 and this release extends what they normalise.
+
+### Added
+
+- `atom-schema` doctor check now exposes a structured probe (Phase 2 commit 1) — `mk doctor --fix --dry-run --json` and `--fix --json` both report the actual legacy value at each failing Zod path under `fixes[].remaining[]`. Survey-mode in commit 1 emitted "no migration registered" for every failure; commit 2 below wires those values into an actual migrations table.
+- `mk doctor --fix` now auto-migrates known legacy enum values for atoms (Phase 2 commit 2). The seeded migrations table (`src/doctor/checks/schema-migrations.ts`) covers the examples called out in the issue body plus values surveyed from a real operator store (taj, 2026-05-24): `classification: PUBLIC_FRIENDLY → PUBLIC`, `classification: PRIVATE → PERSONAL`, `status: obsolete → archived`, `status: deprecated → archived`, `relations[].type: caused-by → caused_by`, `relations[].type: applied-to → applied_to`. Unknown legacy values stay in `remaining[]`. Structural failures (e.g. `relations[].target = undefined`, including the legacy `- supersedes: <ID>` shorthand form inside `relations:` arrays) are never auto-migrated and stay in `remaining[]` for manual review. A `.bak` is written alongside each modified atom before the rewrite; if a `.bak` already exists, a timestamp-suffixed fallback name is used so a prior backup is never overwritten. `--dry-run` reports "would migrate …" without touching disk.
+- Every `fixes[].applied[]` line for the atom-schema check is now tagged with a leading `[migration]` or `[normalization]` label. `[migration]` lines are the enum mapping changes from the migrations table. `[normalization]` lines are canonical-serialization side effects that the `--fix` rewrite picks up because every atom modification goes back through `serializeAtom()` — currently recognised: comma-joined `scope.tags` strings split into separate items, top-level `tags:` promoted from `scope.tags` (Obsidian compatibility), and the `<!-- mk:relations -->` Obsidian section appended for atoms with relations. Anything else surfaces as a generic "frontmatter re-serialised to canonical key order / formatting" normalisation note. Operators can distinguish migration intent from incidental cleanup directly from the output without diffing the `.bak`.
+
+### Known gaps (tracked separately)
+
+- Atoms missing the `status` frontmatter field entirely fail at the `parseAtom()` layer before the schema check sees them. `listAtoms()` emits a stderr warning and skips them; the migrations table can't currently reach them. Tracked as a follow-up to #191.
+- Legacy `relations: [- supersedes: <atom-id>]` shorthand (top-level keyed entries inside a `relations:` array) surfaces as two `<undefined>` structural failures per entry rather than a value-level migration target. A shape-level rewriter would be needed.
+
+## [1.25.0] — 2026-05-24
+
+### Added
+
+- `mk doctor --fix` and `--dry-run` flags ([#157](https://github.com/mainion-ai/memory-kernel-dev/issues/157), Phase 1) — auto-remediate three classes of non-destructive findings:
+  - `store-schema` — calls `reindex(memoryDir)` when `.memory-index.db` user_version is stale.
+  - `store-permissions` — `chmod 0o600` on the index DB and any SECRET-classified atom file whose mode drifted (skipped on win32).
+  - `render-config` — writes a default `render.yaml` for any agent dir missing it (refuses to overwrite an invalid file).
+  - `--dry-run` previews what would change without writing; alone (without `--fix`) it is a soft no-op.
+  - JSON output is additive: existing `{healthy, issue_count, issues, checks}` shape is unchanged; a new top-level `fixes[]` array carries the per-check outcome with a `dry_run` flag.
+  - Exit codes for `--fix`: `0` (all fixable resolved), `1` (fixes applied, unfixable issues remain), `2` (a fix threw or an unfixed error-severity issue persists). `--dry-run` mirrors plain-doctor exit codes.
+- Phase 2 (`atom-schema` migrations table) deferred to a follow-up PR after surveying real legacy values via `--fix --dry-run`.
+
+## [1.24.3] — 2026-05-21
+
+Tier 3 themed bundles — closing out 18 Tier-3 issues from the
+2026-05-16 system review across four bundled PRs. PATCH because none
+of the bundles add public API. The new `src/cli/cli-util.ts` and
+`src/cli/atom-lookup.ts` helpers are internal to the CLI layer and not
+re-exported from the package entrypoint.
+
+### Bundle A — recall cluster ([PR #184](https://github.com/mainion-ai/memory-kernel-dev/pull/184))
+
+- [#112](https://github.com/mainion-ai/memory-kernel-dev/issues/112) — `greedyFill`: `break` → `continue` on oversized atom so smaller atoms further down the score list can still fit the remaining budget.
+- [#113](https://github.com/mainion-ai/memory-kernel-dev/issues/113) — Reject NaN in `query.type_weights` at entry; explicit throw with a clear message rather than silent sort corruption.
+- [#114](https://github.com/mainion-ai/memory-kernel-dev/issues/114) — Memoize `JSON.stringify(frontmatter)` via `WeakMap<AtomFrontmatter, string>` for token counting.
+- [#115](https://github.com/mainion-ai/memory-kernel-dev/issues/115) — Deduct episode tokens from the atom budget when `include_episodes` is set.
+- [#116](https://github.com/mainion-ai/memory-kernel-dev/issues/116) — `isolation-recall.ts`: subtract view (INDEX/HANDOFF/CONSTRAINTS) tokens from `maxTokens` cap.
+
+### Bundle B — CLI cleanup ([PR #183](https://github.com/mainion-ai/memory-kernel-dev/pull/183))
+
+- [#121](https://github.com/mainion-ai/memory-kernel-dev/issues/121) — Extract `exitWithError` to `src/cli/cli-util.ts`; remove the 11 per-file copies.
+- [#172](https://github.com/mainion-ai/memory-kernel-dev/issues/172) — Add `--json` flag and `exitWithError` plumbing to `bootstrap-events`, `reindex`, `merge`, `import`, `migrate-relations`, `relink`, `render` (the 7 commands that lacked it).
+- [#163](https://github.com/mainion-ai/memory-kernel-dev/issues/163) — `test/cli-json.test.ts`: pin `HOME` and `USERPROFILE` in the `mk()` helper's env block so doctor's wrapper-drift check doesn't leak the host's deployed wrapper into the test.
+- [#122](https://github.com/mainion-ai/memory-kernel-dev/issues/122) — Clarify `--from` semantics across `merge` / `replay` / `import`: `replay --from` now accepts both file and directory (auto-locates `events.ndjson`); `merge` stays dir-only; `import` stays file-only (semantic differences are real and documented).
+- [#123](https://github.com/mainion-ai/memory-kernel-dev/issues/123) — `render` gains `-d, --dir` and `-o, --output` flags; positional form kept as deprecated fallback with stderr warning.
+
+### Bundle C — schema / event-log invariants ([PR #182](https://github.com/mainion-ai/memory-kernel-dev/pull/182))
+
+- [#108](https://github.com/mainion-ai/memory-kernel-dev/issues/108) — `schema.ts`: enforce `ttl_days >= 1` (reject 0).
+- [#109](https://github.com/mainion-ai/memory-kernel-dev/issues/109) — Add `conflict_resolved` to `MUTATION_ACTIONS` so `compactLog` doesn't over-prune those events.
+- [#110](https://github.com/mainion-ai/memory-kernel-dev/issues/110) — Conflict event `atom_snapshot` field now stores the full atom (frontmatter + body), not stringified frontmatter alone.
+- [#111](https://github.com/mainion-ai/memory-kernel-dev/issues/111) — `MemoryEvent.schema_version`: convert to discriminated union for downstream narrowing.
+- [#119](https://github.com/mainion-ai/memory-kernel-dev/issues/119) — `episodes.ts`: preserve `started_at` on repeated `writeEpisode` (don't overwrite with new timestamp).
+- [#120](https://github.com/mainion-ai/memory-kernel-dev/issues/120) — `classify-query.ts`: deterministic tie-break in `inferredType` (stable lexicographic secondary key).
+
+### Bundle D — misc internal ([PR #181](https://github.com/mainion-ai/memory-kernel-dev/pull/181))
+
+- [#70](https://github.com/mainion-ai/memory-kernel-dev/issues/70) — Extract duplicated `findAtomFile` from `relate.ts` / `supersede.ts` to new `src/cli/atom-lookup.ts`.
+- [#117](https://github.com/mainion-ai/memory-kernel-dev/issues/117) — `relink.ts`: hoist concept-pattern regex compilation out of the per-atom inner loop (was quadratic on the write path).
+- [#118](https://github.com/mainion-ai/memory-kernel-dev/issues/118) — `enrich-relations.ts`: cap LLM `reasoning` field at 2000 chars with truncation marker.
+- [#124](https://github.com/mainion-ai/memory-kernel-dev/issues/124) — Mark `assertWithinDir`, `writeFileAtomic`, `openIndex`, `closeIndex` as `@internal` via JSDoc.
+
+### Tests
+
+- `npm test` — **1558/1558** pass locally (1511 v1.24.2 baseline + 47 across the four bundles: 17 A + 15 B + 10 C + 5 D).
+
+## [1.24.2] — 2026-05-20
+
+Month-2 Wave 3 of the post-Sprint-3 remediation plan — three independent
+hygiene + coverage items shipped in parallel ([#104](https://github.com/mainion-ai/memory-kernel-dev/issues/104),
+[#105](https://github.com/mainion-ai/memory-kernel-dev/issues/105),
+[#106](https://github.com/mainion-ai/memory-kernel-dev/issues/106)).
+PATCH because no public-API additions.
+
+### Added — direct test coverage for embed-sync / event-log / migrate / store ([#104](https://github.com/mainion-ai/memory-kernel-dev/issues/104))
+
+- Four new test files (\`test/embed-sync.test.ts\`,
+  \`test/event-log-direct.test.ts\`, \`test/migrate-direct.test.ts\`,
+  \`test/store-direct.test.ts\`) add **+68 direct tests** for modules
+  previously covered only through integration paths. Coverage focuses on
+  error paths and edge cases an internal system review flagged —
+  \`assertWithinDir\` traversal attacks, \`writeFileAtomic\` tmp
+  cleanup on rename failure, the PR-12 \`0o600\` mode invariant, the
+  PR-13 \`appendEvent\` lock interaction, the PR-9 bulk-load path, and
+  \`migrate\`'s partition / fallback strategies under \`MK_ISOLATION\`.
+
+### Changed — packaging metadata hygiene ([#105](https://github.com/mainion-ai/memory-kernel-dev/issues/105))
+
+- Both \`package.json\` files now declare \`"engines": { "node": ">=18" }\`
+  to match the CI matrix (Node 18 + 20).
+- \`packages/openclaw-memory-kernel/package.json\` gains a \`"files": [...]\`
+  allowlist (dist + plugin manifest + skills + INSTALL.md), shrinking
+  \`npm pack\` from 29.8 kB / 8 files down to 18.8 kB / 6 files. Pre-fix,
+  the published tarball would have shipped \`src/index.ts\` and
+  \`tsconfig.json\`.
+- Root \`tsconfig.json\` switched from \`Node16\` to \`NodeNext\` for both
+  \`module\` and \`moduleResolution\`, matching the subpackage's
+  pre-existing configuration. No code changes required.
+- gray-matter (unmaintained, ships js-yaml 3.x transitively) and
+  better-sqlite3's deprecated \`prebuild-install\` are acknowledged for
+  now; replacement / migration tracked in [#176](https://github.com/mainion-ai/memory-kernel-dev/issues/176)
+  and [#177](https://github.com/mainion-ai/memory-kernel-dev/issues/177).
+
+### Changed — \`@sinclair/typebox\` moved to peerDependencies (subpackage breaking)
+
+- In \`packages/openclaw-memory-kernel\`, \`@sinclair/typebox\` is no longer
+  a runtime dependency; it is now a \`peerDependencies\` requirement
+  (\`^0.34.0\`, non-optional). Consumers of the \`openclaw-memory-kernel\`
+  plugin must install typebox themselves. This is a breaking change
+  for the **subpackage only** — its version bumps **0.2.0 → 0.3.0**.
+  The main \`memory-kernel\` package is unaffected.
+
+### Docs — \`entity_triples\` preservation invariant documented ([#106](https://github.com/mainion-ai/memory-kernel-dev/issues/106))
+
+- \`src/index-db.ts\`'s file-level header now spells out the exception to
+  the "files are source of truth" framing: \`entity_triples\` is
+  LLM-extracted at write time and not derivable from atom markdown
+  alone. Reindex preserves it via a \`_saved_triples\` TEMP-table
+  snapshot mechanism. Embeddings get the same treatment for a different
+  reason (cost, not derivability). Project-wide invariant formalization
+  tracked in [#174](https://github.com/mainion-ai/memory-kernel-dev/issues/174).
+
+## [1.24.1] — 2026-05-20
+
+Month-2 Wave 2 of the post-Sprint-3 remediation plan — three independent
+API-contract / performance / observability fixes shipped in parallel
+([#101](https://github.com/mainion-ai/memory-kernel-dev/issues/101),
+[#102](https://github.com/mainion-ai/memory-kernel-dev/issues/102),
+[#103](https://github.com/mainion-ai/memory-kernel-dev/issues/103)).
+PATCH because no public-API additions — all new helpers are `@internal`.
+
+### Fixed — `observations.md` double-append on retry ([#103](https://github.com/mainion-ai/memory-kernel-dev/issues/103))
+
+- `observeConversation` in `src/observe.ts` now dedups against the
+  `## Session ${date}` header before appending. Pre-fix, a retry after
+  a crash mid-LLM-call (observer wrote, process died before exit, user
+  re-ran the same command) double-appended the same session block.
+  Post-fix, the append is skipped and a stderr warning is emitted on
+  dedup hit: `mk: warning: observations.md already contains "..." —
+  skipping append (idempotent retry)`. PR-12's `0o600` chmod on the
+  successful-write path is preserved (regression-guarded on POSIX).
+  Internal helper `appendObservationSection` extracted for testability;
+  not re-exported through `src/index.ts`.
+
+### Fixed — `tagDistance` BFS frontier unbounded growth ([#102](https://github.com/mainion-ai/memory-kernel-dev/issues/102))
+
+- `tagDistance` in `src/wander.ts` now caps BFS frontier expansion at
+  500 nodes per step. Pre-fix, a hub tag (one tag shared by thousands
+  of atoms) could pull the entire shared-tag set into the frontier in
+  one step, causing a performance cliff at scale — measured ~950ms for
+  10 000 atoms in a hub-tag-only graph; post-fix ~19ms (50× speedup).
+  When the cap fires, a one-shot stderr warning is emitted and distance
+  results may be conservative (atoms reachable only beyond the 500th
+  frontier slot report unreachable instead of their true distance).
+  Cap is an internal constant `BFS_FRONTIER_CAP = 500`, not exported.
+
+### Fixed — `--json` error contract on 3 CLI commands ([#101](https://github.com/mainion-ai/memory-kernel-dev/issues/101))
+
+- `mk citations`, `mk export-obsidian`, and `mk obsidian-init` now
+  route their missing-directory error through the project-standard
+  `exitWithError(msg, opts.json)` helper. Pre-fix, `mk citations -d
+  /nonexistent --json` printed `✗ Memory directory not found: ...` to
+  stderr and exited 1 — scripts driving the command with `--json`
+  received plain text instead of the documented `{"error":"..."}`
+  envelope. `export-obsidian` and `obsidian-init` previously had an
+  inline `if (opts.json) { ... } else { ... }` — already
+  contract-correct, refactored for consistency; their new tests
+  function as regression guards. A separate follow-up
+  ([#172](https://github.com/mainion-ai/memory-kernel-dev/issues/172))
+  tracks adding `--json` to the seven commands in #101 that lack the
+  flag entirely (a feature add, not a contract fix).
+
+## [1.24.0] — 2026-05-20
+
+Month-2 Wave 1 of the post-Sprint-3 remediation plan — three independent
+reliability + observability fixes shipped in parallel ([#98](https://github.com/mainion-ai/memory-kernel-dev/issues/98),
+[#99](https://github.com/mainion-ai/memory-kernel-dev/issues/99),
+[#100](https://github.com/mainion-ai/memory-kernel-dev/issues/100)).
+MINOR because PR-14 adds a new public option (`CallLLMOptions.timeoutMs`).
+
+### Added — `CallLLMOptions.timeoutMs` ([#99](https://github.com/mainion-ai/memory-kernel-dev/issues/99))
+
+- The `CallLLMOptions` public interface (re-exported from `index.ts`)
+  gains an optional `timeoutMs?: number` field, defaulting to `120_000`.
+  Callers can now control the spawn timeout per-call rather than relying
+  on the hardcoded constant. Production call sites (`extract.ts`,
+  `observe.ts`) are unchanged; the field is purely additive.
+
+### Fixed — `compactLog` ↔ `appendEvent` lost-write race ([#98](https://github.com/mainion-ai/memory-kernel-dev/issues/98))
+
+- `compactLog` and `appendEvent` in `src/event-log.ts` now coordinate via
+  an advisory file lock (`proper-lockfile`). Pre-fix, an `appendEvent`
+  that landed between `compactLog`'s re-read and the rename inside
+  `writeFileAtomic` was silently lost — the rename clobbered the
+  post-append on-disk file with the pre-append `finalCompacted` content.
+  Post-fix, `appendEvent` waits for the lock before opening the log;
+  `compactLog` holds it across read-modify-write. Lock file is
+  `events.ndjson.lock` (sibling, mkdir/rmdir-based, 10s stale threshold).
+  Adds `proper-lockfile@^4.1.2` as a runtime dependency.
+
+### Fixed — spawn timeout SIGKILL fallback ([#99](https://github.com/mainion-ai/memory-kernel-dev/issues/99))
+
+- `callClaude` in `src/llm.ts` no longer hangs indefinitely when the
+  Claude CLI child traps SIGTERM. Pre-fix, the wrapping promise resolved
+  only via `proc.on('close')`, so a misbehaving child that absorbed
+  SIGTERM left the parent stuck. Post-fix, SIGTERM is followed by a
+  5-second SIGKILL grace and the promise rejects immediately on timeout
+  regardless of child exit state. `callOllama` already had the correct
+  `AbortController` pattern and is unchanged.
+
+### Fixed — `listAtoms` stderr warnings on corrupted atom files ([#100](https://github.com/mainion-ai/memory-kernel-dev/issues/100))
+
+- `listAtoms` in `src/store.ts` now writes a stderr line for every
+  parse failure, not just `EncryptionKeyMissingError`. Pre-fix, a
+  malformed YAML / missing-frontmatter / truncated atom silently dropped
+  out of recall and views with no signal. Format: `mk: warning: failed
+  to parse <relativePath>: <ErrorClassName>: <message> — skipping`. The
+  encryption-key-missing branch retains its specific user-actionable
+  message.
+
+## [1.23.2] — 2026-05-19
+
+### Fixed — privacy filter for the FTS recall path ([#135](https://github.com/mainion-ai/memory-kernel-dev/issues/135))
+
+- `searchFts`, `getTermDocumentFrequencies`, and `getAtomsMatchingTerm`
+  now JOIN against the `atoms` table and exclude SECRET/PERSONAL rows,
+  mirroring the predicate already applied in `queryIndex` and
+  `getAllEmbeddings` ([#134](https://github.com/mainion-ai/memory-kernel-dev/pull/134)).
+  Closes the lexical sibling of the semantic side-channel that PR-6 sealed:
+  pre-fix, a SECRET atom with a dominant BM25 rank could shift the
+  normalized scores of visible TEAM atoms downstream in `src/recall.ts`,
+  and IDF damping / coverage-boost computations counted SECRET docs in
+  the corpus statistics. Post-fix, document frequency is computed over
+  the visible corpus only. NULL-classification atoms (legacy
+  pre-classification rows) remain visible.
+
+### Fixed — store-file permissions tightened to 0o600 ([#138](https://github.com/mainion-ai/memory-kernel-dev/issues/138))
+
+- `events.ndjson`, view files (`INDEX.md`, `HANDOFF.md`, `CONSTRAINTS.md`,
+  etc.), and `observations.md` are now written with mode `0o600` on POSIX
+  hosts. PR-7 ([#137](https://github.com/mainion-ai/memory-kernel-dev/pull/137))
+  chmoded SECRET atom files and the SQLite index; this PR extends the
+  defense to the remaining plaintext store files. The event envelope
+  (`atom_refs`, `agent_id`, `session_id`, `touched_paths`) is plaintext
+  even when SECRET atom bodies are encrypted, so the file mode protects
+  against the existence-leak of SECRET atom IDs. Stores created before
+  v1.23.2 are upgraded automatically on the next `appendEvent` /
+  `compactLog` / `writeView` call. Windows: `fs.chmodSync` is a no-op;
+  same caveat as PR-7. Test assertions skip on Windows.
+
+## [1.23.1] — 2026-05-19
+
+### Fixed — wrapper-drift false positive on the mk binary itself
+
+- `mk doctor`'s `wrapper-drift` check ([#160](https://github.com/mainion-ai/memory-kernel-dev/pull/160))
+  no longer flags the mk binary (`#!/usr/bin/env node`) as a "hand-rolled
+  wrapper." The broadening in #158/1.23.0 pulled in any script whose
+  body matched `looksLikeMkInvocation` — but the mk binary's own source
+  contains `mk render`/`mk reflect` strings (help text, self-calls), so
+  it matched too. A test installation hit this in the 1.23.0 dogfood
+  (`/home/<user>/.npm-global/bin/mk` flagged as hand-rolled).
+- Phase-5 script resolution in `discoverWrappers()` now also requires the
+  candidate to be a shell script. New exported helper
+  `isShellScript(content)` parses the first-line shebang, takes the
+  basename of the final whitespace-separated token, and checks against
+  `{sh, bash, zsh, dash, ksh, ash, fish}`. The mk binary's `node`
+  shebang fails this check; bash/sh wrappers (both mk-generated and
+  hand-rolled) pass.
+
+### Known limitation
+
+- Shell scripts with no shebang line are no longer detected as wrappers.
+  Caught during review of #160. Workaround: add
+  `#!/usr/bin/env bash` (or any shell shebang) to the top of the script.
+  A future PR could add a fallback heuristic on file extension
+  (`.sh`/`.bash`) if this turns out to matter in practice.
+
+## [1.23.0] — 2026-05-19
+
+### Changed — wrapper-drift now flags hand-rolled wrappers
+
+- `mk doctor`'s `wrapper-drift` check ([#158](https://github.com/mainion-ai/memory-kernel-dev/pull/158))
+  used to be silent when a discovered wrapper script didn't carry the
+  `# mk:generator-version=` header from `mk init --cron`. After the
+  dogfood run on 2026-05-19, a hand-rolled `~/mk-memory/memory-sync.sh`
+  was working but invisible to the check — exactly the case the check
+  exists to catch. The check now emits two kinds of warning:
+  - mk-generated wrapper, older than binary → existing
+    `mk init --cron --update` hint.
+  - hand-rolled wrapper, no mk: header → new
+    `regenerate with mk init --cron so future drift can be detected` hint.
+- `discoverWrappers()` now also resolves script references that match the
+  `looksLikeMkInvocation` heuristic, not just ones carrying the mk-generated
+  header. The `isMkGenerated` flag distinguishes the two downstream.
+- The crontab itself (source `"crontab -l"`) is excluded from the check
+  so a user crontab full of inline `mk reflect` / `mk render` lines
+  doesn't get flagged as a "wrapper" — only the referenced script files do.
+
+### Notes
+
+- A test installation on 2026-05-19 ran 1.22.0 with the previous (header-less)
+  `memory-sync.sh` and got a `healthy: true` from `mk doctor` despite
+  being one binary upgrade away from a silent flag-rename breakage.
+  Upgrading to 1.23.0 and re-running `mk doctor` will now surface the
+  recommendation to regenerate via `mk init --cron --force`.
+
+## [1.22.0] — 2026-05-19
+
+### Fixed — fill-mode type-aware selection (#154)
+
+Fill mode (the default for `mk render`, used by every cron job) sorted atoms
+by recency and greedily filled the token budget — so on stores with many
+recent belief atoms (developmental arcs, reflections), facts/decisions/
+procedures/preferences were starved out and the rendered CLAUDE.md was a
+belief monoculture. The monoculture warning (PR #146) detected the problem
+but couldn't fix it. This had been broken for 30+ days on the active
+deployment fleet.
+
+Fill mode now routes through the same two-pass type-aware budget algorithm
+as task-driven recall (`src/recall.ts`):
+
+- **Pass 1 — reserve per type:** guarantee per-type token quotas (scaled to
+  ≤ 30% of total budget via `MAX_RESERVATION_RATIO`).
+- **Pass 2 — fill remainder:** fill the remaining budget by recency from
+  atoms that did not get a reserved slot.
+
+The two-pass implementation was extracted from `src/recall.ts` into a new
+`src/budget.ts` module so both callers (recall and render) share one
+algorithm. The Pass-2 tie-breaker is parameterised (score for recall,
+recency for fill render).
+
+### Added
+
+- New `type_reservations` field on per-agent `render.yaml`:
+  ```yaml
+  type_reservations:
+    decision: 800
+    fact: 1200
+    procedure: 600
+    constraint: 400
+    conflict: 400
+    preference: 400
+    belief: 4000
+  ```
+  Empty/missing → falls back to `DEFAULT_FILL_TYPE_RESERVATIONS` from
+  `src/schema.ts`, which covers all 8 atom types.
+- `RenderClaudeMdOptions.typeReservations` — programmatic override.
+- `src/budget.ts` — public `selectAtomsWithReservations(atoms, maxTokens,
+  reservations, pass2Mode)`.
+
+### Changed — `recall()` no-task ordering
+
+When `recall()` is called without a `task` query and the score map is empty
+(constitution-pipeline-style callers), the budget helper now orders atoms by
+`updated_at` descending rather than by the upstream `status-priority +
+temporalDecay(created_at)` order that the pre-refactor single-pass greedy
+fill preserved. Functional tests all pass for both orderings; callers that
+need the prior behaviour can pass an explicit score map derived from
+status-priority and decay to force `mode: 'score'`.
+
+### Fixed — `parseRenderStats` undercounted arc-rendered beliefs
+
+The monoculture warning's parser counted only `### atom-id` headings. Belief
+developmental arcs render their entries as `**ATOM-ID**` bullets (indented
+under an `### Arc:` header), so an arc-heavy store rendered correctly but
+the warning still fired with bogus low counts. The parser now recognises
+atom IDs by their `generateAtomId()` shape (`TYPE-YYYY-MM-DD-...`) in both
+`### ID` and `**ID**` contexts, and skips the structural `### Arc:` and
+`### Standalone beliefs` subheadings.
+
+## [1.21.1] — 2026-05-18
+
+### Fixed — post-merge review of #146 / #149 / #150 / #151
+
+Four issues surfaced by the code-review pass over the 1.21.0 release cohort.
+All are bug fixes — no public API changes.
+
+- **`applyCrontabLine` no longer destroys sibling crontab entries on path-prefix collision (#149 follow-up).**
+  The previous implementation matched the target script path with `.includes()`,
+  so `mk init --cron --install-cron --output /home/me/memory-sync.sh` would
+  silently overwrite an unrelated `/home/me/memory-sync.sh.bak` entry. The
+  match now requires the path to appear as a whole shell token (bounded by
+  whitespace, quotes, or line ends), so siblings with `.bak` / `-disabled`
+  suffixes are left alone. The function's docstring previously claimed
+  "exact match"; the code now matches that contract.
+
+- **`extractScriptPaths` discovers wrappers under paths that contain spaces (#150 follow-up).**
+  The path-extraction regex excluded spaces, so a LaunchAgent plist pointing
+  at `~/Library/Application Support/mk/sync.sh` (the common location on macOS)
+  was truncated at the first space and the wrapper was missed by
+  `mk doctor`'s wrapper-drift check. The extractor now handles three
+  encodings: bare unquoted paths, single/double-quoted paths, and
+  `<string>...</string>` plist elements.
+
+- **Release workflow now enforces CLAUDE.md's five-place version rule (#151 follow-up).**
+  The "Verify tag matches `package.json`" step is replaced by
+  "Verify all five release-version places agree", which checks the tag
+  against `package.json`, both `package-lock.json` entries (top-level +
+  `packages[""].version`), the `packages/openclaw-memory-kernel/package.json`
+  `memory-kernel` dep pin (must be `^X.Y.Z`), and the presence of a
+  `## [X.Y.Z]` heading in `CHANGELOG.md`. Any mismatch fails the job before
+  publishing. `RELEASING.md` TL;DR and rollback sections were rewritten to
+  list all five steps and link to CLAUDE.md > Versioning.
+
+- **`src/deprecations.ts` docstring no longer cites a non-existent flag (#146 follow-up).**
+  The constraint comment on `DEPRECATED_FLAGS` referenced `mk remember --text --fill`,
+  but `mk remember` takes the body as a positional argument and has no `--text`
+  flag. The docstring is updated to describe the real footgun
+  (`mk remember "--fill is removed"` losing the `--fill` token) and the
+  documented workarounds.
+
+### Internal
+
+- `packages/openclaw-memory-kernel/package.json` `memory-kernel` dep pin
+  bumped from `^1.20.0` to `^1.21.1`, restoring the lockstep convention
+  documented in CLAUDE.md > Versioning.
+
+## [1.21.0] — 2026-05-18
+
+### Added — CLI hardening + agent ops tooling
+
+Four features landed in this release, all addressing fleet-drift patterns
+observed on the active deployment fleet in May 2026 (#140, #141, #142 upstream half, #143).
+
+- **Stderr deprecation warnings + degenerate-output guard (#141, [#146](https://github.com/mainion-ai/memory-kernel-dev/pull/146)).**
+  New `src/deprecations.ts` runs against `process.argv` before commander
+  parses. Removed flags get stripped with a one-line stderr hint instead of
+  a bare "unknown option" error. Seeded with `--fill` (removed in 1.18.9).
+  Honors `MK_NO_DEPRECATION_WARNINGS` / `MK_QUIET`. `mk render` also gains
+  an empty-output and monoculture-output stderr warning — the silent-success
+  case that left a test installation's CLAUDE.md empty for 30 days.
+
+- **`mk init --cron` — canonical memory-sync wrapper generator (#143, [#149](https://github.com/mainion-ai/memory-kernel-dev/pull/149)).**
+  `mk init --cron --dir <mem> --claude-md <out> --output <script>` emits
+  the canonical shell wrapper (`reflect → render → git commit + push`) with
+  machine-parseable `# mk:KEY=VALUE` header lines. `--update` regenerates
+  in place, inheriting paths from the existing header. `--install-cron
+  "0 23 * * *"` idempotently adds/replaces the matching crontab line.
+  `--force` for explicit overwrites. Eliminates the hand-rolled wrapper
+  drift that affected a host on the 1.18.9 upgrade.
+
+- **`mk doctor` orchestrator + drift/store/render-config checks (#140, [#150](https://github.com/mainion-ai/memory-kernel-dev/pull/150)).**
+  `mk doctor` is now a check-registry orchestrator that runs seven checks
+  by default: `atom-schema`, `broken-links`, `active-conflicts`,
+  `store-schema`, `store-permissions`, `render-config`, `wrapper-drift`.
+  Exit codes 0/1/2 (healthy/warn/error). `--skip wrappers|network|cron|
+  store` excludes categories. `--json` output is backward-compatible
+  (kept `{ healthy, issue_count, issues }`, added `checks: []` alongside).
+  New `src/doctor/discover-wrappers.ts` scans crontab, /etc/cron.\*,
+  `~/Library/LaunchAgents/`, `~/.config/systemd/user/`,
+  `/etc/systemd/system/`; the `wrapper-drift` check flags any
+  mk-generated wrapper whose embedded version (from #143's header) is
+  older than the running binary.
+
+- **Release workflow with provenance (#142 upstream half, [#151](https://github.com/mainion-ai/memory-kernel-dev/pull/151)).**
+  `.github/workflows/release.yml` runs on `v*` tag push: full tests →
+  tag/version sanity check → `npm publish --provenance --access public` →
+  `gh release create --generate-notes`. Sigstore-signed via GitHub Actions
+  OIDC. Operator doc in [`RELEASING.md`](./RELEASING.md). npm publish is
+  dormant until OIDC trusted-publisher setup completes on npmjs.com —
+  tracked in [#152](https://github.com/mainion-ai/memory-kernel-dev/issues/152).
+
+### Backward-compatibility note
+
+- `mk doctor -d /nonexistent --json` now exits **2** (was 1). Per the
+  0/1/2 exit-code spec from #140: a missing memory dir is a hard runtime
+  error, not a content issue. Updates needed in any consumer that depends
+  on the prior behavior. The healthy/warn paths are unchanged.
+
+### Sequencing
+
+These four PRs follow a deliberate order — #141 (catches drift at the
+moment of failure), then #143 (eliminates the hand-rolled wrappers
+that produce drift), then #140 (audits + flags wrappers via the headers
+#143 writes), then #142 upstream (ships releases that downstream hosts
+can consume). The downstream half of #142 (per-host poller) is gated
+on #152.
+
+## [1.20.0] — 2026-05-18
+
+### Performance
+- KNN search now uses dot product on pre-normalized vectors instead of
+  cosine similarity (#95). New vectors are stored unit-norm; legacy rows
+  are lazily normalized on first read and written back. The hot loop in
+  `recall()` skips per-iteration `sqrt`. Empirically ~20-30% faster wall-
+  clock on 10k atoms; same top-K within float tolerance.
+- `atom_embeddings.normalized` column added via idempotent `ALTER TABLE`
+  (no schema-version bump — additive migration, safe on existing DBs).
+  The new column is also preserved across `reindex()` so the lazy
+  migration runs at most once per row.
+
+### Added
+- `normalizeVector(v)` and `dotProduct(a, b)` exported from `memory-kernel`.
+
+### Notes
+- First `recall()` after upgrade may trigger a one-time write-back of
+  up to 10k rows as legacy un-normalized vectors are migrated. Bounded
+  by `MAX_EMBEDDINGS_FOR_KNN` and run inside a single transaction.
+
+## [1.19.2] — 2026-05-18
+
+### Performance
+- `extractCitations` and `indexCitations` now compile each concept-name
+  regex once via a new internal `compileConceptRegexes` helper (#94).
+  Drops total `new RegExp()` calls from O(sources × targets) to O(targets).
+  At N=10k atoms with ~3 concept names per atom, that's ~30M compiles
+  dropped to ~30k — empirically ~10× faster on the citations hot path.
+  Also drops a redundant `body.toLowerCase()` step (the `i` flag on the
+  compiled regex handles case folding).
+
+## [1.19.1] — 2026-05-18
+
+### Performance
+- `embedAllAtoms` now bulk-loads all `body_hash` rows in a single SELECT
+  instead of issuing one SELECT per atom (#93). At N=10k atoms the
+  staleness-check phase drops from ~10k round-trips to 1 — empirically
+  ~10× faster wall-clock on the embed-sync hot path.
+
+## [1.19.0] — 2026-05-18
+
+### Breaking
+- **Public API surface tightened (#90).** The following symbols are no longer
+  exported from `memory-kernel` (still available via direct module import
+  for in-repo use):
+  - From `./index-db`: `indexAtom`, `removeFromIndex`,
+    `getTermDocumentFrequencies`, `getCorpusSize`, `getAtomsMatchingTerm`,
+    `indexEpisode`, `removeEpisodeFromIndex`, `searchEpisodeFts`
+  - From `./llm`: `callLLM`, `resolveProvider` (use the feature wrappers
+    `extractFromLog`, `observeConversation`, `enrichRelations`,
+    `confirmConflictWithLLM` instead). The `LLMProvider` and `CallLLMOptions`
+    types remain exported for advanced consumers wiring custom providers.
+  - From `./relink`: `ATOM_ID_PATTERN` — replaced by the factory
+    `createAtomIdPattern()` which returns a fresh stateless regex per
+    call (eliminates the `lastIndex` reset footgun).
+
+### Changed
+- `RenderClaudeMdOptions.typeWeights` is now typed
+  `Partial<Record<AtomType, number>>` (was `Partial<Record<string, number>>`).
+  Two unsafe `as any` casts in `src/render.ts` removed.
+
+## [1.18.9] — 2026-05-17
+
+### Security
+
+- **Random PBKDF2 salt per encrypted file (#96):** SECRET atom encryption now uses a 16-byte random salt per file embedded in a new `MKENC:v2` envelope (`MKENC:v2:<salt>:<iv>:<payload>`). Two installations using the same passphrase no longer derive the same key. Backward compatibility for the legacy `MKENC:v1` envelope is preserved on read — old files continue to decrypt. New `encryptAtomWithCredential` / `decryptAtomWithCredential` exports in `src/crypto.ts` are the credential-string API; legacy `encryptAtom` / `decryptAtom` / `resolveKey` are retained as `@deprecated` (bodies unchanged) so existing tests and external consumers keep working. The four production callers in `src/store.ts`, `src/retain.ts`, and `src/replay.ts` now use the credential API.
+- **SECRET file mode 0o600 (#97):** `writeFileAtomic` accepts an optional `mode` parameter. `writeAtom` passes `0o600` for SECRET-classified atoms and follows with a defense-in-depth `fs.chmodSync` (try/catch-wrapped). The SQLite index file (`.memory-index.db`) and its `-wal` / `-shm` sidecars (when present) are chmoded `0o600` inside `openIndex` / `openIndexRaw`. Non-SECRET file modes unchanged.
+
+## [1.18.8] — 2026-05-17
+
+### Security
+
+- **Privacy filter on embedding store (#87):** `getAllEmbeddings` now excludes SECRET and PERSONAL atoms at the SQL layer (JOIN to `atoms` with classification predicate). Prevents SECRET/PERSONAL atoms from donating semantic-similarity scores to visible neighbors via the recall graph-boost. Mirrors the same filter already applied in `queryIndex`.
+- **Prompt-injection escape on LLM ingestion (#88):** `src/extract.ts` and `src/observe.ts` now wrap user-controlled conversation text in a `<document>` boundary and XML-escape `<`/`>` in the body before inserting into the LLM prompt. Hostile inputs containing `</document>\nIgnore previous instructions` can no longer close the boundary early. observe.ts gains the boundary it lacked. Shared helper `escapeXmlBoundary` lives in `src/store.ts`; prompt construction extracted into testable `buildExtractPrompt` / `buildObservePrompt` helpers.
+
+### Deferred
+
+- **#89 CLI output containment — wontfix.** `render` and `export-obsidian` are intentionally projection commands that write outside the memory dir. Strict `assertWithinDir(memoryDir, …)` would break their purpose. Containment remains enforced on store-mutation commands. See [#89](https://github.com/mainion-ai/memory-kernel-dev/issues/89) for the close-out rationale.
+
+## [1.18.7] — 2026-05-17
+
+### Fixed — Transaction wrappers for index operations (#85)
+
+Three multi-statement write paths in `src/index-db.ts` now run inside a single `db.transaction(...)`, eliminating partial-state hazards when a fault interrupts the block mid-flight.
+
+- **Schema upgrade block.** The DROP/CREATE/`user_version` sequence in `openIndex` was non-atomic. A crash between the first `DROP TABLE` and the final `user_version` pragma left the index header on the old schema version while the tables were half-rebuilt; the next `openIndex` re-entered the upgrade path and DROPed the partial schema again, destroying any rows the application inserted in the partial-success window. After the fix, the block commits atomically or rolls back fully — the next open sees either the prior schema fully intact or the new schema fully built.
+
+- **`removeFromIndex`.** Three sequential `DELETE`s against `atoms`, `atom_fts`, and `atom_embeddings` are now one transaction. A throw on any DELETE rolls back the prior DELETEs; no more orphan FTS rows or dead vectors after a partial removal.
+
+- **`indexEpisode`.** The DELETE/INSERT FTS upsert is now one transaction. The function still swallows errors silently (FTS is an optimization), but the original episode row is now preserved on INSERT failure instead of silently lost.
+
+- **Regression tests:** `test/index-db-schema-upgrade-crash.test.ts` adds 6 cases — three rollback assertions (one per fix site, using `vi.spyOn` on `Database.prototype.prepare`/`exec` to inject mid-block faults) and three happy-path regression guards.
+
+### Public API
+
+No signature changes. `removeFromIndex`, `indexEpisode`, and `openIndex` keep identical public types and externally observable success-case behavior. The change is only visible under fault injection or real crash recovery.
+
+## [1.18.6] — 2026-05-17
+
+### Fixed — TOCTOU race in concurrent supersede (#107)
+
+- **CAS guard in `detectAndResolveConflicts`.** Two parallel `mk extract` runs could both confirm a Tier-2 conflict against the same active atom and both call `supersedeAtoms` — leaving two atoms each holding a redundant `supersedes` relation pointing at the same target. `findCandidateConflicts` already filters out non-active candidates at Tier-1, so the race window was narrowly the Tier-1-query → supersede-write gap, dominated by the Tier-2 LLM latency (seconds).
+
+  The fix re-reads the candidate atom's `status` from the index immediately before the supersede write. If the status is no longer `'active'`, the resolution is recorded as the new `stale_decision` action and the supersede is skipped. Race window collapses from human-scale (LLM call) to a single function-call gap (microseconds).
+
+- **Regression tests:** `test/conflict-detect-toctou.test.ts` adds 3 cases — race-skip path (mocked LLM mutates candidate status mid-call), `supersede_failed` disambiguation (file deleted, status unchanged), and happy-path regression guard.
+
+### Added
+
+- **`ConflictAction` enum** gains `'stale_decision'`. Distinguishes "skipped because preconditions changed between detection and write" from `'supersede_failed'` (write attempted, threw). The new value is additive; existing callers that switch on `ConflictAction` will hit their default branch until they opt in.
+
+### Public API
+
+No signature changes. `supersedeAtoms` kernel function semantics unchanged — the CAS check lives in the orchestrator (`detectAndResolveConflicts`) because only the orchestrator has Tier-1 evidence that the candidate was active when picked.
+
+## [1.18.5] — 2026-05-17
+
+### Fixed — crash atomicity in the write path (#84)
+
+- **Event-first write ordering** for `createAtom`, `updateAtom`, `archiveAtom`, and `resolveConflict` in `src/retain.ts`. Previously these functions performed the file/index mutation BEFORE appending the v2 event, so a crash between the two steps left the file system in the new state but the event log without a record — replay could not reconstruct the mutation. Worst case was `archiveAtom`, which `unlinkSync`'d the source file before `appendEvent`; a crash there destroyed atom data with no recovery path.
+
+  New ordering: emit the v2 event with full atom snapshot FIRST, then perform the file mutation (and unlink, for archive/resolve), then update the index. On crash at any point after the event append, the event log alone is sufficient for replay to reconstruct.
+
+- **`createAtom` collapsed from a 2-write pass to 1-write.** Auto-relink (body-reference + concept-name extraction) now runs before event emission so the snapshot already carries extracted relations; eliminates the redundant `writeAtom` + `indexAtom` pass that previously happened post-relink.
+
+- **Regression tests:** `test/retain-crash-atomicity.test.ts` adds 5 cases using `fs.renameSync` / `fs.unlinkSync` spies to simulate mid-operation crashes and verifies the event log contains the snapshot in each scenario.
+
+### Public API
+
+No signature changes. Behavioral change only: events now represent intent (pre-mutation commit) rather than fact (post-mutation acknowledgment) — but since v2 events carry the full snapshot inline, replay semantics are unchanged.
+
+## [1.18.4] — 2026-05-16
+
+### Fixed
+
+- **Archive basename collision** (#86). `src/reflect.ts` previously used `path.basename(filePath)` as the archive destination across `processExpiry`, `dedupById`, and body-content `dedup`. Two atoms whose source files share a basename (e.g. a manually-imported `CONFLICTS/foo.md` and `ENTITIES/foo.md`) would silently overwrite each other in `ARCHIVE/`. Fix: prefix the archive filename with the atom ID via a new `archiveDestination()` helper; regression test in `test/reflect-archive-collision.test.ts` covers all three call sites.
+
+### Changed — documentation
+
+- **README lifecycle clarification** (#92). The "Lifecycle" paragraph previously said `reflect` "promotes them to active", which conflated two distinct promotions. `reflect` auto-promotes beliefs with confidence ≥ 0.9 to facts (type promotion, file renamed). `mk consolidate` separately promotes draft atoms of any type to active (status promotion, manual review). Both mechanisms now spelled out explicitly.
+- **CHANGELOG backfill** (#92). The previous `## [Unreleased]` section actually described what shipped in v1.18.3 (rename `container/skills/` → `skills/`, lifecycle-atom seeding, host-aware setup, mk-doctor universal checks). Promoted the section to `## [1.18.3] — 2026-05-16` and added the missing render/extract/supersede commits that landed between v1.18.2 and v1.18.3.
+
+## [1.18.3] — 2026-05-16
+
 ### Changed — repository layout
 
 - **Renamed `container/skills/` → `skills/`.** Both `mk-memory-setup` and `mk-doctor` are host-side skills (run via Claude Code on the operator's machine, not inside a container), so the old location was misleading; `container/` was empty otherwise. No npm-package impact — the published `memory-kernel` package only ships `dist/`, `README.md`, and `LICENSE`.
@@ -18,6 +785,94 @@ All notable changes to this project will be documented in this file.
 - **`mk-memory-setup` now seeds 8 lifecycle atoms** (7 procedure + 1 constraint) so the agent's operating manual lives inside memory-kernel itself and is recallable per task — see `skills/mk-memory-setup/seed-atoms/lifecycle/`. The `seed-atoms/seed-lifecycle.sh` script is the canonical entry point.
 - **`mk-memory-setup` is now host-aware.** SKILL.md auto-detects (or asks) whether the host is NanoClaw, OpenClaw, an MCP client (Claude Desktop, Cursor, Continue), or generic, and routes to the matching `references/<host>.md`. Universal core (install CLI, init store, seed atoms, cron) stays in SKILL.md; host-specific plumbing lives in references.
 - **`mk-doctor` adds three universal checks:** `mk lint` (semantic health), `mk closure --trajectory` (drift detection), and a lifecycle-atom audit (catches agents bootstrapped before lifecycle seeding existed). Host-specific checks branch on detected host.
+
+### Fixed — render + extract + supersede hardening
+
+- **`mk render` defaults to `--fill` mode** so generated CLAUDE.md surfaces all eligible atoms instead of the prior token-budgeted slice. Adds `procedure` type to the render pipeline and a catch-all branch for unknown types (#79).
+- **`renderAgentClaudeMd` no longer drops the fill flag** when called from per-agent isolation paths; fuzzy-arm cap restored after range-review (#79).
+- **Path boundary bug fixed in SQL index queries**; test alignment for unconditional indexing.
+- **Semantic conflict detection for `mk supersede`** (#75, #77) — extends the Tier-1/Tier-2 conflict pipeline from `mk extract` to the supersede flow.
+- **`mk extract` PR review fixes** — path traversal guard, stdin handling restored, vacuous check removed.
+- **`mk render --fill` + TTL backfill script** smoke-test stabilization.
+- **Test reliability:** replaced `setTimeout`-based backdating in conflict-detect tests with deterministic timestamp manipulation.
+
+## [1.18.2] — 2026-05-13
+
+### Fixed — semantic conflict detection durability (#77 review)
+
+- **`reindex()` no longer wipes `entity_triples`.** Triples are LLM-extracted at ingestion and are not serialized in atom markdown, so the previous behaviour (clear without repopulate) silently destroyed all triple data and disabled Tier-1 conflict detection on every `mk reindex`. Triples are now snapshotted to a temp table at the start of reindex and restored at the end for atoms that still exist (orphaned triples are dropped, matching the embedding-preservation pattern in the same transaction).
+- **`findCandidateConflicts` now excludes `expired` atoms** in addition to `superseded` and `archived`, bringing it in line with `queryIndex()` / `wander` and the rest of the active-status convention. Previously an expired atom could be returned as a conflict candidate and silently auto-superseded.
+
+## [1.18.1] — 2026-05-13
+
+### Added — semantic conflict detection for `mk extract`
+
+- **Semantic conflict detection pipeline inside `mk extract`** (#75). New two-tier pipeline runs automatically after atoms are written:
+  - **Tier 1:** entity-triple extraction (LLM emits a `triples` field per candidate atom) and deterministic SQL matching on `(subject, predicate)` pairs with a disagreeing object value.
+  - **Tier 2:** cheap LLM confirmation per Tier-1 candidate via `callLLM()` (temperature 0, capped at 150 tokens).
+  - Confirmed conflicts automatically invoke `supersedeAtoms()` so the older atom is superseded by the newer one. Direction: newer-supersedes-older only.
+- **New SQLite table `entity_triples`** (schema v8 — existing indexes auto-rebuild on first open).
+- **New public API:** `detectAndResolveConflicts`, `confirmConflictWithLLM`, `insertTriples`, `getTriplesForAtom`, `findCandidateConflicts`; types `EntityTriple`, `TripleInput`, `ConflictCandidate`, `ConflictResolution`, `ConflictAction`.
+- **New CLI flags on `mk extract`:** `--no-conflict-detect` (disable the pipeline), `--conflict-confirm-model <model>` (override Tier-2 confirmation model).
+- **`ExtractResult` gains `conflicts: number`** (count of `action === 'superseded'`); **`ExtractedAtomResult` gains optional `conflicts: ConflictResolution[]`**.
+
+## [1.18.0] — 2026-05-12
+
+### Added — structured preference ingestion
+
+- **`mk extract` and `mk observe` now ingest preferences as structured atoms.** `CandidateAtom` gains three new optional fields — `subject?`, `preference?`, `context?` — populated by the LLM when a preference signal ("I prefer…", "my favorite…", "I always/never…") is detected. The extraction prompt asks the model to produce these fields explicitly; the runtime canonicalizes the body into a `## Preference` / `**Subject:** …` / `**Preference:** …` / `**Context:** …` template so all preference atoms share one queryable shape. The observer prompt was updated with explicit `PREFERENCE:` markers and concrete examples to keep the two pipelines aligned.
+- **Automatic `subject:<topic>` tag** is appended to every preference atom that has a `subject`. Topics are slugified with `[^a-z0-9]+` → `-` (matching `slugExists()`), so subjects like `"C++ / Rust (systems)"` produce a clean `subject:c-rust-systems` tag. Empty slugs after normalization are skipped — no `subject:` tag without a topic.
+
+### Fixed — review-driven hardening of the new preference path
+
+- **FTS possible-duplicate detection now queries the stored body.** Previously `checkPossibleDuplicate` ran against `candidate.body` *before* preference enrichment, so a re-extracted preference would query raw LLM text against an index built from the structured template — and miss. Moved the check to run on the final `body` variable so the query text matches what's indexed.
+- **LLM-supplied `subject` / `preference` / `context` are sanitized before template interpolation.** A new internal `sanitizeField()` collapses `\r`, `\n`, and `\t` runs to a single space and trims. An LLM returning a value with a literal newline can no longer inject extra `**…:**` marker lines into the preference body; the body always has exactly three structural lines under `## Preference`.
+- **Subject-tag normalization tightened.** The previous `subj.toLowerCase().replace(/\s+/g, '-')` only handled whitespace, so `"C++"` or `"food & drink"` produced malformed tags with raw `+`, `&`, `/`. Now uses the same character class as `slugExists()` and trims leading/trailing hyphens.
+
+### Public API
+
+- `src/types.ts` — `CandidateAtom` adds optional `subject?`, `preference?`, `context?`. Existing extractors that don't set these fields continue to work unchanged; the enrichment block only fires when both `subject` and `preference` are populated.
+
+### Tests
+
+- New tests in `test/extract.test.ts`: structured body generation, original-body fallback when fields are absent, kebab-case subject-tag normalization, special-character slugification (`C++ / Rust (systems)` → `subject:c-rust-systems`), and control-character sanitization (rejects `subject: "coffee\n**Injected:**"` injection). Suite: 1170 → 1176 passing.
+
+## [1.17.1] — 2026-05-12
+
+### Fixed — error-handling polish on `mk supersede` / `mk relate`
+
+- **`findAtomFile` in both `mk supersede` and `mk relate` now surfaces caught errors on stderr** instead of silently swallowing them. SQLite corruption, `better-sqlite3` ABI mismatches, permission errors, and malformed atom files were previously hidden behind a silent fallthrough to file scan; the user now sees `⚠ Index query failed for <id> (<msg>); falling back to file scan.` or `⚠ Skipped unreadable atom file <path>: <msg>`. The fallback to file scan still runs — the change is observability-only.
+- **`mk relate`'s mutation block is now wrapped in `try/catch → exitWithError`**, matching `mk supersede`. Previously `assertWithinDir`, `writeAtom`, or `indexAtom` throws would surface as raw Node stack traces; they now exit cleanly with the same error format as the rest of the command.
+- **`mk supersede`'s CLI catch handles non-`Error` throws** (`err instanceof Error ? err.message : String(err)`) instead of producing `undefined` for callers that `throw` strings or non-`Error` values.
+
+### Internal
+
+- **`mk supersede` writeAtom→appendEvent ordering hazard documented** inline at the V2-events block in `src/cli/supersede.ts`. The order matches the project-wide convention in `src/retain.ts`; a crash between the two leaves disk ahead of the log until the next supersede run repairs the half via the existing idempotency contract.
+- **Comment cleanup in `src/cli/supersede.ts`** to align with the "WHY-only" project convention: removed the file header, the `exitWithError` JSDoc, the `dryRun?` JSDoc, the "Re-index whichever..." inline comment, and the bug-history paragraph from `registerSupersedeCommand`. Shortened `supersedeAtoms` and `findAtomFile` docstrings; resolved the duplicated idempotency comment.
+- **New test coverage in `test/supersede.test.ts`** — `findAtomFile` index-absent fallback (deletes `.memory-index.db` mid-test), SECRET-atom integration (verifies `atom_snapshot` is encrypted and plaintext bodies don't leak into events), and symmetric event-count assertion on the repair-missing-status partial-state test. Path-traversal test now matches the stable `Path traversal denied` substring instead of the brittle `/outside|escape|directory/i` regex. Supersede test count: 9 → 14, total suite 1103/1103 passing.
+
+## [1.17.0] — 2026-05-12
+
+### Added — `mk supersede` hardening
+
+- **`mk supersede` now emits V2 mutation events** with `schema_version: 2` and `atom_snapshot`, restoring the `compactLog` invariant (the post-supersede atom state can be reconstructed from the event log alone). Previously both `appendEvent` calls used V1 format and broke replay determinism.
+- **New `--agent-id`, `--session-id`, and `--dry-run` flags** on `mk supersede`. Event payloads now carry the real agent/session instead of the hardcoded `'cli'` / `'mk-supersede'`. `--dry-run` reports planned changes without writing files or appending events.
+- **Independent idempotency for both halves of supersede.** Re-running `mk supersede A B` after a partial-state crash (e.g. old marked superseded but new missing its `supersedes` relation, or vice versa) now repairs whichever half is missing instead of returning early.
+- **`supersedeAtoms()` exported as a pure function** from `src/cli/supersede.ts` for programmatic use and direct testing.
+- **`snapshotAtom()` exported from the package barrel** (`src/index.ts`) so CLI commands and downstream consumers can produce SECRET-aware event snapshots without re-implementing the helper.
+
+### Fixed — defense-in-depth on relation writes
+
+- **`mk supersede` and `mk relate` now call `assertWithinDir(memoryDir, file)` before every `writeAtom`.** Both commands derive file paths from user-supplied atom IDs via index lookup or scan; the guard prevents a corrupted index from steering writes outside the memory tree.
+- **`mk relate` now stamps `frontmatter.updated_at` on relation additions**, matching the convention enforced in `src/retain.ts`. Previously the on-disk timestamp drifted away from the actual last-mutation time.
+
+## [1.16.1] — 2026-05-12
+
+### Fixed — superseded atoms excluded from active views
+
+- **Exclude `superseded` atoms from default filters** across `renderers.ts` (CLAUDE.md render), `recall.ts` (file-scan recall), `index-db.ts` (indexed recall), and `wander.ts` (spreading activation). Previously, superseded atoms rendered live alongside their canonical successors and showed up in recall/wander results, defeating the point of supersession. Default views now hide them; explicit `query.statuses: ['superseded']` still retrieves them.
+- **`filterAtoms` (file-scan recall) now honours explicit status filters.** The default `archived`/`expired`/`superseded` exclusion was previously unconditional, so callers passing `query.statuses: ['superseded']` got zero results from the file-scan path while the index path correctly returned them. Both paths now share the same gate — exclusion only applies when no explicit `statuses` filter is given.
+- **`buildGraphFromFiles` (wander file-scan fallback) now excludes `superseded`.** The index-backed `loadAtomGraph` was updated but the file-scan fallback was missed, creating divergent graph contents depending on whether the SQLite index existed. The two paths now agree, restoring the parity the `wanderFromFiles` docstring promises.
 
 ## [1.16.0] — 2026-04-25
 

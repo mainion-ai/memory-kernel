@@ -17,6 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import { generateGraphConfig } from '../obsidian.js';
 import { listAtoms, writeAtom } from '../store.js';
 
@@ -34,12 +35,10 @@ export function registerObsidianInitCommand(program: Command): void {
     .action((opts: { dir: string; sync?: boolean; json?: boolean }) => {
       const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
-        if (opts.json) {
-          console.log(JSON.stringify({ error: `Memory directory not found: ${memoryDir}` }, null, 2));
-        } else {
-          console.error(`✗ Memory directory not found: ${memoryDir}\n  Run "mk init" first.`);
-        }
-        process.exit(1);
+        exitWithError(
+          `Memory directory not found: ${memoryDir}\n  Run "mk init" first.`,
+          opts.json,
+        );
       }
 
       // Write .obsidian/graph.json

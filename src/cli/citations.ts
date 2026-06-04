@@ -14,6 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import { indexCitations } from '../citations.js';
 
 export function registerCitationsCommand(program: Command): void {
@@ -28,8 +29,7 @@ export function registerCitationsCommand(program: Command): void {
     .action((opts: { dir: string; json?: boolean }) => {
       const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
-        console.error(`✗ Memory directory not found: ${memoryDir}`);
-        process.exit(1);
+        exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }
 
       const result = indexCitations(memoryDir);

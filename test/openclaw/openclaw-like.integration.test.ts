@@ -157,10 +157,12 @@ describe('OpenClaw-like tool surface', () => {
 
     const res = await api.getTool('mk_recall').execute('3', { task: 'TypeScript', types: ['fact'] });
 
-    // The keyword-matching atom should be ranked first by FTS.
-    expect(res.meta.atomCount).toBe(2);
+    // The keyword-matching atom (alpha) is the only one that FTS-matches
+    // "TypeScript". Pre-#214 the Python atom would also surface via the
+    // score-0 fallback — that path is gone. The test now demonstrates FTS
+    // re-ranking by confirming only the actual match appears.
+    expect(res.meta.atomCount).toBe(1);
     const bodies = (res.meta.atoms as any[]).map((a) => a.body as string);
     expect(bodies[0]).toContain('TypeScript');
-    expect(bodies[1]).toContain('Python');
   });
 });

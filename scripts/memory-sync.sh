@@ -7,7 +7,10 @@ set -euo pipefail
 MEMORY_DIR="${MEMORY_DIR:-${HOME}/mk-memory}"
 MEMORY_REPO="${MEMORY_REPO:-$(dirname "$MEMORY_DIR")}"
 KERNEL_REPO="${KERNEL_REPO:-${HOME}/repos/memory-kernel}"
-CLAUDE_MD="${CLAUDE_MD:-${HOME}/nanoclaw/groups/telegram_main/CLAUDE.md}"
+# NanoClaw renders per-group CLAUDE.md files at ~/nanoclaw/groups/<group>/CLAUDE.md.
+# Set CLAUDE_MD to your group's path; the default below is a neutral fallback
+# only useful for single-group setups that symlink to ~/.nanoclaw/CLAUDE.md.
+CLAUDE_MD="${CLAUDE_MD:-${HOME}/.nanoclaw/CLAUDE.md}"
 
 echo "[$(date -Iseconds)] Memory sync starting..."
 

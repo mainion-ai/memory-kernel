@@ -9,7 +9,9 @@ import { countEvents } from './event-log.js';
 import { getAllRelations } from './index-db.js';
 import { isIsolated, resolveAgentDir, loadRenderConfig } from './isolation.js';
 import { listAtoms } from './store.js';
-import type { Atom, RenderConfig } from './types.js';
+import { selectAtomsWithReservations, estimateTokens } from './budget.js';
+import { DEFAULT_FILL_TYPE_RESERVATIONS } from './schema.js';
+import type { Atom, AtomType, RenderConfig } from './types.js';
 
 // --- Belief arc helpers ---
 
@@ -147,65 +149,83 @@ export interface RenderClaudeMdOptions {
   /** Token budget for recall. Default: 16000. Override via MK_RENDER_BUDGET env var. */
   maxTokens?: number;
   /** Per-type score multipliers for recall ranking. */
-  typeWeights?: Partial<Record<string, number>>;
-  /** Fill mode: bypass recall(), load all active atoms sorted by recency up to budget. Default: true. */
+  typeWeights?: Partial<Record<AtomType, number>>;
+  /**
+   * Per-type token reservations for fill mode. Empty/undefined → use
+   * DEFAULT_FILL_TYPE_RESERVATIONS from src/schema.ts.
+   */
+  typeReservations?: Partial<Record<AtomType, number>>;
+  /** Fill mode: bypass recall(), load all active atoms sorted by recency up to budget. */
   fill?: boolean;
 }
 
 /**
  * Render active memory atoms as a CLAUDE.md markdown string.
  * Returns the rendered content — caller is responsible for writing to disk.
- *
- * Defaults to fill mode (greedy recency-sorted atom loading) because task-driven
- * recall returns 0 atoms without a query — a silent footgun that caused empty
- * CLAUDE.md renders for multiple agents. Use fill=false to opt into task-driven recall.
  */
 export function renderClaudeMd(memoryDir: string, opts: RenderClaudeMdOptions = {}): string {
   const maxTokens = opts.maxTokens
     ?? (parseInt(process.env.MK_RENDER_BUDGET || '0', 10) || 16000);
 
-  // Default to fill mode when no explicit opt-out
+  // Default to fill mode when no task/tags/scope query is provided.
+  // Task-driven recall returns 0 atoms without a query — a silent footgun
+  // that caused both Mai and Taj to run with empty CLAUDE.md for weeks.
   if (opts.fill !== false) {
-    return renderFill(memoryDir, maxTokens);
+    return renderFill(memoryDir, maxTokens, opts.typeReservations);
   }
 
   // Explicit fill=false: use task-driven recall (requires a query to find atoms).
   const bundle = recall(memoryDir, {
     max_tokens: maxTokens,
-    type_weights: opts.typeWeights as any,
+    type_weights: opts.typeWeights,
   });
 
   return renderFromAtoms(memoryDir, bundle.atoms);
 }
 
 /**
- * Greedy fill mode: load all active atoms sorted by recency, fill until token
- * budget is exhausted. Does NOT require a task query — suitable for unconditional
- * CLAUDE.md renders (cron, sync).
+ * Fill mode: load all active atoms and route them through the two-pass
+ * type-aware budget helper (`selectAtomsWithReservations`, Pass 2 = recency).
+ * Does NOT require a task query — suitable for unconditional CLAUDE.md
+ * renders (cron, sync).
+ *
+ * Per-type reservations come from `DEFAULT_FILL_TYPE_RESERVATIONS` unless
+ * overridden by the caller (programmatic) or `render.yaml`'s
+ * `type_reservations` field (per-agent).
  */
-export function renderFill(memoryDir: string, maxTokens: number): string {
-  const CHARS_PER_TOKEN = 4;
-
+export function renderFill(
+  memoryDir: string,
+  maxTokens: number,
+  typeReservations?: Partial<Record<AtomType, number>>,
+): string {
   const atoms = listAtoms(memoryDir);
-  const candidates = atoms
-    .filter((a) => a.frontmatter.status !== 'archived'
-      && a.frontmatter.status !== 'expired'
-      && a.frontmatter.status !== 'superseded'
-      && a.frontmatter.classification !== 'SECRET'
-      && a.frontmatter.classification !== 'PERSONAL')
-    .sort((a, b) => (b.frontmatter.updated_at || '').localeCompare(a.frontmatter.updated_at || ''));
+  const candidates = atoms.filter((a) =>
+    a.frontmatter.status !== 'archived'
+    && a.frontmatter.status !== 'expired'
+    && a.frontmatter.status !== 'superseded'
+    && a.frontmatter.classification !== 'SECRET'
+    && a.frontmatter.classification !== 'PERSONAL',
+  );
 
-  let usedTokens = 0;
-  const active: Atom[] = [];
-  for (const a of candidates) {
-    const estimate = Math.ceil((a.frontmatter.id.length + 10 + a.body.trim().length) / CHARS_PER_TOKEN);
-    if (usedTokens + estimate > maxTokens) break;
-    active.push(a);
-    usedTokens += estimate;
-  }
+  // Empty object from caller (e.g. render.yaml `type_reservations: {}`) means
+  // "use defaults"; explicit non-empty object means "use exactly these".
+  const reservations = typeReservations && Object.keys(typeReservations).length > 0
+    ? typeReservations
+    : DEFAULT_FILL_TYPE_RESERVATIONS;
+
+  const active = selectAtomsWithReservations(
+    candidates,
+    maxTokens,
+    reservations,
+    { mode: 'recency' },
+  );
+
+  const usedTokens = active.reduce(
+    (s, a) => s + estimateTokens(a.body + JSON.stringify(a.frontmatter)),
+    0,
+  );
 
   const content = renderFromAtoms(memoryDir, active);
-  // Inject fill stats into the banner
   const banner = `> Auto-generated from memory-kernel. ${active.length} of ${candidates.length} atoms, ${countEvents(memoryDir)} events. (budget ${maxTokens} tokens, used ~${usedTokens})`;
   const lines = content.split('\n');
   const bannerIdx = lines.findIndex(l => l.startsWith('> Auto-generated'));
@@ -237,20 +257,34 @@ export function renderAgentClaudeMd(
   const typeWeights = opts.typeWeights ?? (
     Object.keys(renderConfig.type_weights).length > 0 ? renderConfig.type_weights : undefined
   );
+  const typeReservations = opts.typeReservations ?? (
+    Object.keys(renderConfig.type_reservations).length > 0
+      ? renderConfig.type_reservations
+      : undefined
+  );
 
   if (renderConfig.include_shared && isIsolated(baseDir)) {
-    // Use isolated recall (agent + shared union), then render from the merged bundle
+    // Use isolated recall (agent + shared union), then render from the merged bundle.
+    // Note: this path is task-driven recall — typeReservations applies only to
+    // fill mode (renderFill) and is intentionally not forwarded here.
     const bundle = recallIsolated(agentDir, baseDir, {
       max_tokens: maxTokens,
-      type_weights: typeWeights as any,
+      type_weights: typeWeights,
     });
 
     // Render directly from the bundle's atoms (bypass recall in renderClaudeMd)
     return renderFromAtoms(agentDir, bundle.atoms);
   }
 
-  // No shared inclusion or not isolated — use standard render
-  return renderClaudeMd(agentDir, { maxTokens, typeWeights });
+  // No shared inclusion or not isolated — use standard render.
+  // Forward opts.fill so `--no-fill` reaches the inner call; otherwise the
+  // opt-out semantics (`opts.fill !== false`) would silently re-enable fill.
+  return renderClaudeMd(agentDir, {
+    maxTokens,
+    typeWeights,
+    typeReservations,
+    fill: opts.fill,
+  });
 }
 
 /**
@@ -269,7 +303,7 @@ function renderFromAtoms(memoryDir: string, active: Atom[]): string {
   const conflicts = active.filter((a) => a.frontmatter.type === 'conflict');
   const procedures = active.filter((a) => a.frontmatter.type === 'procedure');
 
-  // Catch-all for any atom type not explicitly handled above
+  // Catch-all: any atom type not explicitly handled above (future-proofing)
   const knownTypes = new Set(['fact', 'decision', 'constraint', 'open_question', 'preference', 'belief', 'conflict', 'procedure']);
   const other = active.filter((a) => !knownTypes.has(a.frontmatter.type));
 

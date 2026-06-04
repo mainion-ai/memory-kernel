@@ -1,0 +1,102 @@
+name: Dependabot auto-merge
+
+# Workflow-side gating: poll the PR's other status checks until they
+# resolve, then merge if all SUCCESS. We don't use `gh pr merge --auto`
+# because GitHub's auto-merge feature only waits when there are required
+# status checks configured at the branch-protection layer — and classic
+# Branch Protection doesn't enforce on private repos under Free GitHub
+# orgs. See docs/decisions/0003-workflow-side-dependabot-auto-merge.md.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip if not patch or minor
+        if: |
+          steps.meta.outputs.update-type != 'version-update:semver-patch' &&
+          steps.meta.outputs.update-type != 'version-update:semver-minor'
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+        run: |
+          echo "::notice::update-type is '$UPDATE_TYPE' — major bumps require manual merge"
+          exit 0
+
+      - name: Wait for required checks, then merge
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          # Self-exclude by workflowName (stable, matches the `name:` at top
+          # of this file). Excluding by check-name is fragile because GitHub
+          # renders the rollup `name` differently in different contexts.
+          SELF_WORKFLOW_NAME: 'Dependabot auto-merge'
+          # Required check names — must all reach SUCCESS or SKIPPED.
+          REQUIRED_CHECKS: 'test (22),test (24),check,scan'
+        run: |
+          set -euo pipefail
+
+          # Give CI a moment to register checks; otherwise the first poll
+          # may run before any check shows up and look like "no_checks".
+          sleep 30
+
+          timeout_seconds=900    # 15 minutes
+          interval=20
+          elapsed=0
+
+          # Build a jq array literal of the required-check names. The
+          # shell-side IFS=',' split is robust against spaces in names
+          # (e.g. "test (22)").
+          IFS=',' read -r -a required_arr <<< "$REQUIRED_CHECKS"
+          required_jq=$(printf '%s\n' "${required_arr[@]}" | jq -R . | jq -s .)
+
+          while [ "$elapsed" -lt "$timeout_seconds" ]; do
+            state=$(gh pr view "$PR_URL" --json statusCheckRollup --jq "
+              . as \$root
+              | [\$root.statusCheckRollup[]
+                 | select((.workflowName // \"\") != env.SELF_WORKFLOW_NAME)
+                 | select(.name as \$n | $required_jq | index(\$n))] as \$relevant
+              | if (\$relevant | length) < ($required_jq | length) then \"pending\"
+                elif (\$relevant | any(.conclusion == null or .conclusion == \"\")) then \"pending\"
+                elif (\$relevant | all(.conclusion == \"SUCCESS\" or .conclusion == \"SKIPPED\")) then \"success\"
+                else \"failure\" end
+            ")
+
+            case "$state" in
+              success)
+                echo "::notice::All required checks green — merging"
+                gh pr merge --squash --delete-branch "$PR_URL"
+                exit 0
+                ;;
+              failure)
+                echo "::error::A required check failed — refusing to merge"
+                gh pr checks "$PR_URL"
+                exit 1
+                ;;
+              pending)
+                echo "checks still pending (elapsed=${elapsed}s)"
+                sleep "$interval"
+                elapsed=$((elapsed + interval))
+                ;;
+            esac
+          done
+
+          echo "::error::Timed out after ${timeout_seconds}s waiting for required checks"
+          gh pr checks "$PR_URL"
+          exit 1

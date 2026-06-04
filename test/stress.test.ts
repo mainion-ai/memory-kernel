@@ -35,6 +35,7 @@ import {
   readEpisode,
   listEpisodes,
   linkEpisodeToAtom,
+  parseAtom,
   writeConfig,
   resolveAgentDir,
   initAgentStore,
@@ -908,6 +909,50 @@ describe('conflict detection heuristic', () => {
     const newConflicts = fs.readdirSync(conflictsDir).filter((f) => f.endsWith('.md'));
     expect(newConflicts.length).toBe(0);
     expect(r.conflicts_found).toBe(0);
+  });
+
+  // #110: the conflict_detected event's atom_snapshot must be a full
+  //       serialised atom (markdown frontmatter + body), not a JSON
+  //       stringification of just the frontmatter. This brings the field
+  //       in line with every other appendEvent call site and lets
+  //       downstream consumers (replay, audit tools) round-trip via
+  //       parseAtom.
+  it('conflict_detected event carries full serialized atom snapshot (#110)', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'conflict-110-high',
+      body: '## Fact\nPort is 8080.',
+      confidence: 0.95,
+      scope: { paths: ['/services/api-110'] },
+    });
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'conflict-110-low',
+      body: '## Fact\nPort is 3000.',
+      confidence: 0.5,
+      scope: { paths: ['/services/api-110'] },
+    });
+    const r = reflect({ ...base(testDir) });
+    expect(r.conflicts_found).toBeGreaterThanOrEqual(1);
+
+    const events = readEvents(testDir);
+    const detected = events.filter((e) => e.action === 'conflict_detected');
+    expect(detected.length).toBeGreaterThanOrEqual(1);
+
+    const snapshot = (detected[0] as any).atom_snapshot;
+    expect(typeof snapshot).toBe('string');
+
+    // The snapshot must NOT be a JSON-stringified frontmatter object.
+    expect(snapshot.startsWith('{')).toBe(false);
+
+    // It MUST parse cleanly through parseAtom (full frontmatter + body).
+    const parsed = parseAtom(snapshot);
+    expect(parsed.frontmatter.type).toBe('conflict');
+    expect(parsed.frontmatter.status).toBe('active');
+    expect(parsed.body.length).toBeGreaterThan(0);
+    expect(parsed.body).toContain('Conflict');
   });
 
   it('reflect twice on same conflicting pair does not duplicate conflict atoms', () => {

@@ -16,17 +16,18 @@ import {
   openIndex,
   readAtom,
   writeAtom,
-  indexAtom,
   getRelationsForAtom,
   indexStats,
   getAllAtomIds,
 } from '../src/index.js';
+import { indexAtom } from '../src/index-db.js';
 import {
   extractBodyReferences,
   inferRelationType,
   relinkAtom,
   relinkAll,
   ATOM_ID_PATTERN,
+  createAtomIdPattern,
 } from '../src/relink.js';
 import type { Atom } from '../src/types.js';
 
@@ -71,6 +72,26 @@ describe('ATOM_ID_PATTERN', () => {
     const text = 'Not a match: BELI-2026 or BELI-03-31';
     ATOM_ID_PATTERN.lastIndex = 0;
     expect(ATOM_ID_PATTERN.exec(text)).toBeNull();
+  });
+});
+
+describe('createAtomIdPattern()', () => {
+  it('returns a fresh regex per call with no shared state', () => {
+    const a = createAtomIdPattern();
+    const b = createAtomIdPattern();
+    expect(a).not.toBe(b);
+    expect(a.lastIndex).toBe(0);
+    'DECI-2026-03-11-AUTH-abc12'.match(a);
+    expect(b.lastIndex).toBe(0);
+  });
+
+  it('matches the same shape as the legacy constant', () => {
+    const text = 'See DECI-2026-03-11-AUTH-abc12 and BELI-2025-12-01-FOO-99def';
+    const matches = text.match(createAtomIdPattern());
+    expect(matches).toEqual([
+      'DECI-2026-03-11-AUTH-abc12',
+      'BELI-2025-12-01-FOO-99def',
+    ]);
   });
 });
 

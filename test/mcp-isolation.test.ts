@@ -132,7 +132,12 @@ describe('MCP isolation — get_context_bundle merges shared atoms', () => {
       session_id: 'test',
       type: 'fact',
       slug: 'alpha-only',
-      body: 'Alpha private knowledge.',
+      // Body literally mentions the task keyword so FTS-matches the
+      // `task: 'deployment'` query below. Pre-#214 the scope.tags
+      // alone was enough because the score-0 fallback surfaced every
+      // status-filtered atom; that path is gone — the body now has
+      // to hit FTS for the atom to surface.
+      body: 'Alpha private knowledge about deployment.',
       scope: { tags: ['deployment'] },
     });
     // Seed shared namespace via the supported share flow so indices stay consistent
@@ -142,7 +147,7 @@ describe('MCP isolation — get_context_bundle merges shared atoms', () => {
       session_id: 'test',
       type: 'fact',
       slug: 'team-shared',
-      body: 'Team-shared knowledge.',
+      body: 'Team-shared knowledge about deployment.',
       scope: { tags: ['deployment'] },
     });
     shareAtom(testDir, sharedSrc.frontmatter.id, 'alpha', { agent_id: 'alpha', session_id: 'test' });

@@ -230,6 +230,31 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
+ * L2-normalize a vector to unit length. Returns the zero vector unchanged
+ * (avoids NaN from division by zero).
+ */
+export function normalizeVector(v: number[]): number[] {
+  let norm = 0;
+  for (let i = 0; i < v.length; i++) norm += v[i] * v[i];
+  norm = Math.sqrt(norm);
+  if (norm === 0) return v.slice();
+  const out = new Array<number>(v.length);
+  for (let i = 0; i < v.length; i++) out[i] = v[i] / norm;
+  return out;
+}
+
+/**
+ * Dot product of two equal-length vectors. For unit-normalized inputs this
+ * is equivalent to cosineSimilarity but ~2× faster — no sqrt per call.
+ */
+export function dotProduct(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+  return dot;
+}
+
+/**
  * Serialize a vector to a compact binary buffer for SQLite BLOB storage.
  * Uses Float32Array (4 bytes per dimension) — 512-dim = 2KB, 1536-dim = 6KB.
  */

@@ -28,6 +28,20 @@ export interface ReflectOptions {
 }
 
 /**
+ * Build a collision-safe archive destination by prefixing the source basename
+ * with the atom ID. Without this prefix, two atoms whose source files share a
+ * basename (e.g. via hand-rename, import, or different parent dirs in
+ * memoryDir) would overwrite each other in ARCHIVE/. See issue #86.
+ */
+function archiveDestination(memoryDir: string, atom: Atom): string {
+  return path.join(
+    memoryDir,
+    'ARCHIVE',
+    `${atom.frontmatter.id}-${path.basename(atom.filePath!)}`,
+  );
+}
+
+/**
  * Run a full reflect cycle.
  *
  * Uses a single `listAtoms()` call and filters the in-memory list between
@@ -127,11 +141,7 @@ function processExpiry(
       assertWithinDir(opts.memoryDir, atom.filePath);
 
       // Move to archive (with traversal guard)
-      const archivePath = path.join(
-        opts.memoryDir,
-        'ARCHIVE',
-        path.basename(atom.filePath),
-      );
+      const archivePath = archiveDestination(opts.memoryDir, atom);
       assertWithinDir(opts.memoryDir, archivePath);
       atom.frontmatter.status = 'expired';
       atom.frontmatter.updated_at = normalizeTimestamp();
@@ -194,11 +204,7 @@ function dedupById(opts: ReflectOptions, atoms: Atom[]): { count: number; archiv
           filePath: toArchive.filePath,
         };
 
-        const archivePath = path.join(
-          opts.memoryDir,
-          'ARCHIVE',
-          path.basename(archiveCopy.filePath!),
-        );
+        const archivePath = archiveDestination(opts.memoryDir, archiveCopy);
         assertWithinDir(opts.memoryDir, archivePath);
         archiveCopy.frontmatter.status = 'archived';
         archiveCopy.frontmatter.updated_at = normalizeTimestamp();
@@ -270,11 +276,7 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): { count: number; archivedId
           filePath: toArchive.filePath,
         };
 
-        const archivePath = path.join(
-          opts.memoryDir,
-          'ARCHIVE',
-          path.basename(archiveCopy.filePath!),
-        );
+        const archivePath = archiveDestination(opts.memoryDir, archiveCopy);
         assertWithinDir(opts.memoryDir, archivePath);
         archiveCopy.frontmatter.status = 'archived';
         archiveCopy.frontmatter.updated_at = normalizeTimestamp();
@@ -481,7 +483,11 @@ function detectConflicts(opts: ReflectOptions, atoms: Atom[]): { total: number; 
         session_id: opts.session_id,
         atom_refs: [conflictId, a.frontmatter.id, b.frontmatter.id],
         schema_version: 2,
-        atom_snapshot: JSON.stringify(conflictAtom.frontmatter),
+        // #110: full serialized atom (frontmatter + body markdown), matching
+        //       every other appendEvent call site. Previously this stored
+        //       JSON.stringify(frontmatter), which could not be round-tripped
+        //       through parseAtom and diverged from the snapshot contract.
+        atom_snapshot: serializeAtom(conflictAtom),
         meta: { reason: 'confidence-gap', gap: confidenceGap },
       });
 

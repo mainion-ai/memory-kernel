@@ -16,9 +16,11 @@ import {
   recall,
   reindex,
   closeAllIndexes,
+} from '../src/index.js';
+import {
   getTermDocumentFrequencies,
   getCorpusSize,
-} from '../src/index.js';
+} from '../src/index-db.js';
 
 let testDir: string;
 

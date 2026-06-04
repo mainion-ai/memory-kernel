@@ -13,12 +13,13 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import {
   listAtoms,
   writeAtom,
   indexExists,
-  indexAtom,
 } from '../index.js';
+import { indexAtom } from '../index-db.js';
 import type { Atom, Relation, RelationType } from '../types.js';
 
 /** Matches atom ID patterns like BELI-2026-03-31-DESIRE-PATHS-FORM-TREES-1abc
@@ -111,16 +112,15 @@ export function registerMigrateRelationsCommand(program: Command): void {
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--dry-run', 'Preview proposed relations without writing')
     .option('--apply', 'Write relations to atom frontmatter and reindex')
-    .action((opts: { dir: string; dryRun?: boolean; apply?: boolean }) => {
+    .option('--json', 'Output results as JSON')
+    .action((opts: { dir: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
       if (!opts.dryRun && !opts.apply) {
-        console.error('✗ Specify --dry-run to preview or --apply to write changes.');
-        process.exit(1);
+        exitWithError('Specify --dry-run to preview or --apply to write changes.', opts.json);
       }
 
       const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
-        console.error(`✗ Memory directory not found: ${memoryDir}`);
-        process.exit(1);
+        exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }
 
       const atoms = listAtoms(memoryDir);
@@ -139,11 +139,31 @@ export function registerMigrateRelationsCommand(program: Command): void {
       }
 
       if (totalProposals === 0) {
+        if (opts.json) {
+          console.log(
+            JSON.stringify({ dry_run: !!opts.dryRun, proposed: 0, written: 0, changes: [] }, null, 2),
+          );
+          return;
+        }
         console.log('✓ No new relations to migrate.');
         return;
       }
 
       if (opts.dryRun) {
+        if (opts.json) {
+          const changes = Array.from(changeMap.values()).map(({ atom, proposals }) => ({
+            atom_id: atom.frontmatter.id,
+            proposals: proposals.map((p) => ({
+              type: p.relation.type,
+              target: p.relation.target,
+              source: p.source,
+            })),
+          }));
+          console.log(
+            JSON.stringify({ dry_run: true, proposed: totalProposals, written: 0, changes }, null, 2),
+          );
+          return;
+        }
         console.log(`\nProposed relations (${totalProposals} total):\n`);
         for (const { atom, proposals } of changeMap.values()) {
           console.log(`  ${atom.frontmatter.id}`);
@@ -173,6 +193,12 @@ export function registerMigrateRelationsCommand(program: Command): void {
         }
       }
 
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ dry_run: false, proposed: totalProposals, written, changes: [] }, null, 2),
+        );
+        return;
+      }
       console.log(`✓ Migrated ${totalProposals} relations across ${written} atoms.`);
     });
 }

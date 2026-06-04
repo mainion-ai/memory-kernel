@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import { parseAtom, serializeAtom } from './format.js';
-import { isEncrypted, encryptAtom, decryptAtom, resolveKey, EncryptionKeyMissingError } from './crypto.js';
+import { isEncrypted, encryptAtomWithCredential, decryptAtomWithCredential, EncryptionKeyMissingError } from './crypto.js';
 import type { Atom } from './types.js';
 
 /** Monotonic counter for unique tmp file names across concurrent writes. */
@@ -42,32 +42,46 @@ export function initMemoryDir(memoryDir: string): void {
     fs.mkdirSync(path.join(memoryDir, dir), { recursive: true });
   }
 
-  // Create view files from templates (only if they don't exist)
+  // Create view files from templates (only if they don't exist).
+  // 0o600 is the project-wide store-file mode (see #138) — view files may
+  // concatenate body content from any classification and stay owner-only
+  // as defense-in-depth.
   for (const file of VIEW_FILES) {
     const filePath = path.join(memoryDir, file);
     if (!fs.existsSync(filePath)) {
       const template = getTemplate(file);
-      writeFileAtomic(filePath, template);
+      writeFileAtomic(filePath, template, 0o600);
     }
   }
 
-  // Create events log
+  // Create events log. 0o600 because the event envelope (atom_refs,
+  // agent_id, session_id) leaks SECRET atom *existence* even though
+  // SECRET *bodies* are encrypted via snapshotAtom. See #138.
   const eventsPath = path.join(memoryDir, 'events.ndjson');
   if (!fs.existsSync(eventsPath)) {
-    writeFileAtomic(eventsPath, '');
+    writeFileAtomic(eventsPath, '', 0o600);
   }
 }
 
 /**
  * Atomic file write: write to temp, fsync, rename.
  * Prevents corruption on crash.
+ *
+ * @param mode — optional file mode (e.g. 0o600 for SECRET files). When omitted,
+ *               the platform default (mode & ~umask) applies.
+ *
+ * @internal Not part of the documented public API. Re-exported only because
+ * legacy consumers may import it; new code should rely on the higher-level
+ * atom/event helpers instead.
  */
-export function writeFileAtomic(filePath: string, content: string): void {
+export function writeFileAtomic(filePath: string, content: string, mode?: number): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
 
   const tmpPath = filePath + `.tmp.${process.pid}.${++tmpCounter}.${Math.random().toString(36).slice(2, 6)}`;
-  const fd = fs.openSync(tmpPath, 'w');
+  const fd = mode !== undefined
+    ? fs.openSync(tmpPath, 'w', mode)
+    : fs.openSync(tmpPath, 'w');
   try {
     fs.writeSync(fd, content);
     fs.fsyncSync(fd);
@@ -89,11 +103,11 @@ export function writeFileAtomic(filePath: string, content: string): void {
 export function readAtom(filePath: string): Atom {
   let content = fs.readFileSync(filePath, 'utf-8');
   if (isEncrypted(content)) {
-    const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
-    if (!key) {
+    const cred = process.env.MEMORY_ENCRYPTION_KEY;
+    if (!cred) {
       throw new EncryptionKeyMissingError(filePath);
     }
-    content = decryptAtom(content, key);
+    content = decryptAtomWithCredential(content, cred);
   }
   return parseAtom(content, filePath);
 }
@@ -104,13 +118,21 @@ export function readAtom(filePath: string): Atom {
  */
 export function writeAtom(atom: Atom, filePath: string): void {
   let content = serializeAtom(atom);
-  if (atom.frontmatter.classification === 'SECRET') {
-    const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
-    if (key) {
-      content = encryptAtom(content, key);
+  const isSecret = atom.frontmatter.classification === 'SECRET';
+  if (isSecret) {
+    const cred = process.env.MEMORY_ENCRYPTION_KEY;
+    if (cred) {
+      content = encryptAtomWithCredential(content, cred);
     }
   }
-  writeFileAtomic(filePath, content);
+  writeFileAtomic(filePath, content, isSecret ? 0o600 : undefined);
+  if (isSecret) {
+    // Defense in depth against an exotic umask that strips owner-read from openSync mode.
+    // Best-effort: Windows treats chmod as a no-op; on POSIX failure indicates
+    // an unusual ACL state we can't recover from here. Matches the wrapping
+    // pattern in src/index-db.ts openIndexRaw.
+    try { fs.chmodSync(filePath, 0o600); } catch { /* best-effort */ }
+  }
 }
 
 /**
@@ -151,6 +173,16 @@ export function listAtoms(memoryDir: string): Atom[] {
       if (err instanceof EncryptionKeyMissingError) {
         process.stderr.write(
           `Warning: encrypted atom skipped (set MEMORY_ENCRYPTION_KEY to access): ${f}\n`,
+        );
+      } else {
+        // Surface every other parse failure (#100) — malformed YAML, missing
+        // required frontmatter fields, truncated file, etc. Without this the
+        // atom silently drops out of recall/views/index with no signal.
+        const rel = path.relative(memoryDir, f) || f;
+        const errName = err instanceof Error ? err.constructor.name : 'Error';
+        const errMsg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `mk: warning: failed to parse ${rel}: ${errName}: ${errMsg} — skipping\n`,
         );
       }
       // Skip corrupted/malformed/encrypted-without-key atom files
@@ -193,6 +225,15 @@ function realpathWalk(p: string): string {
   }
 }
 
+/**
+ * Throw if `target` resolves outside `root` (path-traversal guard).
+ * Used in every code path that accepts a file path from external input.
+ *
+ * @internal Not part of the documented public API. This guard belongs at the
+ * boundary of file-handling code paths inside the kernel; external callers
+ * should rely on the higher-level operations (createAtom, archiveAtom, etc.)
+ * that already enforce it internally.
+ */
 export function assertWithinDir(root: string, target: string): void {
   // Use realpathWalk to follow symlinks — path.resolve() alone doesn't catch
   // symlinks inside the directory that point outside it (e.g. ENTITIES/link → /tmp/evil).
@@ -216,12 +257,13 @@ export function readView(memoryDir: string, viewName: string): string {
 }
 
 /**
- * Write a view file (atomic).
+ * Write a view file (atomic). Mode 0o600 — views may synthesize body
+ * content from any classification; owner-only is defense-in-depth (#138).
  */
 export function writeView(memoryDir: string, viewName: string, content: string): void {
   const filePath = path.join(memoryDir, viewName);
   assertWithinDir(memoryDir, filePath);
-  writeFileAtomic(filePath, content);
+  writeFileAtomic(filePath, content, 0o600);
 }
 
 // --- Templates ---
@@ -330,3 +372,21 @@ _No open questions._
       return '';
   }
 }
+
+// --- Prompt safety ---------------------------------------------------------
+
+/**
+ * Escape XML boundary characters in untrusted text before inserting into an
+ * LLM prompt template that uses `<tag>...</tag>` framing. Prevents a hostile
+ * user input from closing the boundary tag early and injecting model-level
+ * instructions.
+ *
+ * Only `<` and `>` are escaped — they are the only characters that can
+ * participate in a tag close/open pattern. We do not escape `&`, `'`, or `"`
+ * because the consuming surface (LLM prompt, not HTML) does not interpret
+ * them as structural.
+ */
+export function escapeXmlBoundary(text: string): string {
+  return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+

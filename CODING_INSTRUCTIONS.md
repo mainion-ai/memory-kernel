@@ -224,9 +224,9 @@ beforeEach(() => {
 });
 ```
 
-### `ttl_days: 0` is valid (ephemeral atoms)
+### `ttl_days >= 1` required (#108)
 
-The schema uses `.min(0)` not `.positive()`. Zero means the atom expires immediately on the next reflect.
+The schema uses `.min(1).nullable()`. Use `null` to mean "no expiry" and a positive integer (>= 1) for day-based TTLs. Zero was previously accepted but is now rejected (it meant "expire on next reflect" — replace with explicit deletion/archive).
 
 ---
 
@@ -346,140 +346,40 @@ If you add a new operation that writes files, add the guard and a corresponding 
 
 ---
 
-## PRD v1.2 — Implementation Status (as of v1.0.0)
+## Documentation hygiene — required on every PR
 
-Reference PRD: `memory-kernel-prd-v1.2.md` (2026-03-10).
+Stale documentation is treated as a regression. Before opening any PR, sweep the .md files whose state your change affects and update them in the same commit:
 
-### What's DONE ✅
-
-| PRD Requirement | Implementation |
+| .md file | When to update |
 |---|---|
-| **v0.1 MVP** (§6.1) — all 6 items | Directory layout, checkpoint, context loader, TTL/promotion/GC, CLI (14 cmds), SDK |
-| **FR-1** Evidence Store | `src/evidence.ts` — SHA-256 content-addressed, atomic writes, dedup by hash |
-| **FR-2** Event Log | `src/event-log.ts` — NDJSON, V2 snapshots, fsync, compaction |
-| **FR-2a** Episode Store | `src/episodes.ts` — writeEpisode, readEpisode, listEpisodes, linkEpisodeToAtom; CLI: mk episode/mk episodes |
-| **FR-3** State Views | `src/renderers.ts` — INDEX, HANDOFF, DECISIONS, CONSTRAINTS, OPEN_QUESTIONS (line budgets enforced) |
-| **FR-4** Retain | `src/retain.ts` — createAtom, updateAtom, archiveAtom (all emit V2 events, auto-index) |
-| **FR-5** Task-aware recall | `src/recall.ts` + `src/index-db.ts` — FTS5 BM25 ranking on `query.task`; `--task` and `--include-episodes` in CLI |
-| **FR-6** Reflect (deterministic) | `src/reflect.ts` — expiry, dedup, autoPromote, conflict detection heuristic, view regeneration |
-| **FR-7** All 9 atom types | `src/types.ts` — decision, constraint, open_question, belief, fact, procedure, entity_summary, preference, conflict |
-| **FR-13** Data classification | PUBLIC, TEAM, PERSONAL, SECRET — enforced in recall filter + SQLite index query |
-| Atomic writes + crash safety | tmp → fsync → rename in store.ts + evidence.ts; WAL mode in SQLite |
-| Deterministic replay | `src/replay.ts` — same events → identical atoms + views |
-| Event sourcing (§11.1) | V2 events with inline snapshots |
-| Canonicalization (§11.3) | Sorted YAML keys, UTC ISO8601, stable headings |
-| Progressive disclosure (§11.6) | INDEX ≤ 200 lines, HANDOFF ≤ 80 lines |
-| Recall gating (§11.9) | PERSONAL + SECRET excluded by default |
-| SQLite FTS5 index (§11.5) | Schema v3: FTS5 virtual table with porter unicode61 tokenizer; BM25 ranking via `searchFts()` |
-| **FR-11** Convergent merges (event-log union) | `src/merge.ts` — `mergeEventLogs()` Pattern B; `mk merge` CLI; conflict atoms for concurrent updates |
-| **FR-19** MCP server | `src/mcp/` — 8 tools + 4 resources; `resolveConflict()` kernel function; `mk-mcp` bin; contract tests in `test/mcp.test.ts` and `test/mcp-resources.test.ts` |
+| `CHANGELOG.md` | Every user-visible code change — add an entry under `[Unreleased]` or the next version section |
+| `CLAUDE.md` | When status (last shipped version, open issues, active phase), workflow conventions, or directory layout change |
+| `README.md` | When public API, CLI usage, or onboarding flow changes |
+| `RELEASING.md` | When versioning convention, tag flow, or publish path changes |
+| `test/README.md` | When test count, harness layout, or run instructions change |
+| `docs/superpowers/plans/<PR>.md` | Author a new per-PR plan at PR-start for non-trivial PRs (see existing exemplars in `archive/`) |
+| `docs/superpowers/plans/archive/` | `git mv` completed per-PR plans here once their work ships — see the archive README for the convention |
+| `packages/openclaw-memory-kernel/INSTALL.md` | When subpackage install path, compat matrix (subpackage × `memory-kernel` × `openclaw` × `@sinclair/typebox` × Node), or deprecation policy changes |
+| `packages/openclaw-memory-kernel/CHANGELOG.md` | Every subpackage-affecting change (config field, exported hook, tool name, peer-dep constraint). Subpackage tracks its own SemVer — see [`RELEASING.md` → Subpackage releases](RELEASING.md#subpackage-releases) |
+| `skills/mk-memory-setup/SKILL.md` + `skills/mk-doctor/SKILL.md` | When the agent-facing install / upgrade / diagnostic flow changes — these ship to consumers and shape every new install |
+| `docs/v2-design/*.md` | **Do not edit.** These are point-in-time design rationale documents, not status reports. Updating them would corrupt the historical artifact. |
+| `.github/ISSUE_TEMPLATE/*.md` + `.github/PULL_REQUEST_TEMPLATE.md` | When the bug-report / feature-request / PR-checklist fields change. Keep templates and `CONTRIBUTING.md` in sync — they share content by design |
+| `.github/CODEOWNERS` | When maintainer ownership for a directory or file pattern changes — every change should be reviewable on its own |
+| `SECURITY.md` | When the supported-version table, contact channel, response timeline, or disclosure window changes |
+| `docs/decisions/*.md` | One ADR per significant architectural / governance decision. Numbered (`0001-`, `0002-`, …). New ADRs are append-only; superseding decisions get their own ADR that references the prior one |
+| `docs/public-repo-settings.md` | When required public-repo GitHub settings change (branch protection, App carve-outs, GHA permissions, security toggles). This file is both operator checklist and audit snapshot — keep them aligned |
+| `docs/governance.md` | When triage doctrine, contributor-licensing stance, or code-of-conduct reference changes |
 
-### What's PARTIAL ⚠️
+Version numbers and test counts in any .md file must match `git log origin/main` and `npm test` output at PR-open time. If you find a doc that's stale but unrelated to your PR's scope, file a follow-up issue rather than expanding scope.
 
-| Area | What exists | What's missing |
-|---|---|---|
-| **FR-6 Reflect — conflicts** | Heuristic: same-type active atoms with overlapping scope and confidence gap > 0.3 | Full MV-Register semantics, user-triggered resolution workflow (future milestone) |
-| **FR-8 TTL + decay** | Hard TTL expiry works | No gradual confidence decay |
-| **FR-9 Promotion** | confidence ≥ 0.9 auto-promote | No corroboration, user confirmation, or evidence triggers |
-| **FR-15 Audit** | `atom_read` event emitted by `recall()` when `agent_id`/`session_id` provided (v0.9.0); includes `atom_refs`, `meta.query_task`, `meta.atoms_returned`, `meta.token_estimate` | Passive recall (no agent_id) is not audited — by design |
-| **Provenance** | Fields exist on AtomFrontmatter (`provenance.episodes`, `provenance.evidence`). Accepted in createAtom/updateAtom. | Not auto-populated by system (caller must pass explicitly) |
+### Enforcement
 
-### What's NOT Started ❌
+The `docs-hygiene` workflow ([`.github/workflows/docs-hygiene.yml`](.github/workflows/docs-hygiene.yml)) enforces the strictest layer of this table at PR time: any PR that touches `src/**` or `packages/*/src/**` without also touching a `.md` file fails the check. Override via the `docs-hygiene-override` label when the change genuinely needs no doc update (e.g. internal refactor with no API change). Reviewer judgement is the gate on overrides — the label is visible in the PR timeline.
 
-| Area | PRD Section |
-|---|---|
-| **FR-10** Concurrent writers (advisory locks) | §7.5 |
-| **FR-12** Conflict resolution workflow | §7.5 |
-| ~~**FR-14** Encryption at rest (SECRET)~~ | ~~§7.6~~ — **Done in v0.9.0** |
-| ~~**FR-16** Memory Packet import/export~~ | ~~§7.7~~ — **`mk import` done in v0.9.0** (Letta/LangGraph/Mem0 adapters deferred) |
-| ~~**FR-19** MCP server~~ | ~~§7.8~~ — **Done in v0.8.0** |
-| ~~Benchmark harness~~ | ~~§12.4~~ — **Done in v1.0.0** (`scripts/bench.ts`, compaction-loss torture tests) |
-| ~~Performance benchmarks (p95)~~ | ~~§12.5~~ — **Done in v1.0.0** (p95 ≈ 3ms, target < 50ms ✓) |
-| System/E2E tests (multi-process) | §12.3 — deferred |
+The audit at `docs/audit-vX.Y.Z.md` is the periodic deep pass; the workflow is the per-PR continuous-discipline gate.
 
----
+### Migration-writing inspiration
 
-## PRD v1.0 → v1.2 Key Deltas
+When a user-facing migration is required, look at how **nanoclaw v1 → v2** framed its upgrade path: detect existing state, name the host-specific decision points, walk the user through the question-and-answer flow before mutating anything, and offer trade-off explanations in plain language. memory-kernel's `mk migrate` flow (added in v1.20.0) is the closest analogue; subsequent migrations should match that bar of clarity for the agent operating them.
 
-These are the **new requirements** added in PRD v1.2 that were not in v1.0:
-
-| Delta | PRD Section | Summary |
-|---|---|---|
-| **FR-2a Episode Store** | §7.1 (new) | New store for per-session artifacts. Helpers needed: `writeEpisode()`, `readEpisode()`, `linkEpisodeToAtom()`. |
-| **Task-aware recall (FTS)** | §7.2, §11.5 | `RecallQuery.task` must influence ranking. SQLite FTS5 required for v1. Embeddings optional/v2. |
-| **Episode-aware recall** | §7.2, §11.6a (new) | Recall includes episodes on demand (by provenance, `include_episodes`, or task/keyword match). |
-| **FTS index required** | §11.5 | "Implement SQLite FTS (FTS5) index over atom titles/body" + deterministic lexical fallback. |
-| **Benchmarks relaxed** | §5.2 | v1 goal = "harness runnable + baseline recorded", not competitive scores. |
-| **LoCoMo explicitly vNext** | §3.2 | Full memory reasoning system is non-goal for v1. |
-| **LLM-assisted reflect deferred** | §7.2 FR-6 | "v1 default: deterministic (no LLM calls)" made explicit. |
-| **memory-kernel acknowledged** | §10.8 (new) | npm package listed as near-complete v0.1 MVP baseline. |
-
----
-
-## Existing Stubs & TODOs in Code
-
-All major Milestone D stubs have been implemented. Remaining stubs for future milestones:
-
-| Stub | Location | Notes |
-|---|---|---|
-| `provenance.episodes` | `src/types.ts` | Field on AtomFrontmatter. Accepted by createAtom/updateAtom. NOT auto-populated — callers must pass explicitly or use `linkEpisodeToAtom()`. |
-| `provenance.evidence` | `src/types.ts` | Field on AtomFrontmatter. Accepted but not auto-populated. Caller must pass evidence hashes. |
-| `conflicts` (full CRDT) | `src/reflect.ts` | Heuristic only: same-type active atoms + overlapping scope + confidence gap >0.3. Full MV-Register semantics and user-triggered resolution workflow are future milestones. |
-| Letta/LangGraph/Mem0 adapters | future | `mk import` handles generic markdown; provider-specific adapters deferred. |
-
----
-
-## Milestone Roadmap (PRD v1.2)
-
-### Milestone C: Task-Aware Recall + Episodes → v0.6.0 ✅ COMPLETE
-- **FR-2a**: Episode Store — `writeEpisode`, `readEpisode`, `listEpisodes`, `linkEpisodeToAtom` ✅
-- **FR-5**: FTS5 index (schema v3) + task-aware BM25 ranking in `recall()` ✅
-- **§11.6a**: Episode-aware recall (`include_episodes`, keyword match) ✅
-- Conflict detection heuristic in `reflect.ts` ✅
-- Tests: dedicated `test/fts.test.ts` (FTS5 search, task-aware recall) and `test/episodes.test.ts` (episode store) suites; `test/stress.test.ts` edge-cases ✅
-- CLI: `mk episode`, `mk episodes`, recall `--task`, `--include-episodes` ✅
-- Total test count: **434 passing** across 13 test files
-
-### Milestone D: Multi-Agent Merge → v0.7.0 ✅ COMPLETE
-- **FR-11**: Event-log union + deterministic reducer (§11.7 Pattern B) ✅
-- `mk merge` CLI + `mergeEventLogs()` SDK ✅
-- Conflict atoms created for concurrent updates (same atom mutated in local-only and remote-only event sets) ✅
-- `merge_completed` event emitted on successful merge ✅
-- Total test count: **448 passing** across 14 test files
-
-> Note: FR-10 advisory locks and multi-process E2E tests (§12.3) deferred to a later milestone.
-
-### Milestone E: MCP Server → v0.8.0 ✅ COMPLETE
-- **FR-19**: MCP server (`src/mcp/`) — 8 tools + 4 resources via StdioServerTransport ✅
-- `resolveConflict()` kernel function in `src/retain.ts`; exported from `src/index.ts` ✅
-- `mk-mcp` bin entry + `mcp` dev script ✅
-- Contract tests: `test/mcp.test.ts` (19 tests) + `test/mcp-resources.test.ts` (9 tests) ✅
-- Total test count: **476 passing** across 16 test files
-
-### Milestone F: Enterprise + Polish → v0.9.0 ✅ COMPLETE
-- **FR-14**: AES-256-GCM encryption for SECRET atoms (`src/crypto.ts`, `MEMORY_ENCRYPTION_KEY`) ✅
-- **FR-15**: Read audit logging (`atom_read` event when `agent_id`/`session_id` provided) ✅
-- **FR-16**: `mk import` / `importFromFile()` — markdown → typed atoms with type/confidence inference ✅
-- `test/crypto.test.ts`, `test/import.test.ts` added ✅
-- Total test count: **531 passing** across 20 test files
-
-### Milestone G: v1.0 Final Release → v1.0.0 ✅ COMPLETE
-- **§12.4** Compaction-loss PR gates: 13 torture tests in `test/compaction-loss.test.ts` ✅
-- **§5.2 / §12.4** Benchmark harness: `scripts/bench.ts` + `scripts/bench-baseline.json` (p95 ≈ 3ms ✓) ✅
-- README Performance + Troubleshooting sections ✅
-- `package.json` version → `1.0.0` ✅
-- Total test count: **551 passing** across 21 test files
-
-### Milestone H: Per-Agent Isolation → v2.0.0 ✅ COMPLETE
-- Two isolation modes: `shared` (default, backward compatible) and `per-agent` (config.yaml or `MK_ISOLATION` env) ✅
-- Core modules: `src/isolation.ts` (config, routing, agent store init, render config), `src/isolation-recall.ts` (union recall with agent-wins dedup), `src/share.ts` (copy-based share/unshare), `src/migrate.ts` (3 strategies: fresh, partition, clone-to-shared) ✅
-- Per-agent `render.yaml`: mode (operational/constitutive/balanced), max_tokens, include_shared, type_weights ✅
-- `renderAgentClaudeMd()` in `src/render.ts` — agent-specific CLAUDE.md rendering with union recall ✅
-- Wander scoping: graph walks restricted to agent + shared namespace ✅
-- CLI: global `-a, --agent <id>` option, `mk share`, `mk unshare`, `mk migrate`, `mk status --all-agents` ✅
-- MCP: `mk_share_atom`, `mk_unshare_atom` tools, `MCP_AGENT_ID` env var routing, all tools agent-aware ✅
-- Security: `assertValidAgentId()` (alphanumeric + dash + underscore only), `assertWithinDir()` path traversal guard ✅
-- Migration backup with crash-safe ordering (config written first → idempotent on re-run) ✅
-- 7 test files: `test/isolation.test.ts`, `test/isolation-recall.test.ts`, `test/isolation-render.test.ts`, `test/isolation-wander.test.ts`, `test/isolation-migrate.test.ts`, `test/share.test.ts`, `test/mcp-isolation.test.ts` ✅
-- Documentation: `docs/isolation.md` canonical guide, CHANGELOG, README, SDK reference, migration guide, CLI integration, MCP docs, STORY.md Chapter 26, agent quickrefs, host doctrine ✅
-- Total test count: **805+ passing** across 35+ test files
+When referencing GitHub issues in PR bodies, phrase the references defensively (`tracked in #N`, `noted in #N`) rather than aggressively (`blocked on #N`, `blocked by #N`). GitHub's PR-issue cross-reference logic can auto-close referenced issues on merge — this fired once on #152 (2026-05-21), causing a false close that had to be reopened by audit.

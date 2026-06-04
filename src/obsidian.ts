@@ -72,13 +72,19 @@ export function renderRelationsSection(relations: Relation[] | undefined): strin
     '',
   ];
 
+  let first = true;
   for (const [type, targets] of grouped) {
-    lines.push(`**${type}**`);
+    // Blank line between type groups for readability
+    if (!first) lines.push('');
+    first = false;
+    // Typed relation links: "- type [[target]]"
+    // Replace underscores with hyphens for readability (caused-by > caused_by).
+    const displayType = type.replace(/_/g, '-');
     for (const target of targets.sort()) {
-      lines.push(`- [[${target}]]`);
+      lines.push(`- ${displayType} [[${target}]]`);
     }
-    lines.push('');
   }
+  lines.push('');
 
   return lines.join('\n');
 }

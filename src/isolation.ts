@@ -43,6 +43,7 @@ export const DEFAULT_RENDER_CONFIG: RenderConfig = {
   max_tokens: 16000,
   include_shared: true,
   type_weights: {},
+  type_reservations: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -201,6 +202,25 @@ function validateTypeWeights(raw: Record<string, unknown>): Partial<Record<AtomT
 }
 
 /**
+ * Validate type_reservations: keep only entries where key is a valid AtomType
+ * and value is a finite non-negative number.
+ *
+ * Unlike validateTypeWeights (which accepts negative numbers as a way to
+ * suppress a type's score), reservations are token counts and have no
+ * meaningful negative semantics — negative values are dropped at parse
+ * time so consumers never see them.
+ */
+function validateTypeReservations(raw: Record<string, unknown>): Partial<Record<AtomType, number>> {
+  const result: Partial<Record<AtomType, number>> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (VALID_ATOM_TYPES.has(key) && typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      result[key as AtomType] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Load per-agent render config from `render.yaml` in the agent directory.
  * Falls back to defaults for missing fields.
  */
@@ -233,6 +253,9 @@ export function loadRenderConfig(agentDir: string): RenderConfig {
     type_weights: parsed.type_weights && typeof parsed.type_weights === 'object' && !Array.isArray(parsed.type_weights)
       ? validateTypeWeights(parsed.type_weights as Record<string, unknown>)
       : defaults.type_weights,
+    type_reservations: parsed.type_reservations && typeof parsed.type_reservations === 'object' && !Array.isArray(parsed.type_reservations)
+      ? validateTypeReservations(parsed.type_reservations as Record<string, unknown>)
+      : defaults.type_reservations,
   };
 }
 

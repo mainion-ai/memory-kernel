@@ -16,10 +16,9 @@ import {
   reindex,
   indexExists,
   indexStats,
-  indexAtom,
-  removeFromIndex,
   queryIndex,
 } from '../src/index.js';
+import { indexAtom, removeFromIndex } from '../src/index-db.js';
 
 let testDir: string;
 

@@ -8,6 +8,7 @@ import {
   MUTATION_ACTIONS,
   isMutationAction,
 } from '../src/index.js';
+import type { MemoryEvent } from '../src/index.js';
 
 const BASE_EVENT = {
   event_id: 'evt-test-1',
@@ -80,6 +81,10 @@ describe('MUTATION_ACTIONS', () => {
     expect(MUTATION_ACTIONS).toContain('atom_promoted');
     expect(MUTATION_ACTIONS).toContain('atom_expired');
     expect(MUTATION_ACTIONS).toContain('atom_imported');
+    // #109: conflict_resolved is a terminal mutation (archives the conflict
+    //       atom and carries the final snapshot) — must be tracked by
+    //       compactLog and replay alongside the other archive-like actions.
+    expect(MUTATION_ACTIONS).toContain('conflict_resolved');
   });
 
   it('does not contain non-mutation actions', () => {
@@ -104,10 +109,48 @@ describe('isMutationAction', () => {
     expect(isMutationAction('session_ended')).toBe(false);
     expect(isMutationAction('human_edit')).toBe(false);
     expect(isMutationAction('conflict_detected')).toBe(false);
-    expect(isMutationAction('conflict_resolved')).toBe(false);
+    // #109: conflict_resolved IS a mutation (archives the atom)
+    expect(isMutationAction('conflict_resolved')).toBe(true);
   });
 
   it('returns false for unknown actions', () => {
     expect(isMutationAction('bogus')).toBe(false);
+  });
+});
+
+// #111: MemoryEvent is a discriminated union on schema_version. Narrowing
+//       on `event.schema_version === 2` must reveal V2-only fields without
+//       a cast. This is a type-level guarantee; the runtime check below
+//       just exercises the narrowing path so a regression in the union
+//       layout would show up as a `tsc` error.
+describe('MemoryEvent discriminated union (#111)', () => {
+  it('narrows to V2 when schema_version === 2', () => {
+    const v2: MemoryEvent = {
+      event_id: 'evt-v2',
+      timestamp: '2026-03-10T00:00:00Z',
+      agent_id: 'a',
+      session_id: 's',
+      action: 'atom_created',
+      schema_version: 2,
+      atom_snapshot: '---\nid: X\n---\nbody',
+    };
+    if (v2.schema_version === 2) {
+      // After narrowing, atom_snapshot is typed as string | undefined.
+      expect(v2.atom_snapshot).toBe('---\nid: X\n---\nbody');
+    } else {
+      throw new Error('narrowing failed');
+    }
+  });
+
+  it('narrows to V1 when schema_version is absent', () => {
+    const v1: MemoryEvent = {
+      event_id: 'evt-v1',
+      timestamp: '2026-03-10T00:00:00Z',
+      agent_id: 'a',
+      session_id: 's',
+      action: 'session_started',
+    };
+    expect(v1.schema_version).toBeUndefined();
+    expect(v1.atom_snapshot).toBeUndefined();
   });
 });

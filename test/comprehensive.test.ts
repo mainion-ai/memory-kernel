@@ -218,12 +218,13 @@ describe('Schema validation — negative cases', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should accept zero ttl_days (ephemeral atoms)', () => {
+  // #108: ttl_days must be >= 1 (zero rejected — meaningless TTL)
+  it('should reject zero ttl_days (#108)', () => {
     const result = validateAtomFrontmatter({
       id: 'test', type: 'fact', status: 'active', confidence: 0.5,
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', ttl_days: 0,
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it('should reject float ttl_days', () => {
@@ -1081,10 +1082,12 @@ describe('Retain operations', () => {
     expect(atom.frontmatter.ttl_days).toBeNull();
   });
 
-  it('should allow ttl_days: 0 override (ephemeral)', () => {
+  // #108: ttl_days: 0 must now be rejected by the schema
+  it('should reject ttl_days: 0 override (#108)', () => {
     initMemoryDir(testDir);
-    const atom = createAtom({ ...base(testDir), type: 'decision', slug: 'ephemeral', body: 'Test', ttl_days: 0 });
-    expect(atom.frontmatter.ttl_days).toBe(0);
+    expect(() =>
+      createAtom({ ...base(testDir), type: 'decision', slug: 'ephemeral', body: 'Test', ttl_days: 0 }),
+    ).toThrow();
   });
 
   it('createAtom should throw on invalid frontmatter', () => {
@@ -1825,7 +1828,8 @@ describe('Sprint 1 — reflect events_emitted count', () => {
 // ============================================================================
 
 describe('Sprint 1 — ttl_days zero validation', () => {
-  it('should accept ttl_days: 0 for ephemeral atoms', () => {
+  // #108: ttl_days: 0 is no longer valid (was previously accepted as ephemeral)
+  it('should reject ttl_days: 0 (#108)', () => {
     const result = validateAtomFrontmatter({
       id: 'test-zero-ttl',
       type: 'belief',
@@ -1834,6 +1838,19 @@ describe('Sprint 1 — ttl_days zero validation', () => {
       created_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
       updated_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
       ttl_days: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept ttl_days: 1 (minimum non-zero TTL)', () => {
+    const result = validateAtomFrontmatter({
+      id: 'test-min-ttl',
+      type: 'belief',
+      status: 'draft',
+      confidence: 0.5,
+      created_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      updated_at: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      ttl_days: 1,
     });
     expect(result.success).toBe(true);
   });
@@ -2321,6 +2338,41 @@ describe('Log compaction', () => {
     // Both should be kept — one mutation (create) and one non-mutation (session)
     expect(result.events_after).toBe(2);
     expect(result.removed).toBe(0);
+  });
+
+  // #109: conflict_resolved is a mutation — compactLog must keep the
+  //       latest such event per conflict atom (in practice it's always the
+  //       sole/terminal mutation for the conflict, so it must survive).
+  it('compactLog preserves conflict_resolved as the latest mutation (#109)', () => {
+    initMemoryDir(testDir);
+
+    // Build a conflict atom by hand and emit create + conflict_resolved
+    const conflictAtom = createAtom({
+      ...base(testDir),
+      type: 'conflict',
+      slug: 'will-be-resolved',
+      body: 'Conflict body',
+    });
+
+    // Emit a conflict_resolved event with a final snapshot (status=resolved)
+    appendEvent(testDir, 'conflict_resolved', {
+      ...base(testDir),
+      atom_refs: [conflictAtom.frontmatter.id],
+      schema_version: 2,
+      atom_snapshot: serializeAtom({
+        ...conflictAtom,
+        frontmatter: { ...conflictAtom.frontmatter, status: 'resolved' },
+      }),
+    });
+
+    const result = compactLog(testDir);
+    const events = readEvents(testDir);
+
+    // The conflict_resolved event must survive — it's the latest (and only
+    // terminal) mutation for the conflict atom. atom_created is pruned.
+    const resolved = events.filter((e) => e.action === 'conflict_resolved');
+    expect(resolved).toHaveLength(1);
+    expect(result.removed).toBe(1); // atom_created pruned, conflict_resolved kept
   });
 
   it('compactLog on empty log returns zero counts', () => {

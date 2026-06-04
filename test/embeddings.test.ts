@@ -30,8 +30,8 @@ import {
   getAllEmbeddings,
   isEmbeddingStale,
   embeddingStats,
-  removeFromIndex,
 } from '../src/index.js';
+import { removeFromIndex } from '../src/index-db.js';
 import { recall } from '../src/recall.js';
 import { semanticSearchSync } from '../src/embed-sync.js';
 

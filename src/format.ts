@@ -4,7 +4,7 @@
  */
 
 import yaml from 'js-yaml';
-import matter from 'gray-matter';
+import { parseFrontmatter } from './internal/frontmatter.js';
 import type { Atom, AtomFrontmatter } from './types.js';
 import { renderRelationsSection, stripRelationsSection } from './obsidian.js';
 
@@ -40,6 +40,17 @@ export function normalizeTags(tags: string[]): string[] {
   }
   return [...result].sort();
 }
+
+/**
+ * Legacy Juggl typed-link frontmatter keys (no longer generated).
+ * Stripped on parse for backward compatibility with atoms serialized
+ * before Juggl support was removed.
+ */
+const LEGACY_TYPED_LINK_KEYS = new Set([
+  'extends', 'supports', 'contradicts', 'caused-by',
+  'related', 'applied-to',
+  'causedby', 'appliedto',
+]);
 
 /**
  * Serialize atom frontmatter to YAML with stable key ordering.
@@ -81,7 +92,7 @@ export function serializeAtom(atom: Atom): string {
  * Validates that required fields (id, type, status) are present.
  */
 export function parseAtom(content: string, filePath?: string): Atom {
-  const parsed = matter(content);
+  const parsed = parseFrontmatter(content);
   const data = parsed.data;
 
   // Validate required fields to prevent downstream crashes
@@ -93,6 +104,12 @@ export function parseAtom(content: string, filePath?: string): Atom {
   }
   if (typeof data.status !== 'string' || !data.status) {
     throw new Error(`Missing or invalid 'status' in frontmatter${filePath ? ` (${filePath})` : ''}`);
+  }
+
+  // Strip legacy Juggl typed-link frontmatter keys (no longer generated,
+  // but may exist in atoms serialized before Juggl support was removed)
+  for (const key of LEGACY_TYPED_LINK_KEYS) {
+    delete data[key];
   }
 
   // Handle promoted top-level `tags` — it's a derived view of scope.tags

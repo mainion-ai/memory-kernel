@@ -216,10 +216,21 @@ describe('body text mining', () => {
       body: `This belief extends ${target.frontmatter.id} into new territory.`,
     });
 
-    const { proposed } = runMigration(testDir, false);
-    const rel = proposed.find((p) => p.atomId === source.frontmatter.id);
-    expect(rel).toBeDefined();
-    expect(rel!.type).toBe('extends');
+    // Auto-relink in createAtom() now handles body references at creation time.
+    // Verify the relation was auto-linked, OR migration proposes it for legacy atoms.
+    const existingRel = source.frontmatter.relations?.find(
+      (r) => r.target === target.frontmatter.id,
+    );
+    if (existingRel) {
+      // Auto-relink already handled it — verify type inference
+      expect(existingRel.type).toBe('extends');
+    } else {
+      // Fallback: migration should propose it (legacy path)
+      const { proposed } = runMigration(testDir, false);
+      const rel = proposed.find((p) => p.atomId === source.frontmatter.id);
+      expect(rel).toBeDefined();
+      expect(rel!.type).toBe('extends');
+    }
   });
 
   it('defaults to related when no context words match', () => {
@@ -236,9 +247,17 @@ describe('body text mining', () => {
       body: `See also ${target.frontmatter.id} for more context.`,
     });
 
-    const { proposed } = runMigration(testDir, false);
-    const rel = proposed.find((p) => p.atomId === source.frontmatter.id);
-    expect(rel?.type).toBe('related');
+    // Auto-relink in createAtom() now handles body references at creation time.
+    const existingRel = source.frontmatter.relations?.find(
+      (r) => r.target === target.frontmatter.id,
+    );
+    if (existingRel) {
+      expect(existingRel.type).toBe('related');
+    } else {
+      const { proposed } = runMigration(testDir, false);
+      const rel = proposed.find((p) => p.atomId === source.frontmatter.id);
+      expect(rel?.type).toBe('related');
+    }
   });
 
   it('skips self-references (atom ID appears in own body)', () => {

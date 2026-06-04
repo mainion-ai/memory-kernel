@@ -337,6 +337,39 @@ You can always pass a literal string for either field — the SecretRef shape is
 
 Plugin-local resolution runs only when the value is an object with `source: "file"`. No behavioral change for existing string configs.
 
+## Compat matrix
+
+This subpackage tracks its own SemVer lifecycle independent of `memory-kernel`. Pick the row matching the `openclaw-memory-kernel` version you intend to install; the columns are the floors you need to satisfy elsewhere in your project.
+
+| `openclaw-memory-kernel` | `memory-kernel` | `openclaw` | `@sinclair/typebox` | Node |
+|---|---|---|---|---|
+| `0.3.x` | `^1.26.0` | `>=2026.3.7` (optional peer) | `^0.34.0` (required peer) | `>=22.16` |
+| `0.2.x` | `^1.14.0` (tested up to 1.23.x) | `>=2026.3.7` (optional peer) | `^0.34.0` (runtime dep) | `>=18` |
+| `0.1.x` | `^1.0.1` (tested up to 1.13.x) | `>=2026.3.7` (optional peer) | `^0.34.0` (runtime dep) | `>=18` |
+
+Notes:
+
+- **`memory-kernel` pin:** This subpackage's `package.json` carets the `memory-kernel` runtime dep at the version current at its own release. The caret floor is the minimum tested combination; later same-MAJOR `memory-kernel` releases are expected to work.
+- **`openclaw`:** Listed as an *optional* peer because the plugin is unit-testable without OpenClaw installed. In production it's effectively required — the plugin only does anything when loaded by an OpenClaw gateway.
+- **`@sinclair/typebox`:** Moved from runtime dep to *required* peer in 0.3.0 (see [CHANGELOG](./CHANGELOG.md#030--2026-05-20)). Consumers of 0.3.x must install it themselves.
+- **Node floor:** The 0.3.x bump to `>=22.16` came in via [main-package v1.26.0](../../CHANGELOG.md#1260--2026-05-25); the subpackage `package.json` was tightened in the same commit even though the subpackage's own contract was unchanged.
+
+When this subpackage publishes to npm (tracked at [#152](https://github.com/mainion-ai/memory-kernel-dev/issues/152)), the matrix above becomes the canonical compat reference. Until then, install via the in-tree `npm install /path/to/packages/openclaw-memory-kernel` or vendoring.
+
+## Deprecation policy
+
+Surfaces that need to be removed (config fields, exported hooks, tool names) follow a **soft-warn → remove-at-next-MAJOR** discipline:
+
+1. The surface is marked deprecated in the subpackage CHANGELOG, JSDoc, and (for config fields) the schema description in `openclaw.plugin.json`.
+2. It keeps working — with a deprecation warning at load — for **at least two MINOR releases**.
+3. It is removed only on the **next MAJOR** bump of this subpackage.
+
+Concrete current case:
+
+- **`failIfMissingAgentStore`** has been deprecated since the per-agent isolation work (carried in v1.21.0). Throwing on missing agent store is now the default; `failIfMissingAgentStore: false` maps to `allowSharedFallback: true` for backward compat.
+- It will be removed in **subpackage 1.0.0** (the next MAJOR), with at least two intermediate MINORs (0.4.0, 0.5.0, …) carrying the soft warning.
+- **Migration path:** switch to `allowSharedFallback`. The semantics are identical (`false` = error on missing agent store, `true` = silently fall back to shared mode).
+
 ## Troubleshooting
 
 **Tools don't appear after restart**

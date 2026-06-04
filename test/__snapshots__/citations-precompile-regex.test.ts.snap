@@ -1,0 +1,24 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`citations regex precompile > extractCitations: same entries returned (functional equivalence) 1`] = `
+[
+  {
+    "count": 1,
+    "sourceIdx": 0,
+    "targetIdx": 1,
+    "type": "concept_name",
+  },
+]
+`;
+
+exports[`citations regex precompile > indexCitations: same byType counts and topCited as before 1`] = `
+{
+  "byType": {
+    "atom_id": 0,
+    "concept_name": 4,
+  },
+  "topCitedCount": 3,
+  "total": 4,
+  "uniqueTargets": 3,
+}
+`;

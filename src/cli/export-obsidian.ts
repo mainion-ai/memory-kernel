@@ -13,6 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import { listAtoms } from '../store.js';
 import type { Atom } from '../types.js';
 import { ATOM_TYPES } from '../types.js';
@@ -180,12 +181,10 @@ export function registerExportObsidianCommand(program: Command): void {
     .action((opts: { out: string; dir: string; includeArchived?: boolean; json?: boolean }) => {
       const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
-        if (opts.json) {
-          console.log(JSON.stringify({ error: `Memory directory not found: ${memoryDir}` }, null, 2));
-        } else {
-          console.error(`\u2717 Memory directory not found: ${memoryDir}\n  Run "mk init" first.`);
-        }
-        process.exit(1);
+        exitWithError(
+          `Memory directory not found: ${memoryDir}\n  Run "mk init" first.`,
+          opts.json,
+        );
       }
 
       const outDir = path.resolve(opts.out);

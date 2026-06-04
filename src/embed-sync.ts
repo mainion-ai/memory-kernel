@@ -9,8 +9,8 @@
  * - semanticSearch() — sync, KNN over stored vectors
  */
 
-import { getEmbeddingConfig, embedText, embedBatch, cosineSimilarity, serializeVector, deserializeVector, atomToEmbeddingText } from './embeddings.js';
-import { storeEmbedding, getAllEmbeddings, isEmbeddingStale, indexExists } from './index-db.js';
+import { getEmbeddingConfig, embedText, embedBatch, normalizeVector, dotProduct, serializeVector, deserializeVector, atomToEmbeddingText } from './embeddings.js';
+import { storeEmbedding, getAllEmbeddings, isEmbeddingStale, getAllEmbeddingHashes, indexExists } from './index-db.js';
 import { listAtoms } from './store.js';
 import { hashEvidence } from './evidence.js';
 import type { Atom } from './types.js';
@@ -45,13 +45,16 @@ export async function embedAtom(memoryDir: string, atom: Atom): Promise<boolean>
 
   try {
     const result = await embedText(text, config);
+    // Pre-normalize to unit-norm so KNN can use dot product (#95).
+    const normVec = normalizeVector(result.vector);
     storeEmbedding(
       memoryDir,
       atom.frontmatter.id,
-      serializeVector(result.vector),
+      serializeVector(normVec),
       result.model,
-      result.vector.length,
+      normVec.length,
       bodyHash,
+      true,
     );
     return true;
   } catch (err) {
@@ -87,6 +90,10 @@ export async function embedAllAtoms(
   const BATCH_SIZE = 100;
   const toEmbed: { atom: Atom; text: string; hash: string }[] = [];
 
+  // Bulk-load every existing (atom_id, body_hash) pair once — replaces N
+  // per-atom SELECTs with a single round-trip. At N=10k this is ~10×+ faster.
+  const storedHashes = getAllEmbeddingHashes(memoryDir) ?? new Map<string, string>();
+
   for (const atom of atoms) {
     // Never send SECRET or PERSONAL atoms to external embedding APIs
     const cls = atom.frontmatter.classification;
@@ -96,7 +103,8 @@ export async function embedAllAtoms(
     }
 
     const hash = contentHash(atom.body);
-    if (!isEmbeddingStale(memoryDir, atom.frontmatter.id, hash)) {
+    const stored = storedHashes.get(atom.frontmatter.id);
+    if (stored !== undefined && stored === hash) {
       skipped++;
       continue;
     }
@@ -120,13 +128,16 @@ export async function embedAllAtoms(
         const { atom, hash } = batch[j];
         const result = results[j];
 
+        // Pre-normalize to unit-norm so KNN can use dot product (#95).
+        const normVec = normalizeVector(result.vector);
         storeEmbedding(
           memoryDir,
           atom.frontmatter.id,
-          serializeVector(result.vector),
+          serializeVector(normVec),
           result.model,
-          result.vector.length,
+          normVec.length,
           hash,
+          true,
         );
         embedded++;
       }
@@ -176,10 +187,11 @@ export async function semanticSearch(
     return null;
   }
 
-  // KNN: compute cosine similarity against all stored vectors
+  // KNN: dot product over pre-normalized stored vectors (#95).
+  const q = normalizeVector(queryVector);
   const scored = stored.map(({ atom_id, embedding }) => ({
     atom_id,
-    similarity: cosineSimilarity(queryVector, deserializeVector(embedding)),
+    similarity: dotProduct(q, deserializeVector(embedding)),
   }));
 
   // Sort by similarity (highest first) and limit
@@ -199,9 +211,11 @@ export function semanticSearchSync(
   const stored = getAllEmbeddings(memoryDir);
   if (!stored || stored.length === 0) return null;
 
+  // KNN: dot product over pre-normalized stored vectors (#95).
+  const q = normalizeVector(queryVector);
   const scored = stored.map(({ atom_id, embedding }) => ({
     atom_id,
-    similarity: cosineSimilarity(queryVector, deserializeVector(embedding)),
+    similarity: dotProduct(q, deserializeVector(embedding)),
   }));
 
   scored.sort((a, b) => b.similarity - a.similarity);

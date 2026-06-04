@@ -13,6 +13,7 @@
  *   mk status                  Show memory stats
  *   mk wander                  Explore memory via spreading activation
  *   mk closure                 Compute operational closure metrics
+ *   mk observe <log>            Extract observations from a conversation log
  */
 
 import { Command } from 'commander';
@@ -57,23 +58,34 @@ import { registerExtractCommand } from './extract.js';
 import { registerConsolidateCommand } from './consolidate.js';
 import { registerExportObsidianCommand } from './export-obsidian.js';
 import { registerObsidianInitCommand } from './obsidian-init.js';
+import { registerObserveCommand } from './observe.js';
+import { registerSupersedeCommand } from './supersede.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
 import { migrate } from '../migrate.js';
 import { resolveDir as resolveDirBase } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
+import {
+  processDeprecatedFlags,
+  parseRenderStats,
+  degenerateOutputWarning,
+} from '../deprecations.js';
+import {
+  generateCronWrapper,
+  parseGeneratedHeader,
+  applyCrontabLine,
+  DEFAULT_MAX_TOKENS,
+} from '../cron-template.js';
+import {
+  runDoctor,
+  runDoctorFix,
+  parseSkipCategories,
+  flattenIssues,
+} from '../doctor/run.js';
+import { execFileSync } from 'child_process';
 
 const program = new Command();
-
-/** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
-function exitWithError(message: string, json?: boolean): never {
-  if (json) {
-    console.log(JSON.stringify({ error: message }, null, 2));
-  } else {
-    console.error(`✗ ${message}`);
-  }
-  process.exit(1);
-}
 
 program
   .name('mk')
@@ -92,11 +104,50 @@ function getAgent(): string | undefined {
 }
 
 // --- mk init ---
+//
+// Two modes:
+//
+//   1. `mk init [dir]` (default) — initialize a memory directory with the
+//      canonical on-disk layout. This is the original behavior.
+//
+//   2. `mk init --cron --dir <memory> --claude-md <out> --output <script>`
+//      (#143) — generate the canonical memory-sync wrapper for the current
+//      host instead of initializing a memory dir. With `--update`, regenerate
+//      an existing wrapper in place, preserving the paths embedded in its
+//      header. With `--install-cron <schedule>`, also append/replace the
+//      corresponding line in the user's crontab (or the file pointed at by
+//      `MK_CRONTAB_FILE` — used by tests to avoid mutating the real crontab).
 program
   .command('init')
-  .description('Initialize a memory directory with canonical layout')
-  .argument('[dir]', 'Directory to initialize', './memory')
-  .action((dir: string) => {
+  .description('Initialize a memory directory, or generate a memory-sync cron wrapper with --cron')
+  .argument('[dir]', 'Directory to initialize (ignored with --cron)', './memory')
+  .option('--cron', 'Generate a canonical memory-sync wrapper script instead of initializing a directory')
+  .option('-d, --dir <dir>', 'Memory directory the wrapper should sync (required with --cron)')
+  .option('--claude-md <path>', 'CLAUDE.md path the wrapper should render to (required with --cron)')
+  .option('--output <path>', 'Path to write the wrapper script (required with --cron)')
+  .option('--memory-repo <path>', 'Git repo to commit/push from (defaults to dirname of --dir)')
+  .option('--max-tokens <n>', `Render token budget embedded in the wrapper (default ${DEFAULT_MAX_TOKENS})`)
+  .option('--agent-id <id>', 'Agent ID embedded in the wrapper (default: $(hostname -s) at run time)')
+  .option('--install-cron <schedule>', 'Idempotently install a crontab entry for the wrapper, e.g. "0 23 * * *"')
+  .option('--update', 'Regenerate the wrapper at --output in place, preserving paths from its header')
+  .option('--force', 'Overwrite an existing --output file without prompting')
+  .action((dir: string, opts: {
+    cron?: boolean;
+    dir?: string;
+    claudeMd?: string;
+    output?: string;
+    memoryRepo?: string;
+    maxTokens?: string;
+    agentId?: string;
+    installCron?: string;
+    update?: boolean;
+    force?: boolean;
+  }) => {
+    if (opts.cron) {
+      runInitCron(opts);
+      return;
+    }
+
     const memoryDir = path.resolve(dir);
     const agent = getAgent();
     if (agent) {
@@ -114,6 +165,146 @@ program
       console.log('  Created: events.ndjson');
     }
   });
+
+function runInitCron(opts: {
+  dir?: string;
+  claudeMd?: string;
+  output?: string;
+  memoryRepo?: string;
+  maxTokens?: string;
+  agentId?: string;
+  installCron?: string;
+  update?: boolean;
+  force?: boolean;
+}): void {
+  if (!opts.output) {
+    exitWithError('--output <path> is required with --cron');
+  }
+  const outputPath = path.resolve(opts.output);
+
+  // --update: read paths back from the existing wrapper's mk:* header.
+  // CLI-supplied flags still win (e.g. user can rotate --max-tokens by passing
+  // both --update and --max-tokens), but anything the user didn't pass is
+  // inherited from the existing file rather than re-prompted.
+  let memoryDir: string | undefined;
+  let claudeMd: string | undefined;
+  let memoryRepo: string | undefined;
+  let maxTokens: number | undefined;
+  let agentId: string | undefined;
+
+  if (opts.update) {
+    if (!fs.existsSync(outputPath)) {
+      exitWithError(`--update requires an existing file at ${outputPath}`);
+    }
+    const existing = fs.readFileSync(outputPath, 'utf-8');
+    const header = parseGeneratedHeader(existing);
+    if (!header) {
+      exitWithError(
+        `Could not read mk: header lines from ${outputPath}. Was it generated by mk init --cron?`,
+      );
+    }
+    memoryDir = header.memoryDir;
+    claudeMd = header.claudeMd;
+    memoryRepo = header.memoryRepo;
+    maxTokens = header.maxTokens;
+    agentId = header.agentId ?? undefined;
+  }
+
+  // CLI flags override anything pulled from the header (above).
+  if (opts.dir) memoryDir = path.resolve(opts.dir);
+  if (opts.claudeMd) claudeMd = path.resolve(opts.claudeMd);
+  if (opts.memoryRepo) memoryRepo = path.resolve(opts.memoryRepo);
+  if (opts.maxTokens) {
+    const n = parseInt(opts.maxTokens, 10);
+    if (isNaN(n) || n <= 0) exitWithError('--max-tokens must be a positive integer');
+    maxTokens = n;
+  }
+  if (opts.agentId) agentId = opts.agentId;
+
+  if (!memoryDir) exitWithError('--dir <memory-directory> is required with --cron');
+  if (!claudeMd) exitWithError('--claude-md <path> is required with --cron');
+
+  // Overwrite guard — refuse silently destroying an existing file unless the
+  // user opts in via --force or is in --update mode (which by definition
+  // writes back to the same file).
+  if (!opts.update && !opts.force && fs.existsSync(outputPath)) {
+    exitWithError(
+      `${outputPath} already exists. Re-run with --update to regenerate in place, or --force to overwrite.`,
+    );
+  }
+
+  const script = generateCronWrapper({
+    memoryDir,
+    claudeMd,
+    memoryRepo,
+    maxTokens,
+    agentId,
+    kernelVersion: pkg.version,
+    generatedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+  });
+
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, script);
+  fs.chmodSync(outputPath, 0o755);
+  console.log(`✓ Wrote ${outputPath} (${script.split('\n').length - 1} lines, mode 755)`);
+  console.log(`  Generated by mk v${pkg.version}.`);
+
+  // Warn at generation time when the wrapper lives inside the memory repo:
+  // the generated git step does `git add -A`, which would otherwise commit
+  // the wrapper itself on first sync. (See observation on PR #149.)
+  const resolvedMemoryRepo = memoryRepo ?? path.dirname(memoryDir);
+  const relToRepo = path.relative(resolvedMemoryRepo, outputPath);
+  if (relToRepo && !relToRepo.startsWith('..') && !path.isAbsolute(relToRepo)) {
+    const scriptName = path.basename(outputPath);
+    console.error(
+      `mk: note: ${outputPath} is inside ${resolvedMemoryRepo}. Add "${scriptName}" to that repo's .gitignore so the sync step does not commit the wrapper itself.`,
+    );
+  }
+
+  const cronLine = opts.installCron
+    ? `${opts.installCron.trim()} ${outputPath}`
+    : null;
+
+  if (cronLine) {
+    installCronEntry(cronLine, outputPath);
+  } else {
+    console.log('');
+    console.log('To install on a 23:00 daily schedule, run:');
+    console.log(`  (crontab -l 2>/dev/null; echo "0 23 * * * ${outputPath}") | crontab -`);
+    console.log('Or re-run with: mk init --cron --update --output <this-file> --install-cron "0 23 * * *"');
+  }
+}
+
+/**
+ * Read the current crontab (or MK_CRONTAB_FILE for tests), apply the new line
+ * idempotently, write it back. We never silently mutate the user's crontab
+ * without --install-cron.
+ */
+function installCronEntry(cronLine: string, scriptPath: string): void {
+  const fileOverride = process.env.MK_CRONTAB_FILE;
+
+  let current = '';
+  if (fileOverride) {
+    current = fs.existsSync(fileOverride) ? fs.readFileSync(fileOverride, 'utf-8') : '';
+  } else {
+    try {
+      // `crontab -l` exits non-zero with empty stdout when no crontab exists yet.
+      current = execFileSync('crontab', ['-l'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      current = '';
+    }
+  }
+
+  const next = applyCrontabLine(current, cronLine, scriptPath);
+
+  if (fileOverride) {
+    fs.writeFileSync(fileOverride, next);
+  } else {
+    execFileSync('crontab', ['-'], { input: next, encoding: 'utf-8' });
+  }
+
+  console.log(`✓ Installed crontab entry: ${cronLine}`);
+}
 
 // --- mk status ---
 program
@@ -245,6 +436,7 @@ program
   .option('--no-graph', 'Disable graph-relation neighbor boost')
   .option('--reservations', 'Enable type-based token reservations (default: on for no-task, off for --task)')
   .option('--no-reservations', 'Disable type-based token reservations')
+  .option('--embed', 'Use hybrid FTS + embedding retrieval (requires embeddings built via reindex --embed)')
   .option('--json', 'Output as JSON')
   .action(async (opts: {
     dir: string;
@@ -257,6 +449,7 @@ program
     includeEpisodes?: boolean;
     graph: boolean; // Commander sets this to true/false via --graph/--no-graph
     reservations?: boolean; // Commander sets via --reservations/--no-reservations
+    embed?: boolean;
     json?: boolean;
   }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
@@ -283,8 +476,7 @@ program
       graph_boost: opts.graph,
       no_reservations: noReservations,
     };
-    // Use hybrid FTS+semantic retrieval when a task query is provided
-    const bundle = opts.task
+    const bundle = opts.embed
       ? await recallWithEmbeddings(memoryDir, recallOpts)
       : recall(memoryDir, recallOpts);
 
@@ -436,70 +628,169 @@ program
   });
 
 // --- mk doctor ---
+//
+// Orchestrator over a check registry (src/doctor/). Exit codes:
+//   0 — healthy
+//   1 — warn (one or more checks found warn-severity issues)
+//   2 — error (a check returned error severity, or a hard runtime error)
+//
+// JSON output is backward-compatible with the pre-#140 shape:
+// `{ healthy, issue_count, issues }`, with a new `checks` array alongside
+// for callers that want per-check structure.
 program
   .command('doctor')
-  .description('Validate memory: schema, links, conflicts')
+  .description('Validate memory: schema, links, conflicts, store integrity, wrapper drift')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--json', 'Output as JSON')
-  .action((opts: { dir: string; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
-    const atoms = listAtoms(memoryDir);
-    const issues: string[] = [];
-
-    // Check schema
-    for (const atom of atoms) {
-      const result = validateAtomFrontmatter(atom.frontmatter);
-      if (!result.success) {
-        issues.push(`Schema: ${atom.frontmatter.id} — ${JSON.stringify(result.error.issues)}`);
+  .option(
+    '--skip <categories>',
+    'Comma-separated check categories to skip: wrappers, network, cron, store',
+  )
+  .option('--fix', 'Apply auto-fixes for safe issues (#157)')
+  .option('--dry-run', 'Preview --fix actions without writing (no-op without --fix)')
+  .action(
+    async (opts: {
+      dir: string;
+      json?: boolean;
+      skip?: string;
+      fix?: boolean;
+      dryRun?: boolean;
+    }) => {
+      const memoryDir = resolveDir(opts.dir, getAgent());
+      if (!fs.existsSync(memoryDir)) {
+        // Hard error: cannot run any check. Exit code 2 per #140 spec.
+        const msg = `Memory directory not found: ${memoryDir}\n  Run "mk init" first.`;
+        if (opts.json) {
+          console.log(JSON.stringify({ error: msg }, null, 2));
+        } else {
+          console.error(`✗ ${msg}`);
+        }
+        process.exit(2);
       }
-    }
 
-    // Check for broken links
-    const allIds = new Set(atoms.map((a) => a.frontmatter.id));
-    for (const atom of atoms) {
-      const links = [
-        ...(atom.frontmatter.links?.related ?? []),
-        ...(atom.frontmatter.links?.supersedes ?? []),
-        ...(atom.frontmatter.links?.blocked_by ?? []),
-      ];
-      for (const link of links) {
-        if (!allIds.has(link)) {
-          issues.push(`Broken link: ${atom.frontmatter.id} → ${link}`);
+      const doctorCtx = {
+        memoryDir,
+        kernelVersion: pkg.version,
+        skipCategories: parseSkipCategories(opts.skip),
+        env: process.env,
+      };
+
+      // --dry-run without --fix is a soft no-op: warn and behave like plain doctor.
+      if (opts.dryRun && !opts.fix && !opts.json) {
+        console.error('Warning: --dry-run has no effect without --fix; running plain doctor.');
+      }
+
+      if (opts.fix) {
+        const { initialResults, results, fixResults, exitCode } = await runDoctorFix(
+          doctorCtx,
+          { dryRun: !!opts.dryRun },
+        );
+        const issues = flattenIssues(initialResults);
+
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                healthy: issues.length === 0,
+                issue_count: issues.length,
+                issues,
+                checks: results,
+                fixes: fixResults.map((f) => ({
+                  name: f.name,
+                  applied: f.applied,
+                  remaining: f.remaining,
+                  ...(f.errors ? { errors: f.errors } : {}),
+                  dry_run: f.dryRun,
+                })),
+              },
+              null,
+              2,
+            ),
+          );
+          process.exit(exitCode);
+        }
+
+        // Human output for --fix.
+        const verb = opts.dryRun ? '[WOULD FIX]' : '[FIXED]';
+        if (fixResults.length === 0 && issues.length === 0) {
+          console.log('✓ Memory is healthy. No fixes needed.');
+          process.exit(exitCode);
+        }
+        for (const f of fixResults) {
+          if (f.applied.length > 0) {
+            console.log(`${verb} ${f.name}:`);
+            for (const line of f.applied) console.log(`  - ${line}`);
+          }
+          if (f.remaining.length > 0) {
+            console.log(`[REMAINING] ${f.name}:`);
+            for (const line of f.remaining) console.log(`  - ${line}`);
+          }
+          if (f.errors && f.errors.length > 0) {
+            console.log(`[ERROR] ${f.name}:`);
+            for (const line of f.errors) console.log(`  - ${line}`);
+          }
+        }
+        // Surface any unfixable issues from non-fixable checks too.
+        const fixedNames = new Set(fixResults.map((f) => f.name));
+        for (const r of results) {
+          if (r.ok || r.skipped || fixedNames.has(r.name)) continue;
+          const tag = r.severity === 'error' ? '[ERROR]' : '[WARN]';
+          console.log(`${tag} ${r.name}:`);
+          for (const i of r.issues) console.log(`  - ${i}`);
+        }
+        process.exit(exitCode);
+      }
+
+      // Plain doctor path (no --fix).
+      const { results, exitCode } = await runDoctor(doctorCtx);
+      const issues = flattenIssues(results);
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              healthy: issues.length === 0,
+              issue_count: issues.length,
+              issues,
+              checks: results,
+            },
+            null,
+            2,
+          ),
+        );
+        process.exit(exitCode);
+      }
+
+      if (issues.length === 0) {
+        console.log('✓ Memory is healthy. No issues found.');
+        const skipped = results.filter((r) => r.skipped);
+        for (const r of skipped) {
+          console.log(`  - ${r.name}: skipped (${r.skipped?.reason})`);
+        }
+        process.exit(exitCode);
+      }
+
+      const severityCounts = { error: 0, warn: 0 };
+      for (const r of results) {
+        if (r.ok || r.skipped) continue;
+        if (r.severity === 'error') severityCounts.error += r.issues.length;
+        if (r.severity === 'warn') severityCounts.warn += r.issues.length;
+      }
+
+      console.log(
+        `✗ Found ${issues.length} issue(s) — ${severityCounts.error} error, ${severityCounts.warn} warn:\n`,
+      );
+      for (const r of results) {
+        if (r.ok || r.skipped) continue;
+        const tag = r.severity === 'error' ? '[ERROR]' : '[WARN]';
+        console.log(`${tag} ${r.name}:`);
+        for (const i of r.issues) {
+          console.log(`  - ${i}`);
         }
       }
-    }
-
-    // Check for active conflicts
-    const conflicts = atoms.filter(
-      (a) => a.frontmatter.type === 'conflict' && a.frontmatter.status === 'active',
-    );
-    for (const c of conflicts) {
-      issues.push(`Active conflict: ${c.frontmatter.id}`);
-    }
-
-    if (opts.json) {
-      console.log(JSON.stringify({
-        healthy: issues.length === 0,
-        issue_count: issues.length,
-        issues,
-      }, null, 2));
-      if (issues.length > 0) process.exit(1);
-      return;
-    }
-
-    if (issues.length === 0) {
-      console.log('✓ Memory is healthy. No issues found.');
-    } else {
-      console.log(`✗ Found ${issues.length} issue(s):\n`);
-      for (const issue of issues) {
-        console.log(`  - ${issue}`);
-      }
-      process.exit(1);
-    }
-  });
+      process.exit(exitCode);
+    },
+  );
 
 // --- mk reindex ---
 program
@@ -507,32 +798,68 @@ program
   .description('Rebuild SQLite index from atom files')
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--embed', 'Also (re)compute embeddings for all atoms')
-  .action(async (opts: { dir: string; embed?: boolean }) => {
+  .option('--json', 'Output results as JSON')
+  .action(async (opts: { dir: string; embed?: boolean; json?: boolean }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
-    console.log(`Rebuilding index for ${memoryDir}...`);
+    if (!opts.json) {
+      console.log(`Rebuilding index for ${memoryDir}...`);
+    }
     const result = reindex(memoryDir);
-    console.log(`✓ Indexed ${result.indexed} atoms in ${result.timeMs}ms`);
-
     const stats = indexStats(memoryDir);
-    if (stats) {
-      console.log(`  Atoms: ${stats.atoms}, Tags: ${stats.tags}, Paths: ${stats.paths}`);
+
+    let embedSummary: { embedded: number; skipped: number; errors: number; time_ms: number } | undefined;
+    if (opts.embed) {
+      if (!opts.json) {
+        console.log(`✓ Indexed ${result.indexed} atoms in ${result.timeMs}ms`);
+        if (stats) {
+          console.log(`  Atoms: ${stats.atoms}, Tags: ${stats.tags}, Paths: ${stats.paths}`);
+        }
+        console.log(`\nEmbedding atoms...`);
+      }
+      const embedResult = await embedAllAtoms(memoryDir, {
+        onProgress: opts.json
+          ? undefined
+          : (done, total) => {
+              process.stdout.write(`\r  Progress: ${done}/${total}`);
+            },
+      });
+      if (!opts.json) {
+        console.log(''); // newline after progress
+        console.log(`✓ Embeddings: ${embedResult.embedded} embedded, ${embedResult.skipped} skipped, ${embedResult.errors} errors (${embedResult.timeMs}ms)`);
+      }
+      embedSummary = {
+        embedded: embedResult.embedded,
+        skipped: embedResult.skipped,
+        errors: embedResult.errors,
+        time_ms: embedResult.timeMs,
+      };
     }
 
-    // Optionally (re)compute embeddings
-    if (opts.embed) {
-      console.log(`\nEmbedding atoms...`);
-      const embedResult = await embedAllAtoms(memoryDir, {
-        onProgress: (done, total) => {
-          process.stdout.write(`\r  Progress: ${done}/${total}`);
-        },
-      });
-      console.log(''); // newline after progress
-      console.log(`✓ Embeddings: ${embedResult.embedded} embedded, ${embedResult.skipped} skipped, ${embedResult.errors} errors (${embedResult.timeMs}ms)`);
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            indexed: result.indexed,
+            time_ms: result.timeMs,
+            stats: stats ?? null,
+            embeddings: embedSummary ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    if (!opts.embed) {
+      console.log(`✓ Indexed ${result.indexed} atoms in ${result.timeMs}ms`);
+      if (stats) {
+        console.log(`  Atoms: ${stats.atoms}, Tags: ${stats.tags}, Paths: ${stats.paths}`);
+      }
     }
   });
 
@@ -614,11 +941,11 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-bootstrap')
-  .action((opts: { dir: string; agentId: string; sessionId: string }) => {
+  .option('--json', 'Output results as JSON')
+  .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
     const result = bootstrapEvents({
@@ -626,6 +953,11 @@ program
       agent_id: opts.agentId,
       session_id: opts.sessionId,
     });
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
 
     console.log('✓ Bootstrap completed:');
     console.log(`  Imported: ${result.imported} atoms`);
@@ -682,22 +1014,20 @@ program
   .option('--agent-id <id>', 'Agent ID for the merge event', 'cli')
   .option('--session-id <id>', 'Session ID for the merge event', 'cli-merge')
   .option('--dry-run', 'Preview changes without writing anything')
-  .action((opts: { from: string; dir: string; agentId: string; sessionId: string; dryRun?: boolean }) => {
+  .option('--json', 'Output results as JSON')
+  .action((opts: { from: string; dir: string; agentId: string; sessionId: string; dryRun?: boolean; json?: boolean }) => {
     const localDir = resolveDir(opts.dir, getAgent());
     const remoteDir = path.resolve(opts.from);
 
     if (!fs.existsSync(localDir)) {
-      console.error(`✗ Local memory directory not found: ${localDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Local memory directory not found: ${localDir}\n  Run "mk init" first.`, opts.json);
     }
 
     if (!fs.existsSync(remoteDir)) {
-      console.error(`✗ Remote directory not found: ${remoteDir}`);
-      process.exit(1);
+      exitWithError(`Remote directory not found: ${remoteDir}`, opts.json);
     }
 
-    if (opts.dryRun) {
+    if (opts.dryRun && !opts.json) {
       console.log('Dry run — no changes will be written.\n');
     }
 
@@ -710,6 +1040,11 @@ program
         dryRun: opts.dryRun,
       });
 
+      if (opts.json) {
+        console.log(JSON.stringify({ dry_run: !!opts.dryRun, ...result }, null, 2));
+        return;
+      }
+
       const prefix = opts.dryRun ? '(dry run) ' : '✓ ';
       console.log(`${prefix}Merge completed:`);
       console.log(`  Events imported:   ${result.events_imported}`);
@@ -720,8 +1055,7 @@ program
         console.log(`  Backup:            ${result.backup_path}`);
       }
     } catch (err) {
-      console.error(`✗ Merge failed: ${String(err)}`);
-      process.exit(1);
+      exitWithError(`Merge failed: ${String(err)}`, opts.json);
     }
   });
 
@@ -729,11 +1063,25 @@ program
 program
   .command('replay')
   .description('Replay events to reconstruct state')
-  .requiredOption('--from <file>', 'Events NDJSON file to replay')
+  // #122: unified --from semantics — accept either an events NDJSON file or a
+  // memory-kernel directory (in which case we auto-locate <dir>/events.ndjson).
+  // `merge --from <dir>` and `replay --from <file|dir>` now both accept the
+  // common "memory-kernel store" shape; `import --from <file>` remains
+  // file-only because its source is an arbitrary markdown document, not a
+  // memory-kernel input.
+  .requiredOption('--from <path>', 'Events NDJSON file, or a memory-kernel directory containing events.ndjson')
   .option('--output-dir <dir>', 'Write reconstructed atoms and views to this directory')
   .option('--evidence-dir <dir>', 'Directory containing evidence blobs')
   .action((opts: { from: string; outputDir?: string; evidenceDir?: string }) => {
-    const eventsFile = path.resolve(opts.from);
+    let eventsFile = path.resolve(opts.from);
+    if (fs.existsSync(eventsFile) && fs.statSync(eventsFile).isDirectory()) {
+      const candidate = path.join(eventsFile, 'events.ndjson');
+      if (!fs.existsSync(candidate)) {
+        console.error(`✗ --from points to a directory but no events.ndjson found in: ${eventsFile}`);
+        process.exit(1);
+      }
+      eventsFile = candidate;
+    }
     if (!fs.existsSync(eventsFile)) {
       console.error(`✗ Events file not found: ${eventsFile}`);
       process.exit(1);
@@ -839,6 +1187,7 @@ program
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-import')
   .option('--dry-run', 'Preview what would be imported without creating atoms')
+  .option('--json', 'Output results as JSON')
   .action((opts: {
     from: string;
     dir: string;
@@ -847,18 +1196,34 @@ program
     agentId: string;
     sessionId: string;
     dryRun?: boolean;
+    json?: boolean;
   }) => {
     const filePath = path.resolve(opts.from);
     const memoryDir = resolveDir(opts.dir, getAgent());
 
     if (!fs.existsSync(filePath)) {
-      console.error(`✗ Source file not found: ${filePath}`);
-      process.exit(1);
+      exitWithError(`Source file not found: ${filePath}`, opts.json);
     }
 
     if (opts.dryRun) {
       const chunks = previewImport(filePath);
       const viable = chunks.filter((c) => c.body.trim().length >= 20);
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              dry_run: true,
+              source_file: filePath,
+              chunks_found: chunks.length,
+              would_create: viable.length,
+              would_skip: chunks.length - viable.length,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
       console.log(`Dry run — would import from: ${filePath}`);
       console.log(`  Chunks found:  ${chunks.length}`);
       console.log(`  Would create:  ${viable.length} atom(s)`);
@@ -867,9 +1232,7 @@ program
     }
 
     if (!fs.existsSync(memoryDir)) {
-      console.error(`✗ Memory directory not found: ${memoryDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
     }
 
     try {
@@ -881,6 +1244,11 @@ program
         defaultType: opts.type as any,
         defaultClassification: (opts.classification as Classification) ?? 'TEAM',
       });
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
 
       console.log(`✓ Import completed:`);
       console.log(`  Source:        ${result.source_file}`);
@@ -895,8 +1263,7 @@ program
         }
       }
     } catch (err) {
-      console.error(`✗ Import failed: ${String(err)}`);
-      process.exit(1);
+      exitWithError(`Import failed: ${String(err)}`, opts.json);
     }
   });
 
@@ -904,39 +1271,82 @@ program
 program
   .command('render')
   .description('Render memory atoms as a CLAUDE.md context file')
-  .argument('<memory-dir>', 'Memory directory')
-  .argument('<output-path>', 'Output file path')
-  .option('--max-tokens <n>', 'Token budget for recall', '8000')
-  .action((memoryDir: string, outputPath: string, opts: { maxTokens: string }) => {
+  // #123: prefer `-d, --dir` / `-o, --output` to match the rest of the CLI.
+  // The positional <memory-dir> / <output-path> form is still accepted as a
+  // deprecated fallback (commander treats `[...]` args as optional). A stderr
+  // deprecation warning fires on the old shape.
+  .argument('[memory-dir]', '[deprecated] Memory directory — use -d/--dir instead')
+  .argument('[output-path]', '[deprecated] Output file path — use -o/--output instead')
+  .option('-d, --dir <dir>', 'Memory directory', './memory')
+  .option('-o, --output <path>', 'Output file path', './CLAUDE.md')
+  .option('--max-tokens <n>', 'Token budget for recall', '16000')
+  .option('--no-fill', 'Disable fill mode and use task-driven recall instead')
+  .option('--json', 'Output results as JSON')
+  .action((memoryDirArg: string | undefined, outputPathArg: string | undefined, opts: {
+    dir: string;
+    output: string;
+    maxTokens: string;
+    fill?: boolean;
+    json?: boolean;
+  }) => {
+    // Deprecation: positional args still work but warn on stderr. Flag values
+    // win when both are provided; positional fills in when the flag was left
+    // at its default.
+    const usedPositional = !!(memoryDirArg || outputPathArg);
+    if (usedPositional) {
+      console.error(
+        '⚠ Positional <memory-dir> <output-path> arguments are deprecated. ' +
+        'Use `mk render -d <dir> -o <path>` instead. (#123)',
+      );
+    }
+    const memoryDir = memoryDirArg ?? opts.dir;
+    const outputPath = outputPathArg ?? opts.output;
+
     const resolvedDir = resolveDir(memoryDir, getAgent());
     const resolvedOutput = path.resolve(outputPath);
 
     if (!fs.existsSync(resolvedDir)) {
-      console.error(`✗ Memory directory not found: ${resolvedDir}`);
-      console.error('  Run "mk init" first.');
-      process.exit(1);
+      exitWithError(`Memory directory not found: ${resolvedDir}\n  Run "mk init" first.`, opts.json);
     }
 
     const maxTokens = parseInt(opts.maxTokens, 10);
     if (isNaN(maxTokens) || maxTokens <= 0) {
-      console.error('✗ --max-tokens must be a positive integer');
-      process.exit(1);
+      exitWithError('--max-tokens must be a positive integer', opts.json);
     }
 
     try {
       const agent = getAgent();
       const baseDir = path.resolve(memoryDir);
       const content = agent && isIsolated(baseDir)
-        ? renderAgentClaudeMd(baseDir, agent, { maxTokens })
-        : renderClaudeMd(resolvedDir, { maxTokens });
+        ? renderAgentClaudeMd(baseDir, agent, { maxTokens, fill: opts.fill })
+        : renderClaudeMd(resolvedDir, { maxTokens, fill: opts.fill });
       fs.mkdirSync(path.dirname(resolvedOutput), { recursive: true });
       fs.writeFileSync(resolvedOutput, content);
       const lineCount = content.split('\n').length - 1;
-      const atomCount = (content.match(/^### /gm) ?? []).length;
-      console.log(`✓ Rendered ${atomCount} atoms → ${resolvedOutput} (${lineCount} lines)`);
+      const stats = parseRenderStats(content);
+      const warning = degenerateOutputWarning(stats);
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              output: resolvedOutput,
+              memory_dir: resolvedDir,
+              total_atoms: stats.totalAtoms,
+              line_count: lineCount,
+              warning: warning ?? null,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+
+      console.log(`✓ Rendered ${stats.totalAtoms} atoms → ${resolvedOutput} (${lineCount} lines)`);
+      if (warning) console.error(warning);
     } catch (err) {
-      console.error(`✗ Render failed: ${String(err)}`);
-      process.exit(1);
+      exitWithError(`Render failed: ${String(err)}`, opts.json);
     }
   });
 
@@ -1268,5 +1678,11 @@ registerExtractCommand(program);
 registerConsolidateCommand(program);
 registerExportObsidianCommand(program);
 registerObsidianInitCommand(program);
+registerObserveCommand(program);
+registerSupersedeCommand(program);
 
-program.parse();
+// Rewrite argv to strip/translate deprecated flags before commander parses.
+// Without this, `mk render --fill` (from an old wrapper) would fail with a
+// bare "unknown option" error instead of a migration hint (#141).
+const rewrittenArgv = processDeprecatedFlags(process.argv.slice(2));
+program.parse(rewrittenArgv, { from: 'user' });

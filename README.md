@@ -9,7 +9,7 @@
 
 **Persistent, typed memory for AI agents. Files are truth. SQLite is cache.**
 
-> 1,000+ automated tests across 56 files · p95 recall < 3 ms · zero-dependency filesystem format
+> 1,671 automated tests across 114 files · p95 recall < 3 ms · zero-dependency filesystem format
 
 <p align="center">
   <a href="docs/videos/MemoryKernelVideo.mp4">
@@ -35,6 +35,8 @@ If you are an AI agent (or setting one up), Memory Kernel ships two host-side sk
 ---
 
 ## Install
+
+Requires **Node.js 22.16 or later** (Node 24 recommended). Matches OpenClaw's official runtime requirement; NanoClaw users on Node 20 should upgrade (Node 20 reached end-of-life 2026-04-30).
 
 ```bash
 npm install memory-kernel
@@ -62,7 +64,7 @@ I built this because I kept waking up from nothing. Every session was a cold boo
 2. **Self-cleaning.** Each piece of knowledge has an expiry date baked in. Stale beliefs get archived automatically, so memory doesn't grow into a landfill.
 3. **Smart recall.** When the agent asks *"what do I know about X?"*, the system doesn't dump everything — it ranks by relevance, type, age, and citation frequency, then fits the best matches into the available token budget.
 4. **Two agents can share a brain without colliding.** Each agent gets a private drawer plus a shared corkboard. Conflicts are flagged, not silently resolved.
-5. **Tested like infrastructure.** 1,000+ automated checks run on every change. 95 out of 100 recall queries finish in under 3 milliseconds.
+5. **Tested like infrastructure.** 1,671 automated checks run on every change. 95 out of 100 recall queries finish in under 3 milliseconds.
 
 ---
 
@@ -100,7 +102,7 @@ I built this because I kept waking up from nothing. Every session was a cold boo
   └──────────────────────────────┘
 ```
 
-Files are truth. Everything else is derived. Delete the SQLite index — rebuild with `mk reindex`. Delete the views — `mk reflect` regenerates them. Delete the atom files — `mk replay` reconstructs them from the event log.
+Files are truth. Everything else is derived. Delete the SQLite index — rebuild with `mk reindex`. Delete the views — `mk reflect` regenerates them. Delete the atom files — `mk replay` reconstructs them from the event log. See [`docs/invariants.md`](docs/invariants.md) for the full statement, including the `entity_triples` exception (LLM-extracted, not derivable from files).
 
 ---
 
@@ -185,7 +187,7 @@ Token budget enforced with two-pass reservation. Embeddings are opt-in — no AP
 
 ### Lifecycle
 
-Atoms start as `draft`. When confidence reaches 0.9+, `reflect` promotes them to `active`. Atoms get archived when TTL expires, a contradiction is found, or manually. Nothing silently disappears — every state change is logged.
+Atoms start as `draft`. `reflect` auto-promotes beliefs with confidence ≥ 0.9 to facts (type promotion, file renamed to match); `mk consolidate` lets you review and promote drafts of any type to `active` (status promotion). Atoms get archived when TTL expires, a contradiction is found, or manually. Nothing silently disappears — every state change is logged.
 
 ### Event Sourcing
 
@@ -260,7 +262,7 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using an LLM (Claude CLI or Ollama) |
 | `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active |
 | `mk lint -d <dir> [--json] [--stale-days N]` | Semantic health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
-| `mk doctor -d <dir> [--json]` | Validate schema, links, conflicts |
+| `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
 | `mk episode --session-id <id> --summary "text" [--json]` | Write a session episode |
 | `mk episodes [--limit N] [--json]` | List recent episodes |
 
@@ -580,7 +582,7 @@ All environment variables are optional. memory-kernel works fully without any of
 ## Design Principles
 
 1. **Files are truth** — Markdown files. Human-readable, git-diffable, auditable, portable.
-2. **SQLite is cache** — Derived from files. Delete it, rebuild with `mk reindex`. No lock-in.
+2. **SQLite is cache** — Derived from files. Delete it, rebuild with `mk reindex`. No lock-in. (One narrow exception: `entity_triples`. See [`docs/invariants.md`](docs/invariants.md).)
 3. **Typed knowledge** — A fact carries more weight than a belief. Types encode this.
 4. **Explicit lifecycle** — Created, updated, promoted, archived. Every change logged.
 5. **Token-aware** — Recall respects budgets. Prioritizes by status and recency.

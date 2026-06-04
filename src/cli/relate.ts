@@ -4,30 +4,21 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
 import {
-  listAtomFiles,
   readAtom,
   writeAtom,
   indexExists,
-  indexAtom,
   getRelationsForAtom,
-  openIndex,
 } from '../index.js';
+import { indexAtom } from '../index-db.js';
+import { assertWithinDir } from '../store.js';
+import { normalizeTimestamp } from '../format.js';
 import { RELATION_TYPES } from '../types.js';
 import type { Relation } from '../types.js';
-
-/** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
-function exitWithError(message: string, json?: boolean): never {
-  if (json) {
-    console.log(JSON.stringify({ error: message }, null, 2));
-  } else {
-    console.error(`✗ ${message}`);
-  }
-  process.exit(1);
-}
+import { exitWithError } from './cli-util.js';
+import { findAtomFile } from './atom-lookup.js';
 
 /**
  * Register `mk relate <source-id> <relation-type> <target-id>` command.
@@ -64,35 +55,44 @@ export function registerRelateCommand(program: Command): void {
         process.stderr.write(`⚠ Target atom not found in index: ${targetId} (relation will be recorded but may not resolve)\n`);
       }
 
-      // Read source atom and update relations
-      const atom = readAtom(sourceFile);
-      const existingRelations: Relation[] = atom.frontmatter.relations ?? [];
+      try {
+        // Read source atom and update relations
+        const atom = readAtom(sourceFile);
+        const existingRelations: Relation[] = atom.frontmatter.relations ?? [];
 
-      // Idempotent: skip if (target, type) already exists
-      const alreadyExists = existingRelations.some(
-        (r) => r.target === targetId && r.type === relationType as Relation['type'],
-      );
-      if (alreadyExists) {
-        if (opts.json) {
-          console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: false }, null, 2));
+        // Idempotent: skip if (target, type) already exists
+        const alreadyExists = existingRelations.some(
+          (r) => r.target === targetId && r.type === relationType as Relation['type'],
+        );
+        if (alreadyExists) {
+          if (opts.json) {
+            console.log(JSON.stringify({ source_id: sourceId, relation_type: relationType, target_id: targetId, created: false }, null, 2));
+            return;
+          }
+          console.log(`✓ Relation already exists: ${sourceId} --[${relationType}]--> ${targetId}`);
           return;
         }
-        console.log(`✓ Relation already exists: ${sourceId} --[${relationType}]--> ${targetId}`);
-        return;
-      }
 
-      atom.frontmatter.relations = [
-        ...existingRelations,
-        { target: targetId, type: relationType as Relation['type'] },
-      ];
+        atom.frontmatter.relations = [
+          ...existingRelations,
+          { target: targetId, type: relationType as Relation['type'] },
+        ];
+        atom.frontmatter.updated_at = normalizeTimestamp();
 
-      // Write updated atom
-      writeAtom(atom, sourceFile);
+        // Defense-in-depth: sourceFile is derived from a user-supplied atom ID
+        // via index lookup or scan; assert it lives under memoryDir before I/O.
+        assertWithinDir(memoryDir, sourceFile);
 
-      // Sync index if it exists
-      if (indexExists(memoryDir)) {
-        atom.filePath = sourceFile;
-        indexAtom(memoryDir, atom);
+        // Write updated atom
+        writeAtom(atom, sourceFile);
+
+        // Sync index if it exists
+        if (indexExists(memoryDir)) {
+          atom.filePath = sourceFile;
+          indexAtom(memoryDir, atom);
+        }
+      } catch (err) {
+        exitWithError(err instanceof Error ? err.message : String(err), opts.json);
       }
 
       if (opts.json) {
@@ -152,28 +152,3 @@ export function registerRelationsCommand(program: Command): void {
     });
 }
 
-/**
- * Find an atom's file path by ID.
- * Queries index first; falls back to full file scan.
- */
-function findAtomFile(memoryDir: string, atomId: string): string | null {
-  if (indexExists(memoryDir)) {
-    try {
-      const db = openIndex(memoryDir);
-      const row = db.prepare('SELECT file_path FROM atoms WHERE atom_id = ?').get(atomId) as
-        | { file_path: string }
-        | undefined;
-      if (row?.file_path) return row.file_path;
-    } catch { /* fall through to file scan */ }
-  }
-
-  // File scan fallback
-  const files = listAtomFiles(memoryDir);
-  for (const fp of files) {
-    try {
-      const atom = readAtom(fp);
-      if (atom.frontmatter.id === atomId) return fp;
-    } catch { /* skip corrupted files */ }
-  }
-  return null;
-}

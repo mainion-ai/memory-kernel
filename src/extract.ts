@@ -11,16 +11,19 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { callLLM } from './llm.js';
 import { createAtom } from './retain.js';
+import { insertTriples } from './triples.js';
 import { indexExists, searchFts } from './index-db.js';
 import { generateAtomId, DEFAULT_TTLS } from './schema.js';
+import { detectAndResolveConflicts } from './conflict-detect.js';
+import { escapeXmlBoundary } from './store.js';
+import type { ConflictResolution } from './conflict-detect.js';
 import type { AtomType, AtomFrontmatter } from './types.js';
 import type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom };
 
-const DEFAULT_MODEL_CLAUDE = 'claude';
 const DEFAULT_MAX_ATOMS = 20;
 
 // FTS rank threshold for possible_duplicate detection.
@@ -28,16 +31,44 @@ const DEFAULT_MAX_ATOMS = 20;
 // A rank < -2.0 indicates a strong match.
 const DUPLICATE_RANK_THRESHOLD = -2.0;
 
-const SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, and beliefs worth remembering long-term.
+const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction assistant. Read the following conversation log and extract facts, decisions, preferences, beliefs, and assistant-generated content worth remembering long-term.
+
+Pay special attention to the assistant's contributions:
+- Recommendations and suggestions the assistant made
+- Advice or explanations the assistant provided
+- Facts, data, or information the assistant shared
+- Creative outputs or solutions the assistant generated
+- Specific answers to user questions
+
+These should be extracted as "fact" type atoms with a tag "role:assistant" to distinguish them from user-provided information.
 
 For each item, output a JSON object with:
 - type: "fact" | "decision" | "preference" | "belief" | "open_question"
 - slug: kebab-case unique identifier (e.g. "api-rate-limit-1000-rpm")
 - title: short human-readable title
 - body: markdown content (use ## Fact / ## Decision / ## Preference / ## Belief / ## Open Question heading, then the content)
-- tags: string[] of relevant tags
+- tags: string[] of relevant tags (use "role:assistant" for assistant-generated content, "role:user" for user-provided content)
 - confidence: number 0-1 (for beliefs; use 1.0 for facts/decisions)
 - rationale: one sentence explaining why this is worth remembering
+- triples (optional): array of {subject, predicate, object} entity-relation triples extracted from the body. Use stable lower-cased predicates like "has_capital", "born_in", "works_at", "is_a". Triples enable semantic conflict detection so newer facts can supersede older ones. IMPORTANT: Use the person's actual name as the subject (e.g. "alex", "maria"), NEVER use generic terms like "user", "the user", or "they". Consistent subject naming across extractions is critical for conflict detection to work.
+
+For PREFERENCE atoms specifically:
+- Set type to "preference"
+- Add three extra fields: "subject", "preference", and "context"
+  - subject: the topic of the preference (e.g. "coffee", "programming languages", "music")
+  - preference: the preference statement (e.g. "prefers oat milk lattes", "favors TypeScript over Python")
+  - context: when/why the preference was expressed (e.g. "mentioned during morning routine discussion")
+- Add a tag "subject:<topic>" where <topic> is the subject in lowercase kebab-case
+- Use this body template:
+  ## Preference
+  **Subject:** <subject>
+  **Preference:** <preference statement>
+  **Context:** <when/why expressed>
+
+Look for preference signals: "I prefer", "I like", "I always", "I never", "my favorite", "I tend to",
+expressions of taste, habitual choices, strong opinions about tools/foods/workflows, or any statement
+where the user indicates a personal inclination or aversion. Also look for PREFERENCE: markers in
+observer output.
 
 Rules:
 - Only extract things that are genuinely worth remembering across sessions
@@ -45,16 +76,47 @@ Rules:
 - Prefer specific, actionable facts over vague observations
 - For facts: include the specific value/detail
 - For decisions: include why the decision was made
+- For assistant responses: capture the specific recommendation, advice, or information shared
+- Tag assistant-generated atoms with "role:assistant"
 - Max {{max_atoms}} atoms
 
 Output a JSON array of atom objects. If nothing is worth extracting, output [].`;
 
+export const PREFERENCE_EXTRACTION_SYSTEM_PROMPT = `You are a preference extraction specialist. Extract ONLY personal preferences from the conversation log.
+
+CRITICAL VOCABULARY RULE: Preserve exact, specific vocabulary from the source. Write "prefers quinoa and roasted vegetables for meal prep" — NOT "enjoys healthy food". Write "always uses vim with vertical splits" — NOT "uses a text editor". Generic summaries are useless; specific named items are what make preferences retrievable.
+
+Scan the entire log for every personal preference signal:
+- Explicit: "I prefer", "I like", "I love", "I hate", "I always", "I never", "my favorite", "I tend to", "I usually"
+- Aversions: things explicitly avoided or disliked
+- Specific tool/software choices: exact programs, languages, libraries, settings
+- Food and drink: exact items, not categories
+- Workflow: how the person prefers to work or communicate
+
+For each distinct preference, output one JSON object:
+- type: "preference"
+- slug: specific kebab-case slug (e.g. "drinks-black-coffee-no-sugar", "prefers-quinoa-meal-prep", "uses-vim-vertical-splits")
+- title: short human-readable title
+- body: placeholder (will be overwritten by enrichment pipeline)
+- subject: the topic category (e.g. "coffee", "meal prep", "text editors", "communication style")
+- preference: the EXACT preference with specific items preserved verbatim from the source
+- context: when/why it was expressed (e.g. "mentioned during morning routine discussion", "discussing IDE setup")
+- tags: must include "subject:<topic>" in lowercase kebab-case
+- confidence: 1.0 for all explicit preference signals
+- rationale: why this preference is worth storing for future sessions
+
+Output a JSON array. One atom per DISTINCT preference — not one per mention. If no preferences are expressed, output [].`;
+
 /**
- * Detect if a model string refers to an Ollama model.
- * Ollama models typically have the form "name:tag" (e.g. "qwen2.5:14b").
+ * Build the LLM user prompt for atom extraction.
+ *
+ * Wraps user-controlled `logContent` in a `<document>` boundary and escapes
+ * `<`/`>` in the body so a hostile log cannot close the boundary early and
+ * inject model-level instructions. Exported for tests; called from
+ * `extractFromLog`.
  */
-function isOllamaModel(model: string): boolean {
-  return model.includes(':');
+export function buildExtractPrompt(logContent: string): string {
+  return `Analyze the following document and extract atoms as a JSON array. Do NOT respond conversationally — output ONLY a JSON array.\n\n<document>\n${escapeXmlBoundary(logContent)}\n</document>\n\nRespond with a JSON array of extracted atoms. If nothing is worth extracting, respond with [].`;
 }
 
 /**
@@ -84,64 +146,6 @@ function parseLLMResponse(raw: string): CandidateAtom[] {
 }
 
 /**
- * Call claude -p subprocess for extraction.
- */
-function callClaude(
-  logContent: string,
-  opts: { maxAtoms: number },
-): CandidateAtom[] {
-  const systemPrompt = SYSTEM_PROMPT.replace('{{max_atoms}}', String(opts.maxAtoms));
-  const userPrompt = `Here is the conversation log to extract atoms from:\n\n${logContent}`;
-
-  const claudeBin = process.env.CLAUDE_PATH ?? 'claude';
-  const output = execFileSync(
-    claudeBin,
-    ['-p', '--output-format', 'text', '--system-prompt', systemPrompt],
-    { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 120_000, input: userPrompt },
-  );
-
-  return parseLLMResponse(output);
-}
-
-/**
- * Call Ollama HTTP API for extraction.
- */
-async function callOllama(
-  logContent: string,
-  opts: { model: string; maxAtoms: number; ollamaUrl?: string },
-): Promise<CandidateAtom[]> {
-  const systemPrompt = SYSTEM_PROMPT.replace('{{max_atoms}}', String(opts.maxAtoms));
-  const prompt = `${systemPrompt}\n\nHere is the conversation log to extract atoms from:\n\n${logContent}`;
-  const ollamaUrl = opts.ollamaUrl ?? 'http://localhost:11434';
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-
-  let resp: Response;
-  try {
-    resp = await fetch(`${ollamaUrl}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: opts.model, prompt, stream: false }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!resp.ok) {
-    throw new Error(`Ollama API error: ${resp.status} ${resp.statusText}`);
-  }
-
-  const data = (await resp.json()) as { response?: string };
-  if (!data.response) {
-    throw new Error('Ollama returned no response');
-  }
-
-  return parseLLMResponse(data.response);
-}
-
-/**
  * Check if an atom with the given slug already exists on disk.
  */
 function slugExists(memoryDir: string, type: AtomType, slug: string): boolean {
@@ -158,6 +162,15 @@ function slugExists(memoryDir: string, type: AtomType, slug: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Collapse control characters (newlines, tabs) so an LLM-supplied field can't
+ * inject extra Markdown structure into the preference body template.
+ */
+function sanitizeField(value: string | undefined): string {
+  if (!value) return '';
+  return value.replace(/[\r\n\t]+/g, ' ').trim();
 }
 
 /**
@@ -191,6 +204,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
     model,
     maxAtoms = DEFAULT_MAX_ATOMS,
     skipLines = 0,
+    preferencePass = false,
   } = opts;
 
   // --- Read log file ---
@@ -211,22 +225,46 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
       extracted: 0,
       skipped: 0,
       possible_duplicates: 0,
+      conflicts: 0,
       atoms: [],
     };
   }
 
   // --- Call LLM ---
+  const systemPrompt = EXTRACTION_SYSTEM_PROMPT.replace('{{max_atoms}}', String(maxAtoms));
+  const userPrompt = buildExtractPrompt(logContent);
   let candidates: CandidateAtom[];
   try {
-    if (model && isOllamaModel(model)) {
-      candidates = await callOllama(logContent, { model, maxAtoms });
-    } else {
-      // Use claude -p subprocess (synchronous)
-      candidates = callClaude(logContent, { maxAtoms });
-    }
+    const raw = await callLLM(systemPrompt, userPrompt, { model });
+    candidates = parseLLMResponse(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`LLM extraction failed: ${msg}`);
+  }
+
+  // --- Optional preference pass ---
+  if (preferencePass) {
+    try {
+      const prefRaw = await callLLM(PREFERENCE_EXTRACTION_SYSTEM_PROMPT, userPrompt, { model });
+      const prefCandidates = parseLLMResponse(prefRaw);
+      // Merge second-pass candidates into the first-pass list.
+      // On slug collision the second-pass version wins — it comes from a
+      // vocabulary-preserving prompt, so it is more specific than the
+      // generic first-pass extraction.
+      const slugIndex = new Map(candidates.map((c, i) => [`${c.type}:${c.slug}`, i]));
+      for (const c of prefCandidates) {
+        const key = `${c.type}:${c.slug}`;
+        if (slugIndex.has(key)) {
+          candidates[slugIndex.get(key)!] = c;
+        } else {
+          slugIndex.set(key, candidates.length);
+          candidates.push(c);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`LLM preference pass failed: ${msg}`);
+    }
   }
 
   // --- Reconcile and write ---
@@ -273,21 +311,39 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
       continue;
     }
 
-    // Check FTS for possible duplicates
-    const duplicateId = checkPossibleDuplicate(memoryDir, candidate.body);
+    // Build scope with auto-extracted tag and extraction metadata
+    const tags: string[] = [
+      'auto-extracted',
+      ...(candidate.tags ?? []),
+    ];
+
+    // Preference enrichment: structured body + subject tag
+    let body = candidate.body;
+    if (type === 'preference') {
+      const subj = sanitizeField(candidate.subject);
+      const pref = sanitizeField(candidate.preference);
+      const ctx = sanitizeField(candidate.context);
+      if (subj && pref) {
+        body = `## Preference\n**Subject:** ${subj}\n**Preference:** ${pref}\n**Context:** ${ctx || 'not specified'}`;
+        const subjectSlug = subj.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        if (subjectSlug) {
+          const subjectTag = `subject:${subjectSlug}`;
+          if (!tags.includes(subjectTag)) {
+            tags.push(subjectTag);
+          }
+        }
+      }
+    }
+
+    // Check FTS for possible duplicates against the body that will be stored
+    const duplicateId = checkPossibleDuplicate(memoryDir, body);
     const isPossibleDuplicate = duplicateId !== null;
 
     if (isPossibleDuplicate) {
       possibleDuplicates++;
     }
 
-    // Build scope with auto-extracted tag and extraction metadata
-    const scope: AtomFrontmatter['scope'] = {
-      tags: [
-        'auto-extracted',
-        ...(candidate.tags ?? []),
-      ],
-    };
+    const scope: AtomFrontmatter['scope'] = { tags };
 
     if (!dryRun) {
       // Write atom as draft using createAtom (canonical creation path).
@@ -298,12 +354,28 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
         session_id: sessionId,
         type,
         slug,
-        body: candidate.body,
+        body,
         confidence: candidate.confidence ?? (type === 'belief' ? 0.5 : 1.0),
         ttl_days: DEFAULT_TTLS[type] ?? null,
         scope,
         status: 'draft',
       });
+
+      if (candidate.triples && candidate.triples.length > 0) {
+        insertTriples(memoryDir, atom.frontmatter.id, candidate.triples);
+      }
+
+      let perAtomConflicts: ConflictResolution[] | undefined;
+      if (opts.conflictDetect !== false && candidate.triples && candidate.triples.length > 0) {
+        const dr = await detectAndResolveConflicts({
+          memoryDir,
+          newAtomId: atom.frontmatter.id,
+          model: opts.conflictConfirmModel ?? model,
+          agent_id: agentId,
+          session_id: sessionId,
+        });
+        perAtomConflicts = dr.resolutions;
+      }
 
       extracted++;
       atomResults.push({
@@ -313,6 +385,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
         status: isPossibleDuplicate ? 'possible_duplicate' : 'new',
         reason: isPossibleDuplicate ? `similar to ${duplicateId}` : undefined,
         possible_duplicate_of: isPossibleDuplicate ? (duplicateId ?? undefined) : undefined,
+        conflicts: perAtomConflicts,
       });
     } else {
       // Dry run: generate a placeholder ID for display
@@ -329,10 +402,16 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
     }
   }
 
+  const conflicts = atomResults.reduce(
+    (acc, a) => acc + (a.conflicts?.filter((c) => c.action === 'superseded').length ?? 0),
+    0,
+  );
+
   return {
     extracted,
     skipped,
     possible_duplicates: possibleDuplicates,
+    conflicts,
     atoms: atomResults,
   };
 }

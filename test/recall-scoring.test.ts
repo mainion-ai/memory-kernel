@@ -247,21 +247,27 @@ describe('token reservation', () => {
       confidence: 0.9,
     });
 
-    // Create many beliefs that would normally crowd it out
+    // Create many beliefs that would normally crowd it out — they share the
+    // task keyword ("event") so they all FTS-match alongside the decision,
+    // exercising the type-reservation discriminator on a matched pool.
+    // (Pre-#214 fix this test relied on the score-0 fallback surfacing
+    // everything; now the task must legitimately hit each atom.)
     for (let i = 0; i < 15; i++) {
       createAtom({
         memoryDir: testDir,
         agent_id: 'a', session_id: 's',
         type: 'belief', slug: `belief-${i}`,
-        body: `Belief ${i} about some topic that is not related to architecture`,
+        body: `Belief ${i} about event handling under load`,
         confidence: 0.8,
       });
     }
     closeAllIndexes();
 
-    // Tight token budget, but reservation ensures the decision appears
+    // Tight token budget, but reservation ensures the decision appears.
+    // type_reservations also opts out of the task-auto-disable on
+    // reservations (src/recall.ts ~ line 107).
     const bundle = recall(testDir, {
-      task: 'architecture design',
+      task: 'event',
       max_tokens: 3000,
       type_reservations: { decision: 500 }, // reserve 500 tokens for decisions
     });

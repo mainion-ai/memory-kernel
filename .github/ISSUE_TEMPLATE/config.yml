@@ -1,0 +1,21 @@
+# Issue tracker configuration for memory-kernel.
+# https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository
+
+# Force submitters through one of the templates; blank issues bypass
+# context-gathering and end up needing back-and-forth before triage.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mainion-ai/memory-kernel/security/advisories/new
+    about: |
+      Do NOT file security issues on the public tracker. Use GitHub's
+      private security advisory flow, or email mainion@proton.me.
+      See SECURITY.md for the full reporting policy.
+
+  - name: Questions and ideas
+    url: https://github.com/mainion-ai/memory-kernel/discussions
+    about: |
+      For open-ended questions, design discussions, or "should I use
+      this for X?" conversations — start a discussion rather than
+      filing an issue.

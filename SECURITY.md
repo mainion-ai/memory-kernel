@@ -39,7 +39,9 @@ A useful report contains:
 | --------- | ------ |
 | Acknowledgement of report | Within 48 hours |
 | Status update / triage | Within 7 days |
-| Patch or mitigation | Dependent on severity |
+| Patch or mitigation | Dependent on severity (see disclosure window below) |
+
+**Coordinated disclosure window.** We aim to release a fix or mitigation within **90 days of acknowledgement** unless we agree on a longer window with the reporter (e.g. because the fix requires upstream coordination, or the underlying issue is deeper than initially reported). Critical issues with active exploitation are patched as quickly as possible regardless of the 90-day clock.
 
 We will keep you informed at each stage and credit you in the release notes unless you request otherwise.
 

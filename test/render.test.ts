@@ -2,7 +2,7 @@
  * Tests for renderClaudeMd() — CLAUDE.md generation from memory atoms.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -10,6 +10,7 @@ import os from 'os';
 import { initMemoryDir, createAtom, closeAllIndexes, openIndex } from '../src/index.js';
 import { addRelation } from '../src/index-db.js';
 import { renderClaudeMd } from '../src/render.js';
+import { parseRenderStats, degenerateOutputWarning } from '../src/deprecations.js';
 
 let testDir: string;
 
@@ -28,6 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   closeAllIndexes();
   fs.rmSync(testDir, { recursive: true, force: true });
+  vi.useRealTimers();
 });
 
 describe('renderClaudeMd', () => {
@@ -284,5 +286,169 @@ describe('renderClaudeMd', () => {
       expect(output).toContain('Cycle A.');
       expect(output).toContain('Cycle B.');
     });
+  });
+
+  describe('fill mode type reservations', () => {
+    it('does NOT produce a belief monoculture when many beliefs would otherwise dominate the budget', () => {
+      // Reproduce the Mai / Taj scenario from issue #154 at realistic scale:
+      // belief corpus exceeds budget, so a naive recency fill picks all beliefs
+      // and starves facts. With reservations wired in, at least one fact must
+      // appear regardless of belief volume.
+      //
+      // Freeze time so every atom shares the same updated_at — without this
+      // the test is flaky: a slow loop spans seconds, splitting atoms into
+      // recency tiers and lets some facts slip through under the old greedy
+      // fill. Pinning the clock makes the bug manifestation deterministic.
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-18T00:00:00Z'));
+      for (let i = 0; i < 100; i++) {
+        createAtom({ ...base(), type: 'belief', slug: `b${i}`,
+          body: `Belief ${i} ${'x'.repeat(400)}` });
+      }
+      for (let i = 0; i < 10; i++) {
+        createAtom({ ...base(), type: 'fact', slug: `f${i}`,
+          body: `Fact ${i} ${'y'.repeat(100)}` });
+      }
+
+      // Why these numbers:
+      //   DEFAULT_FILL_TYPE_RESERVATIONS sums to 8000 raw tokens.
+      //   Budget 4000 → MAX_RESERVATION_RATIO * 4000 = 1200 token reservation cap.
+      //   scale = 1200 / 8000 = 0.15
+      //   fact reservation: 1200 * 0.15 = 180 tokens → fits ~one 50-token fact.
+      //   belief reservation: 4000 * 0.15 = 600 tokens of beliefs guaranteed.
+      //   Remaining 3800 budget filled by recency from unreserved beliefs.
+      // If DEFAULT_FILL_TYPE_RESERVATIONS sums change, this math drifts —
+      // bump the budget or atom counts to keep the assertion meaningful.
+      //
+      // Budget 4000 tokens. All atoms share a second-resolution updated_at
+      // so the stable sort by recency preserves file order — BELI-* files
+      // sort before FACT-* files. The OLD greedy fill walks beliefs first
+      // and exhausts the 4000-token budget after ~31 beliefs, never
+      // reaching any fact (asymmetric body sizes — small facts, big beliefs —
+      // make this even more pronounced). The new reservation logic carves a
+      // fact-quota slice (~180 tokens scaled, easily fits a small fact)
+      // so at least one fact must appear.
+      const output = renderClaudeMd(testDir, { maxTokens: 4000 });
+
+      expect(output).toContain('## Key Facts');
+      expect(output).toMatch(/## Beliefs/);
+    }, 15000);
+
+    it('explicit typeReservations option is plumbed through to renderFill', () => {
+      // Two ~165-token atoms, budget 600 tokens — only ~3 atoms fit by greedy
+      // count, but the file-order/recency mechanics put BELI-* before FACT-*
+      // so a naive fill would take both beliefs before reaching the facts.
+      // An explicit fact reservation flips that — facts get a guaranteed slot.
+      createAtom({ ...base(), type: 'fact', slug: 'f1', body: `Fact body ${'y'.repeat(400)}` });
+      createAtom({ ...base(), type: 'belief', slug: 'b1', body: `Belief body ${'x'.repeat(400)}` });
+
+      // Override: a single explicit fact reservation. 30% of 600 = 180 cap;
+      // scaled fact slot = 180 tokens, comfortably fits one fact atom.
+      const withOverride = renderClaudeMd(testDir, {
+        maxTokens: 600,
+        typeReservations: { fact: 600 },
+      });
+      expect(withOverride).toContain('## Key Facts');
+    });
+
+    it('explicit empty typeReservations object falls back to defaults', () => {
+      // Same monoculture shape as the first test, but pass `typeReservations: {}`
+      // explicitly. This must behave identically to leaving it undefined —
+      // empty object means "fall back to DEFAULT_FILL_TYPE_RESERVATIONS",
+      // not "no reservations at all".
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-18T00:00:00Z'));
+      for (let i = 0; i < 100; i++) {
+        createAtom({ ...base(), type: 'belief', slug: `b${i}`,
+          body: `Belief ${i} ${'x'.repeat(400)}` });
+      }
+      for (let i = 0; i < 10; i++) {
+        createAtom({ ...base(), type: 'fact', slug: `f${i}`,
+          body: `Fact ${i} ${'y'.repeat(100)}` });
+      }
+
+      const output = renderClaudeMd(testDir, { maxTokens: 4000, typeReservations: {} });
+
+      expect(output).toContain('## Key Facts');
+    }, 15000);
+
+    it('--no-fill (task recall path) is unaffected by fill type_reservations', () => {
+      // Sanity check: task-driven recall still uses recall.ts reservations,
+      // not the new fill defaults. With no query and fill=false, recall
+      // returns 0 atoms — known footgun documented in render.ts. Just
+      // assert the call doesn't crash and the typeReservations option is
+      // not somehow leaking into the task-recall code path.
+      createAtom({ ...base(), type: 'fact', slug: 'f1', body: 'a fact' });
+      const output = renderClaudeMd(testDir, {
+        fill: false,
+        typeReservations: { fact: 999999 },
+      });
+      expect(output).toContain('# Memory');
+    });
+
+    it('monoculture warning is silent on a multi-type store with belief arcs', () => {
+      // Realistic Mai/Taj shape at scale: belief corpus exceeds budget so the
+      // pre-fix recency fill starves other types. Add a 3-node belief arc to
+      // exercise Task 1's **ID** bullet parser path (parseRenderStats counts
+      // arc-rendered belief atoms).
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-18T12:00:00Z'));
+
+      // Why these numbers:
+      //   80 beliefs at ~410 chars (~100 tokens each) ≈ 8000 tokens of beliefs.
+      //   22 facts + 3 procedures + 2 preferences at ~110 chars (~30 tokens each)
+      //   ≈ 800 tokens of non-belief content.
+      //   Total corpus ≈ 8800 tokens — well over the 4000-token budget.
+      //   Pre-fix: recency fill packs ~40 beliefs and zero facts → monoculture warning.
+      //   Post-fix: per-type reservations carve out slots for facts/procedures/
+      //   preferences while beliefs still dominate by volume.
+      //   Arc atoms (3 nodes via `extends`) make the parser see **ID** bullets,
+      //   exercising the Task-1 fix.
+      for (let i = 0; i < 80; i++) {
+        createAtom({ ...base(), type: 'belief', slug: `b${i}`,
+          body: `Belief ${i} ${'x'.repeat(400)}` });
+      }
+      // 3-node belief arc — Task 1 fixed parseRenderStats to count these.
+      const arcRoot = createAtom({ ...base(), type: 'belief', slug: 'arc-root',
+        body: `Arc root ${'a'.repeat(400)}` });
+      const arcMid = createAtom({ ...base(), type: 'belief', slug: 'arc-mid',
+        body: `Arc mid ${'a'.repeat(400)}`,
+        relations: [{ target: arcRoot.frontmatter.id, type: 'extends' }] });
+      createAtom({ ...base(), type: 'belief', slug: 'arc-leaf',
+        body: `Arc leaf ${'a'.repeat(400)}`,
+        relations: [{ target: arcMid.frontmatter.id, type: 'extends' }] });
+
+      for (let i = 0; i < 22; i++) {
+        createAtom({ ...base(), type: 'fact', slug: `f${i}`,
+          body: `Fact ${i} ${'y'.repeat(100)}` });
+      }
+      for (let i = 0; i < 3; i++) {
+        createAtom({ ...base(), type: 'procedure', slug: `p${i}`,
+          body: `Procedure ${i} ${'p'.repeat(100)}` });
+      }
+      for (let i = 0; i < 2; i++) {
+        createAtom({ ...base(), type: 'preference', slug: `pref${i}`,
+          body: `Preference ${i} ${'r'.repeat(100)}` });
+      }
+
+      const content = renderClaudeMd(testDir, { maxTokens: 4000 });
+      const stats = parseRenderStats(content);
+      const warning = degenerateOutputWarning(stats);
+
+      // Multi-section render → warning is silent.
+      // (bySection.length > 1 is implied by warning === null at this scale,
+      // since degenerateOutputWarning fires on single-section ≥5-atom output.)
+      expect(warning).toBeNull();
+      // Task-1-sensitive: the arc-bulleted beliefs that survive the budget
+      // must be counted under "Beliefs (developmental arcs)". With the
+      // pre-Task-1 parser this bucket would be 0 and dropped by the empty-
+      // bucket prune, leaving the assertion below to fail. With the
+      // Task-1 fix in place, **ID** bullets are counted and the bucket
+      // survives.
+      const beliefArcCount = stats.bySection['Beliefs (developmental arcs)'] ?? 0;
+      expect(beliefArcCount).toBeGreaterThan(0);
+      // Sanity: facts survived the budget.
+      expect(content).toContain('## Key Facts');
+    }, 15000);
   });
 });

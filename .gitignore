@@ -1,6 +1,9 @@
 # Local Claude config (never commit)
 .claude/
 
+# Personal session scratchpad (never commit)
+.remember/
+
 # Node modules
 node_modules/
 dist/
@@ -10,6 +13,18 @@ dist/
 *.pem
 .DS_Store
 Thumbs.db
+
+# macOS Finder duplicate files. cmd-D on a file in Finder, or some
+# copy/sync workflows (iCloud Drive, certain editor saves), produce
+# `<name> 2.<ext>` or `<name> 3.<ext>` clones with a space + digit
+# before the extension. Extensionless files (e.g. CODEOWNERS) get the
+# same treatment with no trailing `.ext`. These would silently bypass
+# the .privacy/redact-paths.txt entries on sync to public (literal-path
+# matching), so they must never be tracked. See commit 90778d1 + the
+# .github/CODEOWNERS 2 leftover discovered post-PR #210 merge for the
+# incident history that motivated these patterns.
+* [2-9].*
+* [2-9]
 
 # SQLite index (derived cache — rebuild with mk reindex)
 .memory-index.db
@@ -21,3 +36,11 @@ Thumbs.db
 
 
 memory-kernel-*.tgz
+
+# Subpackage lock file: intentionally not tracked.
+# The subpackage can't standalone-install until memory-kernel is published
+# to npm (#152). Until then, an in-repo lock goes stale immediately and only
+# serves to fail Dependabot security audits against its transitive deps.
+# Once #152 ships and the subpackage gets its own canonical lock, this
+# entry can be removed.
+packages/openclaw-memory-kernel/package-lock.json

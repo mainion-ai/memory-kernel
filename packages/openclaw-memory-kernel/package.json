@@ -1,6 +1,6 @@
 {
   "name": "openclaw-memory-kernel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenClaw plugin — structured typed memory via memory-kernel",
   "type": "module",
   "main": "dist/index.js",
@@ -9,19 +9,32 @@
     "build": "tsc",
     "dev": "tsc --watch"
   },
+  "engines": {
+    "node": ">=22.16"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "skills",
+    "INSTALL.md"
+  ],
   "dependencies": {
-    "@sinclair/typebox": "0.34.48",
-    "memory-kernel": "^1.16.0"
+    "memory-kernel": "^1.28.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.7"
+    "openclaw": ">=2026.3.7",
+    "@sinclair/typebox": "^0.34.0"
   },
   "peerDependenciesMeta": {
     "openclaw": {
       "optional": true
+    },
+    "@sinclair/typebox": {
+      "optional": false
     }
   },
   "devDependencies": {
+    "@sinclair/typebox": "^0.34.0",
     "@types/node": "^25.6.0",
     "typescript": "^5.0.0"
   },

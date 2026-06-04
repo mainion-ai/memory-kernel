@@ -14,7 +14,7 @@ import {
 } from './schema.js';
 import { assertWithinDir, atomFilePath, readAtom, writeAtom } from './store.js';
 import { indexAtom, indexExists, removeFromIndex, getAllAtomIds } from './index-db.js';
-import { encryptAtom, resolveKey } from './crypto.js';
+import { encryptAtomWithCredential } from './crypto.js';
 import { extractBodyReferences, extractConceptReferences, buildConceptMap, deduplicateRefs } from './relink.js';
 import type { Atom, AtomFrontmatter, AtomStatus, AtomType, Classification, Relation } from './types.js';
 
@@ -22,11 +22,11 @@ import type { Atom, AtomFrontmatter, AtomStatus, AtomType, Classification, Relat
  * Serialize an atom snapshot, encrypting it if the atom is SECRET and a key is available.
  * Keeps the event log free of plaintext content for SECRET atoms.
  */
-function snapshotAtom(atom: Atom): string {
+export function snapshotAtom(atom: Atom): string {
   const raw = serializeAtom(atom);
   if (atom.frontmatter.classification === 'SECRET') {
-    const key = resolveKey(process.env.MEMORY_ENCRYPTION_KEY);
-    if (key) return encryptAtom(raw, key);
+    const cred = process.env.MEMORY_ENCRYPTION_KEY;
+    if (cred) return encryptAtomWithCredential(raw, cred);
   }
   return raw;
 }
@@ -85,22 +85,13 @@ export function createAtom(
     frontmatter,
     body: opts.body,
   };
-
-  // Write to disk
   const fp = atomFilePath(opts.memoryDir, id, opts.type);
-  writeAtom(atom, fp);
-  atom.filePath = fp;
 
-  // Index first so this atom's ID is available for lookups
-  if (indexExists(opts.memoryDir)) {
-    indexAtom(opts.memoryDir, atom);
-  }
-
-  // Auto-relink: extract body-text references and add as relations.
-  // Runs before event emission so the snapshot includes extracted relations.
-  // Skips if the caller already provided explicit relations to avoid double-linking.
-  // Extracts both atom-ID references and concept-name references.
-  if (!opts.relations?.length && indexExists(opts.memoryDir)) {
+  // Auto-relink BEFORE event emission so the snapshot captures extracted
+  // relations. Skips if the caller already provided explicit relations.
+  // Querying the index here is safe — it only contains OTHER atoms (this one
+  // hasn't been indexed yet), and self-references are filtered by `id`.
+  if (!opts.relations?.length) {
     const knownIds = getAllAtomIds(opts.memoryDir);
     const idRefs = extractBodyReferences(atom.body, id, knownIds);
 
@@ -116,13 +107,12 @@ export function createAtom(
         ...(atom.frontmatter.relations ?? []),
         ...allRefs.map((r) => ({ target: r.targetId, type: r.type })),
       ];
-      writeAtom(atom, fp);
-      indexAtom(opts.memoryDir, atom);
     }
   }
 
-  // Emit event (v2 with snapshot — encrypted for SECRET atoms).
-  // Placed after auto-relink so the snapshot captures extracted relations.
+  // Event-first (#84): emit the v2 event with full snapshot BEFORE mutating
+  // disk/index. On crash between this point and the mutation steps, replay
+  // can reconstruct the atom from the event-log snapshot.
   appendEvent(opts.memoryDir, 'atom_created', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
@@ -131,6 +121,11 @@ export function createAtom(
     schema_version: 2,
     atom_snapshot: snapshotAtom(atom),
   });
+
+  // Mutation: write file, then index. openIndex() creates the DB on demand.
+  writeAtom(atom, fp);
+  atom.filePath = fp;
+  indexAtom(opts.memoryDir, atom);
 
   return atom;
 }
@@ -177,10 +172,7 @@ export function updateAtom(
     );
   }
 
-  // Write
-  writeAtom(atom, opts.filePath);
-
-  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
+  // Event-first (#84): durable record before disk/index mutation.
   appendEvent(opts.memoryDir, 'atom_updated', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
@@ -190,7 +182,8 @@ export function updateAtom(
     atom_snapshot: snapshotAtom(atom),
   });
 
-  // Keep index in sync if it exists
+  // Mutation: write file, then keep index in sync if it exists.
+  writeAtom(atom, opts.filePath);
   if (indexExists(opts.memoryDir)) {
     indexAtom(opts.memoryDir, atom);
   }
@@ -237,9 +230,9 @@ export function resolveConflict(opts: ResolveConflictOptions): ResolveConflictRe
     path.basename(opts.filePath),
   );
   assertWithinDir(opts.memoryDir, archivePath);
-  writeAtom(atom, archivePath);
-  if (fs.existsSync(opts.filePath)) fs.unlinkSync(opts.filePath);
 
+  // Event-first (#84): emit the conflict_resolved event with full snapshot
+  // BEFORE moving/deleting files. On crash the event log alone is enough.
   const event = appendEvent(opts.memoryDir, 'conflict_resolved', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
@@ -249,6 +242,9 @@ export function resolveConflict(opts: ResolveConflictOptions): ResolveConflictRe
     meta: opts.resolutionNote ? { resolution_note: opts.resolutionNote } : undefined,
   });
 
+  // Mutation: write archive copy, unlink source, drop from index.
+  writeAtom(atom, archivePath);
+  if (fs.existsSync(opts.filePath)) fs.unlinkSync(opts.filePath);
   if (indexExists(opts.memoryDir)) {
     removeFromIndex(opts.memoryDir, atom.frontmatter.id);
   }
@@ -281,14 +277,10 @@ export function archiveAtom(
     path.basename(opts.filePath),
   );
   assertWithinDir(opts.memoryDir, archivePath);
-  writeAtom(atom, archivePath);
 
-  // Remove original
-  if (fs.existsSync(opts.filePath)) {
-    fs.unlinkSync(opts.filePath);
-  }
-
-  // Emit event (v2 with snapshot — encrypted for SECRET atoms)
+  // Event-first (#84): the previous order unlinkSync'd the source BEFORE the
+  // event was appended. A crash there destroyed atom data with no replay
+  // path. Now: emit the event (with full snapshot) first, then mutate disk.
   appendEvent(opts.memoryDir, 'atom_archived', {
     agent_id: opts.agent_id,
     session_id: opts.session_id,
@@ -297,7 +289,11 @@ export function archiveAtom(
     atom_snapshot: snapshotAtom(atom),
   });
 
-  // Remove from index if it exists
+  // Mutation: write archive copy, unlink source, drop from index.
+  writeAtom(atom, archivePath);
+  if (fs.existsSync(opts.filePath)) {
+    fs.unlinkSync(opts.filePath);
+  }
   if (indexExists(opts.memoryDir)) {
     removeFromIndex(opts.memoryDir, atom.frontmatter.id);
   }

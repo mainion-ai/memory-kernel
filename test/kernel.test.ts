@@ -11,6 +11,7 @@ import os from 'os';
 import {
   initMemoryDir,
   createAtom,
+  archiveAtom,
   recall,
   reflect,
   readEvents,
@@ -167,10 +168,8 @@ describe('recall', () => {
 
     const atom = createAtom({ ...base, type: 'fact', slug: 'old-fact', body: 'Old' });
 
-    // Manually archive it
-    const parsed = parseAtom(fs.readFileSync(atom.filePath!, 'utf-8'));
-    parsed.frontmatter.status = 'archived';
-    fs.writeFileSync(atom.filePath!, serializeAtom(parsed));
+    // Archive via API so both file and index are updated
+    archiveAtom({ ...base, filePath: atom.filePath! });
 
     const bundle = recall(testDir);
     expect(bundle.atoms.length).toBe(0);

@@ -45,6 +45,17 @@ export const DEFAULT_TYPE_WEIGHTS: Record<string, number> = {
   related: 0.3, // Residual/unclassified — keep visible at low priority
 };
 
+/**
+ * Hard cap on BFS frontier expansion in {@link tagDistance}. Prevents a
+ * single hub tag (shared by thousands of atoms) from pulling the entire
+ * graph into one BFS step — see #102 (performance cliff at scale).
+ * When the cap fires, distance results are conservative (some real
+ * neighbors aren't visited at the deepest depth), and a one-shot stderr
+ * warning is emitted per call. Internal tuning parameter; not exported.
+ * @internal
+ */
+const BFS_FRONTIER_CAP = 500;
+
 /** Weight presets for mode-specific walks. */
 export const WEIGHT_PRESETS: Record<string, Record<string, number>> = {
   constitution: {
@@ -177,7 +188,7 @@ function loadAtomGraph(memoryDir: string, now: number, options?: Pick<WanderOpti
   const db = openIndex(memoryDir);
 
   const ATOM_FILTER = `
-    a.status NOT IN ('archived', 'expired')
+    a.status NOT IN ('archived', 'expired', 'superseded')
     AND a.type != 'conflict'
     AND (a.classification IS NULL OR a.classification NOT IN ('SECRET', 'PERSONAL'))
   `;
@@ -344,12 +355,16 @@ function tagDistance(
   const visited = new Set<string>([atomA]);
   let frontier = new Set<string>([atomA]);
   let depth = 0;
+  // One-shot warning per tagDistance call (not per BFS step) — avoids
+  // spamming stderr in a multi-level BFS that repeatedly hits the cap.
+  let warned = false;
 
   while (depth < maxDepth && frontier.size > 0) {
     depth++;
     const nextFrontier = new Set<string>();
+    let capped = false;
 
-    for (const currentAtom of frontier) {
+    outer: for (const currentAtom of frontier) {
       const atomData = graph.get(currentAtom);
       if (!atomData) continue;
 
@@ -362,9 +377,23 @@ function tagDistance(
           if (!visited.has(neighbor)) {
             visited.add(neighbor);
             nextFrontier.add(neighbor);
+            // Hub-tag guard (#102): cap frontier expansion at 500 nodes
+            // per step. Without this, a single tag shared by thousands
+            // of atoms causes O(N) → O(N^2) blowup across BFS depths.
+            if (nextFrontier.size >= BFS_FRONTIER_CAP) {
+              capped = true;
+              break outer;
+            }
           }
         }
       }
+    }
+
+    if (capped && !warned) {
+      warned = true;
+      process.stderr.write(
+        'mk: warning: BFS frontier capped at 500 nodes in tagDistance (hub-tag effect) — distance results may be conservative\n',
+      );
     }
 
     frontier = nextFrontier;
@@ -751,7 +780,7 @@ function buildGraphFromFiles(
   for (const atom of atoms) {
     const fm = atom.frontmatter;
     if (!fm.id) continue;
-    if (fm.status === 'archived' || fm.status === 'expired') continue;
+    if (fm.status === 'archived' || fm.status === 'expired' || fm.status === 'superseded') continue;
     if (fm.type === 'conflict') continue;
     if (fm.classification === 'SECRET' || fm.classification === 'PERSONAL') continue;
 

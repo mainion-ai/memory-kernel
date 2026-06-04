@@ -91,6 +91,38 @@ export interface Relation {
   type: RelationType;
 }
 
+// --- Entity Triple (Tier 1: semantic conflict detection) ---
+
+/**
+ * An entity-relation triple extracted from an atom body.
+ *
+ * Used by the conflict-detection layer (Tier 1) to find atoms that share a
+ * (subject, predicate) but disagree on the object. Triples are extracted at
+ * ingestion time by the LLM and persisted in the `entity_triples` SQLite table.
+ */
+export interface EntityTriple {
+  /** Atom this triple was extracted from. */
+  atom_id: string;
+  /** Entity that the predicate applies to (e.g. "France"). Lower-cased on insert. */
+  subject: string;
+  /** Relation type / predicate (e.g. "has_capital"). Lower-cased on insert. */
+  predicate: string;
+  /** Value of the predicate for the subject (e.g. "Paris"). Lower-cased on insert. */
+  object: string;
+  /** LLM-reported confidence in the extraction (0..1). */
+  confidence: number;
+  /** ISO8601 UTC timestamp when the triple was inserted. */
+  created_at: string;
+}
+
+/** Input form accepted from LLM candidates — no atom_id/created_at yet. */
+export interface TripleInput {
+  subject: string;
+  predicate: string;
+  object: string;
+  confidence?: number;
+}
+
 // --- Atom (frontmatter + body) ---
 
 export interface Atom {
@@ -124,7 +156,14 @@ export const EVENT_ACTIONS = [
 
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 
-export interface MemoryEvent {
+/**
+ * Fields common to every memory event, regardless of schema version.
+ *
+ * #111: MemoryEvent is a discriminated union on `schema_version`, so
+ * consumers can narrow on `event.schema_version === 2` and gain typed
+ * access to `atom_snapshot` / `atom_snapshot_hash`.
+ */
+interface MemoryEventBase {
   event_id: string; // ULID or UUID
   timestamp: string; // ISO8601 UTC
   agent_id: string;
@@ -134,11 +173,32 @@ export interface MemoryEvent {
   touched_paths?: string[]; // File/scope paths
   evidence?: string[]; // Evidence pointers (hashes, file refs)
   meta?: Record<string, unknown>; // Extra context
-  // V2 fields (optional for backward compat with v1 events)
-  schema_version?: 2; // Present on v2 events
+}
+
+/** V1 event (no schema_version, no inline atom snapshot). */
+export interface MemoryEventV1 extends MemoryEventBase {
+  schema_version?: undefined;
+  atom_snapshot?: undefined;
+  atom_snapshot_hash?: undefined;
+}
+
+/** V2 event — carries an inline atom_snapshot (or hash) for replay. */
+export interface MemoryEventV2 extends MemoryEventBase {
+  schema_version: 2;
   atom_snapshot?: string; // Serialized atom (frontmatter+body markdown)
   atom_snapshot_hash?: string; // SHA-256 hash if snapshot stored in evidence
 }
+
+/**
+ * Discriminated union over `schema_version`. To narrow:
+ *
+ * ```ts
+ * if (event.schema_version === 2) {
+ *   event.atom_snapshot; // typed string | undefined, no widening
+ * }
+ * ```
+ */
+export type MemoryEvent = MemoryEventV1 | MemoryEventV2;
 
 // --- Recall query ---
 
@@ -171,6 +231,8 @@ export interface RecallQuery {
   coverage_boost?: number; // Exponent P: 0 = disabled, 0.5 = moderate (default), 2.0 = aggressive
   // Phase 8: MMR result diversity — re-ranks to prevent redundant atoms filling token budget
   mmr_lambda?: number; // 0 = pure diversity, 0.7 = moderate (default), 1.0 = disabled (pure relevance)
+  // Episode budget ratio — fraction of max_tokens reserved for episodes (default 0.2)
+  episode_budget_ratio?: number; // 0 = no episodes, 0.2 = default, 1.0 = all episodes
 }
 
 // --- Episode types ---
@@ -200,6 +262,13 @@ export interface ContextBundle {
   atoms: Atom[]; // Relevant atoms
   episodes?: string[]; // Episode summaries (if requested via include_episodes)
   token_estimate: number; // Rough token count
+  // Outcome signal for task-driven recall. Set only when `task` was passed.
+  // - "match"           — at least one FTS or semantic hit; `atoms` is the match set.
+  // - "no_match"        — FTS + semantic both came back empty; `atoms` is [] by design
+  //                       (issue #214 — no more confidently-irrelevant fallback).
+  // - "fts_unavailable" — `searchFts()` returned null (FTS table missing or query crashed
+  //                       beyond the sanitisation layer). Falls back to file-scan semantics.
+  recall_status?: 'match' | 'no_match' | 'fts_unavailable';
 }
 
 // --- Reflect result ---
@@ -284,6 +353,13 @@ export interface RenderConfig {
   include_shared: boolean;
   /** Per-type score multipliers for recall ranking. */
   type_weights: Partial<Record<AtomType, number>>;
+  /**
+   * Per-type token reservations for fill-mode render. Each entry guarantees
+   * a minimum token budget for atoms of that type so beliefs (or any single
+   * type) cannot monopolise the output. Empty object → use defaults from
+   * src/schema.ts DEFAULT_FILL_TYPE_RESERVATIONS at render time.
+   */
+  type_reservations: Partial<Record<AtomType, number>>;
 }
 
 // --- Extract types ---
@@ -297,6 +373,14 @@ export interface CandidateAtom {
   tags?: string[];
   confidence?: number;
   rationale?: string;
+  /** For preference atoms: the subject of the preference (e.g. "coffee", "programming languages"). */
+  subject?: string;
+  /** For preference atoms: the preference statement (e.g. "prefers oat milk lattes"). */
+  preference?: string;
+  /** For preference atoms: context when/why the preference was expressed. */
+  context?: string;
+  /** Optional entity-relation triples extracted by the LLM (#75 conflict detection). */
+  triples?: TripleInput[];
 }
 
 /** Result for a single extracted atom candidate. */
@@ -308,6 +392,8 @@ export interface ExtractedAtomResult {
   status: 'new' | 'skipped' | 'possible_duplicate';
   reason?: string;
   possible_duplicate_of?: string;
+  /** Conflict resolutions produced by Tier-1+Tier-2 on this atom (only when conflictDetect ran). */
+  conflicts?: import('./conflict-detect.js').ConflictResolution[];
 }
 
 /** Options for extractFromLog. */
@@ -322,6 +408,12 @@ export interface ExtractOptions {
   model?: string;
   maxAtoms?: number;
   skipLines?: number;
+  /** When true (default), run Tier-1 + Tier-2 conflict detection on every newly-created atom that has triples. Atoms without triples are not eligible (Tier-1 needs triples). */
+  conflictDetect?: boolean;
+  /** Model override for the Tier-2 LLM call. Falls back to `model` if omitted. */
+  conflictConfirmModel?: string;
+  /** When true, run a dedicated second LLM pass focused exclusively on preference extraction, using a prompt that enforces specific vocabulary preservation. Preferences found only in this pass are merged into the result. */
+  preferencePass?: boolean;
 }
 
 /** Result returned by extractFromLog. */
@@ -329,6 +421,8 @@ export interface ExtractResult {
   extracted: number;
   skipped: number;
   possible_duplicates: number;
+  /** Total auto-supersede actions across all atoms (action === 'superseded'). */
+  conflicts: number;
   atoms: ExtractedAtomResult[];
 }
 

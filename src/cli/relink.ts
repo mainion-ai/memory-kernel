@@ -14,6 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import { relinkAll } from '../relink.js';
 
 export function registerRelinkCommand(program: Command): void {
@@ -26,19 +27,38 @@ export function registerRelinkCommand(program: Command): void {
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--dry-run', 'Preview proposed relations without writing')
     .option('--apply', 'Write relations to atom frontmatter and reindex')
-    .action((opts: { dir: string; dryRun?: boolean; apply?: boolean }) => {
+    .option('--json', 'Output results as JSON')
+    .action((opts: { dir: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
       if (!opts.dryRun && !opts.apply) {
-        console.error('✗ Specify --dry-run to preview or --apply to write changes.');
-        process.exit(1);
+        exitWithError('Specify --dry-run to preview or --apply to write changes.', opts.json);
       }
 
       const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
-        console.error(`✗ Memory directory not found: ${memoryDir}`);
-        process.exit(1);
+        exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
       }
 
       const result = relinkAll(memoryDir, { dryRun: !!opts.dryRun });
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              dry_run: !!opts.dryRun,
+              proposed: result.proposed.length,
+              applied: result.applied ?? 0,
+              changes: result.proposed.map((p) => ({
+                source_id: p.sourceId,
+                target_id: p.targetId,
+                type: p.type,
+              })),
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
 
       if (result.proposed.length === 0) {
         console.log('✓ No new relations found in body text.');

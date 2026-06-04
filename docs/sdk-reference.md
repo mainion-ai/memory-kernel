@@ -51,11 +51,11 @@ import {
   embedText,
   embedBatch,
   cosineSimilarity,
+  dotProduct,       // v1.20.0+ — unit-norm KNN inner loop
+  normalizeVector,  // v1.20.0+ — L2-normalize to unit length
   serializeVector,
   deserializeVector,
   atomToEmbeddingText,
-  storeEmbedding,
-  getAllEmbeddings,
   isEmbeddingStale,
   embeddingStats,
   // Relations (v1.4.0+)
@@ -326,6 +326,15 @@ const { vector, model, tokens_used } = await embedText('some text', config);
 
 // Cosine similarity between two vectors
 const sim = cosineSimilarity(vectorA, vectorB); // -1 to 1
+
+// L2-normalize a vector to unit length (v1.20.0+)
+const unit = normalizeVector([3, 4]); // → [0.6, 0.8]
+
+// Dot product (v1.20.0+) — equivalent to cosineSimilarity for unit-norm
+// inputs, but skips the per-call sqrt. Internal KNN uses this on pre-
+// normalized stored vectors after PR-11; cosineSimilarity stays exported
+// for direct use on un-normalized vectors.
+const sim2 = dotProduct(unit, normalizeVector([1, 1])); // ≈ 0.99
 
 // Serialize/deserialize vectors for storage
 const buf = serializeVector(vector);     // Float32Array → Buffer

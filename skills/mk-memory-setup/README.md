@@ -194,7 +194,7 @@ If your agent was set up before `mk render` existed (pre-v1.1.0) and uses the ol
 3. Update your cron job to use `npx mk render` instead of `npx tsx render-claude-md.ts`
 4. Optionally remove the cloned `~/memory-kernel-code` directory.
 
-If your agent is missing the lifecycle atoms (was set up before Step 7b existed): re-run `bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory`. The `/mk-doctor` skill will flag this for you automatically.
+If your agent is missing the lifecycle atoms (was set up before Step 6b existed): re-run `bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory`. The `/mk-doctor` skill will flag this for you automatically.
 
 ## Troubleshooting
 

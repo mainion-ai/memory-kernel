@@ -16,11 +16,12 @@ import {
   openIndex,
   readAtom,
   writeAtom,
-  indexAtom,
   getRelationsForAtom,
 } from '../src/index.js';
+import { indexAtom } from '../src/index-db.js';
 import {
   buildConceptMap,
+  compileConceptPatterns,
   extractConceptReferences,
   inferRelationType,
   relinkAtom,
@@ -228,6 +229,88 @@ describe('extractConceptReferences', () => {
     const refs = extractConceptReferences(body, selfId, conceptMap);
     expect(refs).toHaveLength(1);
     expect(refs[0].targetId).toBe('BELI-2026-03-12-DISCOVERY-2b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compileConceptPatterns + precompiled-pattern path (#117 regex hoist)
+// ---------------------------------------------------------------------------
+
+describe('compileConceptPatterns (regex hoist for #117)', () => {
+  it('returns the same results as the Map-input path (behavioral parity)', () => {
+    const conceptMap = new Map([
+      ['notation-as-erasure', 'BELI-2026-03-14-NOTATION-1a'],
+      ['identity-as-repair', 'BELI-2026-03-15-IDENTITY-2b'],
+      ['desire-paths', 'BELI-2026-03-16-DESIRE-3c'],
+    ]);
+    const selfId = 'BELI-2026-04-06-SOURCE-9z';
+    const bodies = [
+      'This extends notation-as-erasure and connects to identity-as-repair.',
+      'See desire-paths for more.',
+      'The Notation-As-Erasure principle (case-insensitive).',
+      'Underscore form: notation_as_erasure works too.',
+      'Space form: identity as repair also matches.',
+      'No matches in this body at all.',
+      'Self-ref skipped, plus desire-paths counted once even when mentioned twice: desire-paths.',
+    ];
+
+    const patterns = compileConceptPatterns(conceptMap);
+    for (const body of bodies) {
+      const fromMap = extractConceptReferences(body, selfId, conceptMap);
+      const fromPatterns = extractConceptReferences(body, selfId, patterns);
+      expect(fromPatterns).toEqual(fromMap);
+    }
+  });
+
+  it('precompiled patterns are safely reusable across many bodies (lastIndex reset)', () => {
+    const conceptMap = new Map([
+      ['notation-as-erasure', 'BELI-2026-03-14-NOTATION-1a'],
+    ]);
+    const patterns = compileConceptPatterns(conceptMap);
+    const selfId = 'BELI-2026-04-06-SOURCE-2b';
+
+    // Run the same precompiled pattern set against 5 different bodies.
+    // Without the lastIndex reset inside extractConceptReferences, the
+    // /g flag's state would leak between calls and cause misses.
+    for (let i = 0; i < 5; i++) {
+      const refs = extractConceptReferences(
+        'Body mentions notation-as-erasure here.',
+        selfId,
+        patterns,
+      );
+      expect(refs).toHaveLength(1);
+      expect(refs[0].targetId).toBe('BELI-2026-03-14-NOTATION-1a');
+    }
+  });
+
+  it('compileConceptPatterns + relinkAtom matches Map-form relinkAtom output', () => {
+    const conceptMap = new Map([
+      ['notation-as-erasure', 'BELI-2026-03-14-NOTATION-1a'],
+      ['identity-as-repair', 'BELI-2026-03-15-IDENTITY-2b'],
+    ]);
+    const patterns = compileConceptPatterns(conceptMap);
+    const atom: Atom = {
+      frontmatter: {
+        id: 'BELI-2026-04-06-SOURCE-9z',
+        type: 'belief',
+        slug: 'source',
+        created_at: '2026-04-06T00:00:00.000Z',
+        updated_at: '2026-04-06T00:00:00.000Z',
+        status: 'draft',
+        confidence: 0.5,
+        scope: 'PUBLIC',
+        tags: [],
+        ttl_days: 0,
+        provenance: { episodes: [], evidence: [] },
+        links: { related: [] },
+      } as AtomFrontmatter,
+      body: 'This extends notation-as-erasure and connects to identity-as-repair.',
+    };
+    const knownIds = new Set<string>();
+
+    const fromMap = relinkAtom(atom, knownIds, conceptMap);
+    const fromPatterns = relinkAtom(atom, knownIds, patterns);
+    expect(fromPatterns).toEqual(fromMap);
   });
 });
 

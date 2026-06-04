@@ -56,11 +56,9 @@ describe('renderRelationsSection', () => {
 
     expect(result).toContain(RELATIONS_SENTINEL);
     expect(result).toContain('## Relations');
-    expect(result).toContain('**extends**');
-    expect(result).toContain('- [[BELI-2026-01-01-FOO-abc]]');
-    expect(result).toContain('- [[BELI-2026-01-01-BAZ-ghi]]');
-    expect(result).toContain('**supports**');
-    expect(result).toContain('- [[FACT-2026-01-01-BAR-def]]');
+    expect(result).toContain('- extends [[BELI-2026-01-01-FOO-abc]]');
+    expect(result).toContain('- extends [[BELI-2026-01-01-BAZ-ghi]]');
+    expect(result).toContain('- supports [[FACT-2026-01-01-BAR-def]]');
   });
 
   it('deduplicates targets within the same type', () => {
@@ -71,6 +69,19 @@ describe('renderRelationsSection', () => {
     const result = renderRelationsSection(relations);
     const matches = result.match(/\[\[BELI-2026-01-01-FOO-abc\]\]/g);
     expect(matches).toHaveLength(1);
+  });
+
+  it('replaces underscores with hyphens in type labels', () => {
+    const relations: Relation[] = [
+      { type: 'caused_by', target: 'FACT-2026-01-01-CAUSE-abc' },
+      { type: 'applied_to', target: 'DECI-2026-01-01-APP-def' },
+    ];
+    const result = renderRelationsSection(relations);
+    expect(result).toContain('- caused-by [[FACT-2026-01-01-CAUSE-abc]]');
+    expect(result).toContain('- applied-to [[DECI-2026-01-01-APP-def]]');
+    // Should NOT contain the raw underscore form
+    expect(result).not.toContain('caused_by');
+    expect(result).not.toContain('applied_to');
   });
 
   it('sorts targets alphabetically within a type group', () => {
@@ -92,7 +103,7 @@ describe('stripRelationsSection', () => {
   });
 
   it('strips everything from sentinel to end', () => {
-    const body = `Some real body content.\n\n${RELATIONS_SENTINEL}\n## Relations\n\n**extends**\n- [[FOO]]`;
+    const body = `Some real body content.\n\n${RELATIONS_SENTINEL}\n## Relations\n\n- extends [[FOO]]`;
     expect(stripRelationsSection(body)).toBe('Some real body content.');
   });
 
@@ -362,6 +373,34 @@ describe('tag promotion and stripping', () => {
     };
     const serialized = serializeAtom(atom);
     expect(serialized).not.toMatch(/^tags:/m);
+  });
+});
+
+// --- Legacy Juggl key stripping ---
+
+describe('legacy Juggl typed-link key stripping', () => {
+  it('strips legacy Juggl frontmatter keys on parse', () => {
+    const yaml = [
+      '---',
+      'id: BELI-2026-01-01-JUGGL-abc',
+      'type: belief',
+      'status: active',
+      'extends:',
+      '  - "[[BELI-2026-01-01-OTHER-xyz]]"',
+      'supports:',
+      '  - "[[FACT-2026-01-01-FOO-def]]"',
+      'caused-by:',
+      '  - "[[DECI-2026-01-01-BAR-ghi]]"',
+      '---',
+      '',
+      'Body with legacy Juggl keys.',
+    ].join('\n');
+    const parsed = parseAtom(yaml);
+    const fm = parsed.frontmatter as Record<string, unknown>;
+    expect(fm.extends).toBeUndefined();
+    expect(fm.supports).toBeUndefined();
+    expect(fm['caused-by']).toBeUndefined();
+    expect(parsed.body).toBe('Body with legacy Juggl keys.');
   });
 });
 

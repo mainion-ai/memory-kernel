@@ -111,27 +111,37 @@ export function deriveConceptNames(atomId: string): string[] {
 }
 
 /**
- * Count occurrences of concept names in a body text.
- * Case-insensitive matching. Only counts non-overlapping matches.
+ * Pre-compile every concept-name regex once. Maps target atom ID to its
+ * compiled regex array. Eliminates the O(N²) `new RegExp(...)` cost in
+ * `indexCitations` and `extractCitations` — at N=10k atoms with ~3
+ * concept names per atom, that's ~30M regex compiles dropped to ~30k.
  */
-function countConceptMentions(body: string, conceptNames: string[]): number {
-  if (!body || conceptNames.length === 0) return 0;
-  const lowerBody = body.toLowerCase();
-  let total = 0;
-
-  for (const name of conceptNames) {
-    // Use word-boundary-aware matching to avoid partial matches
-    // Match concept-name as hyphenated or with spaces/underscores
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Allow hyphens to match hyphens, spaces, or underscores
-    const pattern = escaped.replace(/-/g, '[-_ ]');
-    const regex = new RegExp(`\\b${pattern}\\b`, 'gi');
-    const matches = lowerBody.match(regex);
-    if (matches) {
-      total += matches.length;
+function compileConceptRegexes(conceptMap: Map<string, string[]>): Map<string, RegExp[]> {
+  const out = new Map<string, RegExp[]>();
+  for (const [targetId, names] of conceptMap) {
+    const regexes: RegExp[] = [];
+    for (const name of names) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = escaped.replace(/-/g, '[-_ ]');
+      regexes.push(new RegExp(`\\b${pattern}\\b`, 'gi'));
     }
+    out.set(targetId, regexes);
   }
+  return out;
+}
 
+/**
+ * Count occurrences of concept names in a body text.
+ * Case-insensitive matching via the `i` flag baked into the compiled regex.
+ * Only counts non-overlapping matches.
+ */
+function countConceptMentions(body: string, regexes: RegExp[]): number {
+  if (!body || regexes.length === 0) return 0;
+  let total = 0;
+  for (const regex of regexes) {
+    const matches = body.match(regex);
+    if (matches) total += matches.length;
+  }
   return total;
 }
 
@@ -147,7 +157,7 @@ export function extractCitations(memoryDir: string): CitationEntry[] {
   const atoms = listAtoms(memoryDir);
   if (atoms.length === 0) return [];
 
-  // Build concept-name lookup: atomId → concept names
+  // Build concept-name lookup, then pre-compile every regex once.
   const conceptMap = new Map<string, string[]>();
   for (const atom of atoms) {
     const id = atom.frontmatter.id;
@@ -157,6 +167,7 @@ export function extractCitations(memoryDir: string): CitationEntry[] {
       conceptMap.set(id, names);
     }
   }
+  const conceptRegexes = compileConceptRegexes(conceptMap);
 
   const citations: CitationEntry[] = [];
 
@@ -164,18 +175,11 @@ export function extractCitations(memoryDir: string): CitationEntry[] {
     const sourceId = source.frontmatter.id;
     if (!sourceId || !source.body) continue;
 
-    // Check this atom's body against all other atoms' concept names
-    for (const [targetId, conceptNames] of conceptMap) {
-      if (targetId === sourceId) continue; // skip self-citation
-
-      const count = countConceptMentions(source.body, conceptNames);
+    for (const [targetId, regexes] of conceptRegexes) {
+      if (targetId === sourceId) continue;
+      const count = countConceptMentions(source.body, regexes);
       if (count > 0) {
-        citations.push({
-          sourceId,
-          targetId,
-          count,
-          type: 'concept_name',
-        });
+        citations.push({ sourceId, targetId, count, type: 'concept_name' });
       }
     }
   }
@@ -218,6 +222,10 @@ export function indexCitations(memoryDir: string): CitationResult {
     }
   }
 
+  // Pre-compile all concept regexes once. Lifts O(targets) RegExp() out
+  // of the O(sources) outer loop — drops total compiles from O(S*T) to O(T).
+  const conceptRegexes = compileConceptRegexes(conceptMap);
+
   // Atom ID pattern (same as relink)
   const ATOM_ID_PATTERN = /\b([A-Z]{2,8}-\d{4}-\d{2}-\d{2}-[A-Za-z0-9][A-Za-z0-9-]*)\b/g;
 
@@ -243,9 +251,9 @@ export function indexCitations(memoryDir: string): CitationResult {
     }
 
     // 2. Concept-name citations
-    for (const [targetId, conceptNames] of conceptMap) {
+    for (const [targetId, regexes] of conceptRegexes) {
       if (targetId === sourceId) continue;
-      const count = countConceptMentions(source.body, conceptNames);
+      const count = countConceptMentions(source.body, regexes);
       if (count > 0) {
         allCitations.push({ sourceId, targetId, count, type: 'concept_name' });
       }

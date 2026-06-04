@@ -16,6 +16,8 @@ Three layers, clear primacy, nothing removed:
 
 If any layer tries to be the primary for everything, the system drifts. Keep each layer's job small and well-defined.
 
+> **Note:** "Source of truth" here means *which layer owns a piece of knowledge*. Inside the memory-kernel layer there is a separate, narrower invariant — atom markdown files are canonical and the SQLite index is a derived cache, with one documented exception (`entity_triples`). See [`invariants.md`](invariants.md).
+
 ## Doctrine (host operating instructions)
 
 ### AGENTS.md template

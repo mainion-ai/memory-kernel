@@ -320,6 +320,7 @@ describe('loadRenderConfig', () => {
       max_tokens: 6000,
       include_shared: false,
       type_weights: { fact: 1.0, belief: 0.3 },
+      type_reservations: {},
     });
     const config = loadRenderConfig(testDir);
     expect(config.mode).toBe('operational');
@@ -364,6 +365,7 @@ describe('writeRenderConfig', () => {
       max_tokens: 5000,
       include_shared: true,
       type_weights: { decision: 0.8, belief: 1.0 },
+      type_reservations: {},
     };
     writeRenderConfig(testDir, config);
     const loaded = loadRenderConfig(testDir);

@@ -97,7 +97,7 @@ Once configured, `mk remember` **auto-embeds new atoms** — no extra step neede
 
 ### Upgrading from v1.1.x
 
-The first `mk reindex` after upgrading silently migrates the index schema (v3 → v4). This is safe — the index is a derived cache rebuilt from files. To add embeddings after upgrade:
+The first `mk reindex` after upgrading silently migrates the index schema (v3 → v4). This is safe — the index is a derived cache rebuilt from files (see [`invariants.md`](invariants.md) for the full statement plus the `entity_triples` exception preserved across `reindex`). To add embeddings after upgrade:
 
 ```bash
 npx mk reindex -d /workspace/extra/memory           # rebuild index (schema v4)

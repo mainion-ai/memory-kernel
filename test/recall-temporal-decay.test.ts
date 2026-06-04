@@ -114,9 +114,12 @@ describe('recall with temporal decay (task-aware)', () => {
   it('decay_weight=0 preserves relevance-only ordering', () => {
     const base = { memoryDir: testDir, agent_id: 'a', session_id: 's' };
 
-    // Create atoms with different relevance
-    const highRelevance = createAtom({ ...base, type: 'fact', slug: 'direct', body: 'Database connection pooling strategies' });
-    const lowRelevance = createAtom({ ...base, type: 'fact', slug: 'tangent', body: 'Something about weather patterns' });
+    // Both atoms FTS-match — relevance is what distinguishes them under
+    // decay_weight=0. (Pre-#214 the off-topic atom would surface via the
+    // score-0 fallback; that path is gone now, so this test seeds two
+    // on-topic atoms with different keyword densities.)
+    const highRelevance = createAtom({ ...base, type: 'fact', slug: 'direct', body: 'Database connection pooling strategies for high-throughput pooling layers' });
+    const lowRelevance = createAtom({ ...base, type: 'fact', slug: 'tangent', body: 'Database backup notes' });
 
     // Backdate the high-relevance atom so it would be penalized by decay
     backdateAtom(highRelevance, 90);
@@ -157,8 +160,12 @@ describe('recall with temporal decay (task-aware)', () => {
   it('flat half-life makes ordering dominated by relevance', () => {
     const base = { memoryDir: testDir, agent_id: 'a', session_id: 's' };
 
-    const relevant = createAtom({ ...base, type: 'fact', slug: 'relevant', body: 'Memory garbage collection algorithm design' });
-    const tangent = createAtom({ ...base, type: 'fact', slug: 'tangent', body: 'Weather forecast accuracy improvements' });
+    // Both atoms FTS-match the task — the more-relevant one has higher
+    // keyword density. (Pre-#214: tangent atom surfaced via score-0
+    // fallback. Removed; both atoms now seed on-topic to exercise the
+    // relevance-vs-decay tradeoff cleanly.)
+    const relevant = createAtom({ ...base, type: 'fact', slug: 'relevant', body: 'Memory garbage collection algorithm design with generational collection tuning' });
+    const tangent = createAtom({ ...base, type: 'fact', slug: 'tangent', body: 'Memory garbage notes' });
 
     // Make the relevant one old — but with 365-day half-life, decay is minimal
     backdateAtom(relevant, 60);

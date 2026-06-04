@@ -11,19 +11,10 @@
 import fs from 'fs';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
+import { exitWithError } from './cli-util.js';
 import { consolidateAtoms } from '../consolidate.js';
 import type { ConsolidateAtomResult } from '../types.js';
 import { ATOM_TYPES } from '../types.js';
-
-/** JSON-aware error exit: emits structured JSON when --json is active, plain text otherwise. */
-function exitWithError(message: string, json?: boolean): never {
-  if (json) {
-    console.log(JSON.stringify({ error: message }, null, 2));
-  } else {
-    console.error(`✗ ${message}`);
-  }
-  process.exit(1);
-}
 
 const STATUS_ICONS: Record<ConsolidateAtomResult['status'], string> = {
   promoted: '✓',

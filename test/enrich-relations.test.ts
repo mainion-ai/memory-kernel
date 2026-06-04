@@ -10,7 +10,7 @@ import {
   readAtom,
   listAtoms,
 } from '../src/index.js';
-import { enrichRelations } from '../src/enrich-relations.js';
+import { enrichRelations, MAX_REASONING_LEN } from '../src/enrich-relations.js';
 
 let testDir: string;
 
@@ -281,6 +281,58 @@ describe('enrichRelations', () => {
 
     expect(result.errors).toBe(1);
     expect(result.proposals).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // #118 — cap LLM reasoning field
+  // ---------------------------------------------------------------------------
+
+  it('caps an over-long reasoning field with a truncation marker (#118)', async () => {
+    createRelatedPair();
+
+    const longReasoning = 'X'.repeat(5000);
+    mockFetch(JSON.stringify({
+      type: 'extends',
+      confidence: 0.9,
+      reasoning: longReasoning,
+    }));
+
+    const result = await enrichRelations(testDir, {
+      dryRun: true,
+      ollamaUrl: 'http://mock:11434',
+      model: 'test-model',
+    });
+
+    expect(result.proposals).toHaveLength(1);
+    const reasoning = result.proposals[0].reasoning;
+    // Truncated body of MAX_REASONING_LEN chars + the marker, so total length
+    // is bounded but a little above MAX_REASONING_LEN. Stay well under the
+    // original 5000.
+    expect(reasoning.length).toBeLessThan(longReasoning.length);
+    expect(reasoning.length).toBeLessThanOrEqual(MAX_REASONING_LEN + 32);
+    expect(reasoning).toMatch(/truncated/);
+    // The kept prefix should be exactly MAX_REASONING_LEN of the original.
+    expect(reasoning.slice(0, MAX_REASONING_LEN)).toBe('X'.repeat(MAX_REASONING_LEN));
+  });
+
+  it('preserves short reasoning verbatim (no truncation marker) (#118)', async () => {
+    createRelatedPair();
+
+    const shortReasoning = 'source elaborates target concept';
+    mockFetch(JSON.stringify({
+      type: 'extends',
+      confidence: 0.9,
+      reasoning: shortReasoning,
+    }));
+
+    const result = await enrichRelations(testDir, {
+      dryRun: true,
+      ollamaUrl: 'http://mock:11434',
+      model: 'test-model',
+    });
+
+    expect(result.proposals).toHaveLength(1);
+    expect(result.proposals[0].reasoning).toBe(shortReasoning);
   });
 
   it('handles apply-mode write failure gracefully', async () => {

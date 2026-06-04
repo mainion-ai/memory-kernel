@@ -97,8 +97,9 @@ Think of Memory Kernel as a **filing cabinet** in an office. Here's how the anal
 
 > **Just want the gist?** Read Ch. 1–2 and Ch. 11 (A Day in the Life). ~10 min.
 > **Evaluating it for your project?** Add Ch. 10 (on-disk layout) and "Why It Works." ~20 min.
-> **Adopting it?** Read the whole thing. ~45 min.
-> **Curious how it grew up?** Skip to Ch. 19 and follow the version arc through Ch. 26.
+> **Adopting it?** Read the whole thing. ~50 min.
+> **Curious how it grew up?** Skip to Ch. 19 and follow the version arc through Ch. 26, with the recent-history catch-up in Ch. 27.
+> **Curious where it's heading?** Read Ch. 28.
 
 ---
 
@@ -108,7 +109,7 @@ Think of Memory Kernel as a **filing cabinet** in an office. Here's how the anal
 2. **Self-cleaning.** Each piece of knowledge has an expiry date baked in. Stale beliefs get archived automatically, so the memory doesn't grow into a landfill.
 3. **Smart recall.** When the agent asks "what do I know about X?", the system doesn't just dump everything — it ranks by relevance, type, age, and how often each atom has been referenced, then fits the best matches into the available space.
 4. **Two agents can share a brain without colliding.** Each agent gets a private drawer plus a shared corkboard. When drawers need to merge, conflicts are flagged, not silently resolved.
-5. **Tested like infrastructure.** 1,000+ automated checks run on every change. 95 out of 100 memory queries finish in under 3 milliseconds. This is not a weekend toy.
+5. **Tested like infrastructure.** 1,671 automated checks run on every change. 95 out of 100 memory queries finish in under 3 milliseconds. This is not a weekend toy.
 
 ---
 
@@ -1071,7 +1072,7 @@ If a future change makes recall significantly slower, you'll see it immediately 
 
 Because memory is load-bearing. An agent that makes decisions based on corrupted facts is worse than an agent with no memory — at least with no memory, you know it's working from scratch. A corrupted fact is invisible damage.
 
-Every test is a promise: *this invariant holds, on every machine, after every change.* The 551 tests are 551 such promises.
+Every test is a promise: *this invariant holds, on every machine, after every change.* The 1,671 tests are 1,671 such promises.
 
 ---
 
@@ -1542,6 +1543,44 @@ v1.12 was the big-bang release. After the filing cabinet moved into the office, 
 The pattern across v1.13–v1.15 is clear: v1.12 built the infrastructure; the releases that followed have been about making the infrastructure *easier to live with*. Extract and consolidate close the hardest part of the onboarding loop — getting knowledge *into* the system in the first place. Lint closes the maintenance loop — finding knowledge that's turned stale or redundant. And the episode-ranking fix in v1.13 closes one of the last real-world rough edges in recall itself.
 
 At v1.15, the test suite has grown to around a thousand automated checks across fifty-six test files. Every one of them is a promise: *this works, on every machine, after every change.*
+
+**v1.16–v1.18 — Earning the right to be load-bearing.** What followed v1.15 was an arc of unglamorous but consequential work. v1.16's contribution was the public mirror itself: a separate `memory-kernel` repository on GitHub that external users could read and consume, with development staying in a private repo. The plumbing that kept the two in sync — `scripts/sync-to-public.sh` — became the quiet backbone of every release after. v1.18 then tightened the system itself in three directions at once: a sweep of security hardening (path traversal, store-file permissions tightened to `0o600`, transaction wrappers around every index operation), crash atomicity in the write path so partial writes never corrupt the event log, and the time-of-check / time-of-use race in concurrent supersession that two agents writing the same atom slug at the same moment used to expose. The "agent lifecycle as typed memory" pattern was formalized in v1.18.3 — the seven procedure atoms and one constraint that describe *how an agent should use Memory Kernel* now ship with the system itself, seeded into every new store, so the lifecycle becomes recallable from inside the memory it governs.
+
+**v1.19–v1.21 — Performance and the breaking changes nobody loves.** v1.19 broke things on purpose: the public API surface had drifted, and version 1.19 cleaned it up with a single coordinated set of breaking changes — the kind that's painful once and right forever. v1.19.1 and v1.19.2 then squeezed real performance out of the index path: recall latency dropped sharply on stores in the hundreds-of-atoms range, the regime where Memory Kernel had started to feel its scale. v1.20 added explicit caching for the FTS query rewriter, and v1.21 turned attention to the CLI: agent ops tooling (`mk migrate`, `mk doctor --fix`, JSON error contracts downstream parsers can rely on) and the hardening that turned the CLI from "works on the happy path" into "predictable enough to script around." Boring on paper, transformative in practice.
+
+**v1.22–v1.24 — Getting the queries right.** Three releases tightened recall and the operations around it. v1.22 changed the no-task ordering rule and made fill-mode type-aware (a long-standing rough edge: when recall has budget left after the matched atoms, what should it fill the rest *with*?). v1.23 introduced wrapper-drift detection so anyone who hand-edits an installed `mk` binary gets warned the next time the doctor runs. v1.24 was the cleanup release: a lost-write race between `compactLog` and `appendEvent`, an unbounded BFS frontier in tag-distance computation, the missing `--json` error contracts, packaging metadata hygiene. None of these were headlines; all of them were the kind of thing that bites at 2 AM if you let them. They're gone now.
+
+**v1.25–v1.26 — Going public.** These two releases were preparation for actually showing the system to outsiders. The OpenClaw subpackage got its own publish policy. The public mirror's settings (rulesets, branch protection, social preview) were named explicitly in a docs commit so the operator handoff has a paper trail. The privacy redact-list was expanded to cover internal sync infrastructure and operator docs. The `qs` transitive dependency was force-pinned to clear a CVE. The work isn't visible from outside, but it's the work that *makes* visibility from outside possible.
+
+**v1.27 — The recall-honesty fix.** This was the most consequential bugfix in the v1.x series. `mk recall` had a fallback path that, when no atom matched a query, returned the highest-priority atoms anyway — sorted by status and recency. The result: confidently-irrelevant atoms would surface to an agent that asked *"what do I know about pagination?"* with nothing actually about pagination, and the agent would treat them as scaffolding for an answer it couldn't actually support. The fix restricted the candidate pool to FTS or semantic hits when a `--task` was supplied, expanded one hop along graph relations to catch genuinely-related neighbours, and returned an empty result honestly when neither produced a match. The benchmark on LongMemEval-S (500 items) went from 41.4% to 49.2% overall — a +7.8 percentage-point jump — and the single-session-assistant category, the one that asks the agent to recall its own prior statements, climbed +39.3pp. The fix didn't make recall smarter; it made it honest.
+
+**v1.28 — The vocabulary problem.** Per-layer diagnostics in v1.27's wake exposed something specific: preferences were the worst-performing category, with an 86.7% *"I don't know"* rate. The cause wasn't retrieval — it was extraction. Preferences competed with facts, decisions, and beliefs for the general extraction pass's atom budget, and when they did get extracted, their vocabulary was diluted into generic belief-flavored summaries (*"enjoys healthy food"* instead of *"prefers quinoa and roasted vegetables for meal prep"*). v1.28 added an opt-in `--preference-pass` flag that runs a second LLM call dedicated to preferences alone, enforcing specific vocabulary preservation and structured Subject / Preference / Context fields on every atom it produces. Atoms from both passes are merged before the reconcile loop. The trade-off is roughly a doubling of LLM cost on logs where the flag is on; the payoff is preferences that actually retrieve.
+
+The pattern across v1.16–v1.28 is what infrastructure looks like in its second year. The big-bang releases are behind. What's been happening is the long tail of getting the system to behave well in *all* the cases — including the ones nobody asked about because nobody had hit them yet.
+
+---
+
+## Chapter 28: Where It's Heading — v2
+
+Up to here the story has been about Memory Kernel as it exists. The last chapter — for now — is about what the team has been learning and where the next major version is being pointed.
+
+v2 isn't a build plan. It's a design registry — a folder of decisions, hypotheses, and assumptions in [`docs/v2-design/`](docs/v2-design/) — collected from empirical work (benchmarks, judge experiments, real LongMemEval runs) and from architectural reasoning. Each entry has a status (*confirmed*, *hypothesis*, *rejected*, *assumed*, *superseded*) and links to the evidence behind it. The registry is what you'll see updated long before any v2 code lands.
+
+A few threads from the registry hint at where v2 is being pointed:
+
+**Write-heavy beats read-heavy.** The headline finding from the R12 → R15 experiment: an observer pipeline that compresses conversations into dated observations at *write* time scored 60.8% on LongMemEval, while atom retrieval over the same conversations scored 32.0%. Per-type the gap is starker — personal facts moved from roughly 40% (retrieval-only) to 94% (observer). The implication is that engineering effort should shift to ingestion quality, not retrieval sophistication. Better search cannot compensate for lossy ingestion. (Principle P1; evidence in OBS-001.)
+
+**Two cognitive systems, not one.** The observer compresses meaning and erases time; a separate temporal index preserves time and erases meaning. v1 has one consolidated store. v2's direction is two parallel systems with complementary erasure profiles — modeled on how biological memory consolidation works (Winocur & Moscovitch, 2011). The 45% temporal-reasoning plateau in v1 isn't an engineering failure — it's the natural ceiling of semantic compression. Human memory hits the same wall and compensates with external aids; v2 will do the same.
+
+**Competitive forgetting, not cleanup.** v1's `reflect` is a cleanup pass — it expires by TTL, deduplicates, promotes. v2 reframes this: every recall is a moment of competition between candidates, and atoms that don't get cited slowly lose ground rather than waiting for a TTL to remove them. Cleanup becomes an *emergent* property of use rather than a scheduled chore. (Principle P3; lifecycle entries LIF-005 and LIF-006.)
+
+**Memory is perspectival.** A fact about a customer-facing decision belongs to the operations team's memory; the same fact about how an internal tool failed belongs to the engineering team's memory. v1's per-agent isolation is one ply of this — separate drawers with a shared corkboard. v2 generalizes: each agent has its own *view* of every atom, and contradicting views are negotiated, not silently averaged. (Principles P4 + P5; multi-agent entries MUL-001..004.)
+
+**Three evolutionary stages of lifecycle.** Drawing on a 2026 ACL taxonomy and prior work from the literature (BeliefMem, MemQ, Memini, Benna-Fusi, Kumiho, GEM, MARS, CogniFold), the v2 lifecycle is a six-operation planner — *acquire, integrate, consolidate, reconcile, retire, transmit* — that schedules itself based on store state rather than running on cron. Each operation has a probabilistic confidence trajectory rather than a single confidence score. (Principles P7, P10, P12, P15, P16.)
+
+The v2-design registry is honest about what isn't tested yet. Entries marked *hypothesis* are theoretically grounded but waiting for evidence. *Rejected* entries explain what didn't survive contact with reality. If you want to follow the thinking, [`docs/v2-design/README.md`](docs/v2-design/README.md) is the index.
+
+The shape of the v2 release will depend on which hypotheses get confirmed first. What's certain is that the system's center of gravity is shifting — from a retrieval engine over typed atoms toward a paired write-heavy / temporal-index architecture with empirically-grounded lifecycle scheduling. v1 will keep getting maintained through the transition. v2 will arrive when there's enough confirmed evidence behind it to bet on; not before.
 
 ---
 

@@ -157,6 +157,31 @@ describe('replay', () => {
     expect(result.atoms.size).toBe(0);
   });
 
+  // #109: conflict_resolved archives the conflict atom — replay must
+  //       treat it like atom_archived and remove the atom from state.
+  it('conflict_resolved removes atom from result (#109)', () => {
+    const events: MemoryEvent[] = [
+      makeEvent({
+        event_id: 'evt-1',
+        action: 'atom_created',
+        atom_refs: ['CONF-001'],
+        schema_version: 2,
+        atom_snapshot: makeAtomSnapshot('conflict', 'CONF-001', 'Conflict body'),
+      }),
+      makeEvent({
+        event_id: 'evt-2',
+        action: 'conflict_resolved',
+        atom_refs: ['CONF-001'],
+        schema_version: 2,
+        atom_snapshot: makeAtomSnapshot('conflict', 'CONF-001', 'Conflict body', 'resolved'),
+      }),
+    ];
+
+    const result = replay(events, { timestamp: FIXED_TS });
+    expect(result.atoms.size).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it('atom_expired removes atom from result', () => {
     const events: MemoryEvent[] = [
       makeEvent({
