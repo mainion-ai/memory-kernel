@@ -9,6 +9,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.28.3] — 2026-06-04
+
+### Fixed — CodeQL alert #4 (`actions/missing-workflow-permissions`) — explicit `contents: read` on CI workflow
+
+[Alert #4](https://github.com/mainion-ai/memory-kernel/security/code-scanning/4) (`medium`) flagged `.github/workflows/ci.yml` for not setting an explicit `permissions:` block on `GITHUB_TOKEN`. The workflow only does `npm ci` + `npm run build` + `npm test` — no write access needed.
+
+- **`.github/workflows/ci.yml`** — adds workflow-level `permissions: contents: read`. No job-level overrides; every step fits within read-only scope.
+
+No library code, tests, or build outputs change. The version bump exists solely to propagate the workflow-permissions hardening to the public mirror on the next tag push (where CodeQL re-runs and closes alert #4).
+
+**Version bump:** PATCH — workflow file change only, no shipped-code change.
+
 ## [1.28.2] — 2026-06-04
 
 ### Fixed — CodeQL alert #3 (`js/polynomial-redos`) — defensive length cap

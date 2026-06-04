@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
 
+# Limit GITHUB_TOKEN to read-only — this workflow only installs deps, builds,
+# and runs tests. Nothing it does requires write access. Closes CodeQL
+# actions/missing-workflow-permissions (alert #4 on the public mirror).
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
