@@ -9,6 +9,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.28.2] — 2026-06-04
+
+### Fixed — CodeQL alert #3 (`js/polynomial-redos`) — defensive length cap
+
+After v1.28.1 closed alerts #1 + #2, CodeQL filed a new [alert #3](https://github.com/mainion-ai/memory-kernel/security/code-scanning/3) against the same file (`src/classify-query.ts`). The whitespace-normalize fix from v1.28.1 makes runtime linear in practice, but CodeQL's static analysis can't dataflow-trace through `String.prototype.replace` to see that — it still flags any `.test()` call where the patterns contain multi-`\s+` structure.
+
+- **`src/classify-query.ts`** — `countMatches()` now caps input length at `MAX_QUERY_LENGTH = 10_000` characters **before** the normalize step. CodeQL recognizes the `String.prototype.slice` length-bound as an unconditional cap on total regex work. Real-world queries are <1 KB; the 10K ceiling exists purely as a defensive bound that also protects against any *future* polynomial-prone pattern added to the file.
+- **+2 regression tests** in `test/classify-query.test.ts`: (1) truncation behaviour — a temporal signal in the first 10K chars survives, a retrieval signal past the cap is invisible; (2) <50ms bound on 10MB pathological input (linear-time slice + bounded regex work). Tests **1677 → 1679**.
+
+**Version bump:** PATCH — defensive bound, no public API change. `MAX_QUERY_LENGTH` is module-internal (not exported).
+
 ## [1.28.1] — 2026-06-04
 
 ### Fixed — Two CodeQL `high`-severity findings on the public mirror

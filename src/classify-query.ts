@@ -142,13 +142,28 @@ const RETRIEVAL_PATTERNS: RegExp[] = [
 
 // ── Classifier ──────────────────────────────────────────────────────────────
 
+/**
+ * Hard upper bound on the query length the classifier will inspect. Queries
+ * longer than this are truncated to the first MAX_QUERY_LENGTH characters
+ * before any regex work. Real-world queries are well under 1000 chars; the
+ * 10,000 ceiling exists purely as a defensive bound so a giant input can't
+ * push the pattern loop into unbounded work, regardless of which patterns
+ * are added later.
+ */
+const MAX_QUERY_LENGTH = 10_000;
+
 function countMatches(query: string, patterns: RegExp[]): number {
-  // Collapse runs of whitespace to a single space before testing. Several
-  // patterns contain multiple \s+ (some inside alternations like `the\s+user`)
-  // which can backtrack polynomially on attacker-controlled input full of
-  // spaces. After normalization each \s+ matches exactly one space, eliminating
-  // the ambiguity without changing match semantics on legitimate input.
-  const normalized = query.replace(/\s+/g, ' ');
+  // Two-layer ReDoS defense:
+  // 1. Cap input length BEFORE any regex work. Bounds total cost at O(N)
+  //    regardless of pattern shape — also satisfies CodeQL's static
+  //    polynomial-redos check (which can't dataflow-trace through the
+  //    normalize step alone).
+  // 2. Collapse runs of whitespace to a single space. Several patterns
+  //    contain multiple \s+ (some inside alternations like `the\s+user`)
+  //    that would backtrack polynomially on whitespace-heavy input. After
+  //    normalization each \s+ matches exactly one character — no ambiguity.
+  const bounded = query.length > MAX_QUERY_LENGTH ? query.slice(0, MAX_QUERY_LENGTH) : query;
+  const normalized = bounded.replace(/\s+/g, ' ');
   let count = 0;
   for (const p of patterns) {
     if (p.test(normalized)) count++;

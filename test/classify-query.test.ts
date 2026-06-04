@@ -257,5 +257,31 @@ describe('classifyQuery', () => {
       const elapsed = performance.now() - start;
       expect(elapsed).toBeLessThan(100);
     });
+
+    it('truncates input beyond MAX_QUERY_LENGTH (10,000 chars) — late tokens are ignored', () => {
+      // A "when did" temporal signal in the first 10K chars triggers observer
+      // route; a "code for" retrieval signal beyond the cap is dropped.
+      const head = 'When did I start? ';
+      const padding = 'a '.repeat(7000); // ~14k chars
+      const trailingRetrievalSignal = 'code for production';
+      const input = head + padding + trailingRetrievalSignal;
+      expect(input.length).toBeGreaterThan(10_000);
+
+      const result = classifyQuery(input);
+      // The temporal signal at the front survives; the retrieval signal past
+      // 10K chars is invisible to the classifier.
+      expect(result.signals.some(s => s.startsWith('temporal:'))).toBe(true);
+      expect(result.signals.some(s => s.startsWith('retrieval:'))).toBe(false);
+    });
+
+    it('returns in <50ms even on 10MB pathological input', () => {
+      // The length cap caps total work regardless of input size. 10MB input
+      // costs O(slice) + O(10K) regex work — bounded by a small constant.
+      const huge = 'do' + ' '.repeat(10_000_000) + 'X';
+      const start = performance.now();
+      classifyQuery(huge);
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(50);
+    });
   });
 });
