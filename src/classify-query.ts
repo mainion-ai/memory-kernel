@@ -143,9 +143,15 @@ const RETRIEVAL_PATTERNS: RegExp[] = [
 // ── Classifier ──────────────────────────────────────────────────────────────
 
 function countMatches(query: string, patterns: RegExp[]): number {
+  // Collapse runs of whitespace to a single space before testing. Several
+  // patterns contain multiple \s+ (some inside alternations like `the\s+user`)
+  // which can backtrack polynomially on attacker-controlled input full of
+  // spaces. After normalization each \s+ matches exactly one space, eliminating
+  // the ambiguity without changing match semantics on legitimate input.
+  const normalized = query.replace(/\s+/g, ' ');
   let count = 0;
   for (const p of patterns) {
-    if (p.test(query)) count++;
+    if (p.test(normalized)) count++;
   }
   return count;
 }

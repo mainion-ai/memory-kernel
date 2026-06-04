@@ -99,7 +99,7 @@ function resolveAtomId(partialId: string, knownIds: Set<string>): string {
 /**
  * Transform an atom into an Obsidian-compatible markdown file.
  */
-function transformAtom(atom: Atom, knownIds: Set<string>): { filename: string; content: string; wikilinkCount: number } {
+export function transformAtom(atom: Atom, knownIds: Set<string>): { filename: string; content: string; wikilinkCount: number } {
   const fm = atom.frontmatter;
   const filename = `${fm.id}.md`;
 
@@ -133,7 +133,11 @@ function transformAtom(atom: Atom, knownIds: Set<string>): { filename: string; c
     } else if (value === null || value === undefined) {
       yamlLines.push(`${key}: null`);
     } else if (typeof value === 'string' && (value.includes(':') || value.includes('"') || value.startsWith('{') || value.startsWith('['))) {
-      yamlLines.push(`${key}: "${value.replace(/"/g, '\\"')}"`);
+      // Backslash must be escaped before quote — otherwise a trailing "\" in the
+      // value becomes \" in the output and YAML reads it as an escaped quote,
+      // leaving the string unterminated.
+      const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      yamlLines.push(`${key}: "${escaped}"`);
     } else {
       yamlLines.push(`${key}: ${value}`);
     }

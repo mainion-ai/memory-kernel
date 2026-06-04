@@ -9,6 +9,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.28.1] — 2026-06-04
+
+### Fixed — Two CodeQL `high`-severity findings on the public mirror
+
+First post-publish security pass. Both alerts were filed by GitHub Code Scanning against `mainion-ai/memory-kernel@v1.28.0` after the public release.
+
+- **`js/incomplete-sanitization` in `src/cli/export-obsidian.ts:136`** — the YAML escape for quoted scalars escaped `"` but missed `\`. A frontmatter string value ending in a single backslash produced `"foo\"` which YAML reads as an escaped quote, leaving the string unterminated and corrupting the exported Obsidian vault file. Escape order is now backslash-first (`\\`), then quote (`\"`). `transformAtom` is now exported from `src/cli/export-obsidian.ts` to enable direct regression tests (not part of the documented SDK surface — not re-exported from `src/index.ts`).
+- **`js/polynomial-redos` in `src/classify-query.ts:148`** — several classifier patterns contain multiple `\s+` (some inside alternations like `the\s+user`) which can backtrack polynomially on attacker-controlled input full of spaces. `countMatches()` now normalizes whitespace once before the test loop (`query.replace(/\s+/g, ' ')`), so each `\s+` matches exactly one space and the ambiguity is gone. Match semantics on legitimate input are unchanged (verified: single-spaced vs space-padded queries produce identical routes/types).
+
+**+5 regression tests** — 3 in `test/classify-query.test.ts` (single-vs-padded match equivalence, tab/newline normalization, 50k-space adversarial input bounded at <100ms); 2 in `test/obsidian.test.ts` (`parseAtom` round-trip on a backslash-ending value, raw YAML scalar shape `"has:both\"and\\here"`). Total **1672 → 1677**.
+
+**Version bump:** PATCH — security-only, no public API change. `classifyQuery` is unchanged in signature and semantics on normal input. The `transformAtom` export is in a CLI-layer file not re-exported from the package entrypoint.
+
 ## [1.28.0] — 2026-06-03
 
 ### Added — `mk extract --preference-pass` dedicated preference extraction pass ([#213](https://github.com/mainion-ai/memory-kernel-dev/issues/213))

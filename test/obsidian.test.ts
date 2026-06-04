@@ -418,3 +418,42 @@ describe('TYPE_COLORS', () => {
     }
   });
 });
+
+// CodeQL js/incomplete-sanitization: the YAML escape for quoted scalars in
+// export-obsidian only escaped " and missed \. A value ending in a backslash
+// produced `"foo\"` which YAML reads as an escaped quote, leaving the string
+// unterminated. transformAtom now escapes \ before ".
+describe('transformAtom YAML escape (CodeQL js/incomplete-sanitization fix)', () => {
+  const baseAtom = (overrides: Partial<Atom['frontmatter']> = {}): Atom => ({
+    frontmatter: {
+      id: 'FACT-2026-06-04-TEST-abc',
+      type: 'fact',
+      status: 'active',
+      confidence: 1.0,
+      created_at: '2026-06-04T00:00:00Z',
+      updated_at: '2026-06-04T00:00:00Z',
+      classification: 'PUBLIC',
+      ...overrides,
+    } as Atom['frontmatter'],
+    body: 'body',
+  });
+
+  it('produces YAML-parseable output when classification contains a backslash', async () => {
+    const { transformAtom } = await import('../src/cli/export-obsidian.js');
+    const { parseAtom } = await import('../src/format.js');
+    // Triggers the quoted-string branch (contains ':') AND ends with backslash.
+    const tricky = 'weird:value\\';
+    const atom = baseAtom({ classification: tricky });
+    const { content } = transformAtom(atom, new Set([atom.frontmatter.id]));
+    const reparsed = parseAtom(content);
+    expect(reparsed.frontmatter.classification).toBe(tricky);
+  });
+
+  it('escapes backslash before quote in the raw YAML output', async () => {
+    const { transformAtom } = await import('../src/cli/export-obsidian.js');
+    const atom = baseAtom({ classification: 'has:both"and\\here' });
+    const { content } = transformAtom(atom, new Set([atom.frontmatter.id]));
+    // The raw YAML scalar should be: "has:both\"and\\here"
+    expect(content).toContain('classification: "has:both\\"and\\\\here"');
+  });
+});

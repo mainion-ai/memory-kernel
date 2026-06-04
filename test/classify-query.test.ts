@@ -228,4 +228,34 @@ describe('classifyQuery', () => {
       }
     });
   });
+
+  // CodeQL js/polynomial-redos: several patterns contain multiple \s+ (including
+  // inside alternations like `the\s+user`) which can backtrack polynomially on
+  // input full of spaces. countMatches() now normalizes whitespace before
+  // testing — these tests pin both the perf bound and that match semantics are
+  // preserved on whitespace-heavy input.
+  describe('ReDoS resistance', () => {
+    it('classifies space-padded queries identically to single-spaced ones', () => {
+      const single = classifyQuery('do I still work there');
+      const padded = classifyQuery('do      I    still    work    there');
+      expect(padded.route).toBe(single.route);
+      expect(padded.inferredType).toBe(single.inferredType);
+    });
+
+    it('handles tab/newline whitespace the same as spaces', () => {
+      const result = classifyQuery('does\tthe\nuser\tstill\nwork here');
+      expect(result.route).toBe('observer');
+      expect(result.signals.some(s => s.startsWith('temporal:'))).toBe(true);
+    });
+
+    it('returns in <100ms on adversarial whitespace-heavy input', () => {
+      // Pre-fix: this input would backtrack polynomially across the three
+      // \s+ sites in the "do/does/... \s+ I/you/.../the\s+user \s+ still" pattern.
+      const malicious = 'do' + ' '.repeat(50_000) + 'X';
+      const start = performance.now();
+      classifyQuery(malicious);
+      const elapsed = performance.now() - start;
+      expect(elapsed).toBeLessThan(100);
+    });
+  });
 });
