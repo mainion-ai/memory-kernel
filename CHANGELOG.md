@@ -17,6 +17,17 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.28.5] — 2026-06-09
+
+### Fixed — `callClaude` could crash on an unhandled `EPIPE` when the child exits early
+
+`callClaude` (`src/llm.ts`) piped the user prompt to the child's stdin (`proc.stdin.write`) without an `error` listener on `proc.stdin`. When the spawned `claude` process exits before reading stdin, the write lands on a closed pipe and raises `EPIPE`; with no listener, Node promotes it to an unhandled exception that crashes the whole process. This surfaced as an **intermittent** Node-24 CI failure (the `llm-spawn-timeout` "child exits 0 immediately" fixture races the child closing stdin) — the run failed with `write EPIPE` even though every test passed. The `close`/`error` handlers on the child already govern the call's real outcome, so the stdin write error is benign and is now swallowed via `proc.stdin.on('error', …)`.
+
+- **`src/llm.ts`** — add a benign `error` listener on `proc.stdin` before writing the prompt.
+- **`test/llm-spawn-timeout.test.ts`** — regression test: a fixture that closes its stdin read-end and exits 0, plus a 2 MB prompt to reliably force the write onto the closed pipe. Reproduces the exact `EPIPE` unhandled error without the fix; resolves cleanly with it. (+1 test)
+
+**Version bump:** PATCH (1.28.4 → 1.28.5) — internal robustness fix, no public API change.
+
 ## [1.28.4] — 2026-06-09
 
 ### Added — `atom-frontmatter` + `atom-relations-section` doctor checks (#227)

@@ -158,7 +158,14 @@ async function callClaude(
       resolve(stdout.trim());
     });
 
-    // Write user prompt to stdin and close.
+    // Write user prompt to stdin and close. If the child has already exited
+    // (e.g. it returns immediately without reading stdin), the pipe is gone
+    // and the write raises EPIPE. That's benign here — the `close`/`error`
+    // handlers above govern the actual outcome — but without an `error`
+    // listener Node promotes the EPIPE to an unhandled exception that crashes
+    // the whole process (observed as a flaky Node-24 CI failure racing a
+    // fast-exiting child). Swallow it.
+    proc.stdin.on('error', () => { /* child closed stdin early; outcome handled by close/error above */ });
     proc.stdin.write(userPrompt);
     proc.stdin.end();
   });

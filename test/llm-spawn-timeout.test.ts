@@ -104,6 +104,33 @@ describe.runIf(POSIX)('callClaude spawn timeout (#99)', () => {
     expect(out).toBe('hello from fixture');
   });
 
+  test('swallows EPIPE when the child closes stdin before the prompt write (Node-24 flake regression)', async () => {
+    // The child closes its stdin read-end and exits 0 without consuming the
+    // prompt. Writing a large prompt into the now-closed pipe raises EPIPE on
+    // proc.stdin. Pre-fix there was no `error` listener on proc.stdin, so Node
+    // promoted the EPIPE to an unhandled exception that crashed the run (seen
+    // as an intermittent Node-24 CI failure even though every test "passed").
+    // Post-fix the EPIPE is swallowed and the call resolves from stdout.
+    installFixture(
+      [
+        '#!/usr/bin/env bash',
+        'exec 0<&-', // close stdin (read end) immediately
+        'echo "stdin closed early"',
+        'exit 0',
+      ].join('\n') + '\n',
+    );
+
+    // Large enough to overflow the OS pipe buffer, so the write reliably lands
+    // on the closed read-end rather than being absorbed silently.
+    const bigPrompt = 'x'.repeat(2_000_000);
+
+    const out = await callLLM('sys', bigPrompt, {
+      provider: 'claude',
+      timeoutMs: 5_000,
+    });
+    expect(out).toBe('stdin closed early');
+  });
+
   test('rejects with exit-code error when child handles SIGTERM and exits non-zero', async () => {
     // Child reads stdin, exits 1 immediately (no timeout involved).
     // Pre-fix and post-fix both reject with the exit-code error; this test
