@@ -22,11 +22,21 @@ export type { LLMProvider };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+/** What kind of source `observe` is reading. */
+export type ObserveMode = 'conversation' | 'document';
+
 export interface ObserveOptions {
-  /** Path to the conversation log file. */
+  /** Path to the source file (a conversation log, or a KNOWLEDGE/ document). */
   logPath: string;
   /** Memory directory to write observations into. */
   memoryDir: string;
+  /**
+   * Source kind (#244). 'conversation' (default) extracts what *happened* in a
+   * session; 'document' extracts the decisions/conclusions a finished knowledge
+   * doc *establishes*. Both append to observations.md — atom creation stays
+   * downstream in reflect/remember.
+   */
+  mode?: ObserveMode;
   /** Session date label for the observations header. */
   sessionDate?: string;
   /** LLM provider: 'claude' (default) or 'ollama'. Auto-detected from model name if omitted. */
@@ -87,16 +97,46 @@ Format as dated bullet points. Use priority markers:
 Be concise but COMPLETE — capture everything that could be asked about later.
 Include brief context of HOW things were mentioned (helps answer temporal questions).`;
 
+const DOCUMENT_OBSERVER_SYSTEM_PROMPT = `You are a memory observer reading a finished knowledge document — a design doc, research note, report, or project write-up — NOT a conversation.
+
+Your job is to extract the durable decisions, conclusions, and facts this document establishes, so they can be recalled later without re-reading the whole thing.
+
+Extract:
+- Decisions and their rationale ("chose X over Y because Z")
+- Conclusions and findings (what was determined, measured, or resolved)
+- Facts, constraints, and requirements stated as settled
+- Definitions and named concepts the document introduces
+- Open questions the document explicitly leaves unresolved
+- Relationships and dependencies between the things it describes
+
+Do NOT narrate the document's structure ("section 2 covers…") or summarize what
+the author "discusses" — extract the substantive claims themselves, as
+standalone statements that make sense out of context.
+
+Format as bullet points. Use priority markers:
+- 🔴 Decisions and hard constraints
+- 🟡 Conclusions, findings, and definitions
+- Unmarked = supporting facts and context
+
+Be concise but COMPLETE — capture every decision or conclusion that could be asked about later.`;
+
+/** System prompt for a given observe mode. */
+function systemPromptFor(mode: ObserveMode): string {
+  return mode === 'document' ? DOCUMENT_OBSERVER_SYSTEM_PROMPT : OBSERVER_SYSTEM_PROMPT;
+}
+
 /**
  * Build the LLM user prompt for observation extraction.
  *
- * Wraps user-controlled `conversation` in a `<document>` boundary and escapes
- * `<`/`>` in the body so a hostile log cannot close the boundary early and
+ * Wraps user-controlled `content` in a `<document>` boundary and escapes
+ * `<`/`>` in the body so a hostile source cannot close the boundary early and
  * inject model-level instructions. Mirrors the pattern used in `extract.ts`.
- * Exported for tests; called from `observeConversation`.
+ * The lead-in noun follows `mode` ("conversation" vs "document"). Exported for
+ * tests; called from `observeConversation`.
  */
-export function buildObservePrompt(conversation: string): string {
-  return `Here is the conversation to extract observations from:\n\n<document>\n${escapeXmlBoundary(conversation)}\n</document>\n\nOutput observations as bullet points:`;
+export function buildObservePrompt(content: string, mode: ObserveMode = 'conversation'): string {
+  const noun = mode === 'document' ? 'document' : 'conversation';
+  return `Here is the ${noun} to extract observations from:\n\n<document>\n${escapeXmlBoundary(content)}\n</document>\n\nOutput observations as bullet points:`;
 }
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -111,6 +151,7 @@ export async function observeConversation(opts: ObserveOptions): Promise<Observe
   const {
     logPath,
     memoryDir,
+    mode = 'conversation',
     sessionDate = new Date().toISOString().slice(0, 10),
     provider,
     model,
@@ -148,10 +189,10 @@ export async function observeConversation(opts: ObserveOptions): Promise<Observe
   }
 
   // ── Call LLM ──────────────────────────────────────────────────────────
-  const userPrompt = buildObservePrompt(conversation);
+  const userPrompt = buildObservePrompt(conversation, mode);
   let observations: string;
   try {
-    observations = await callLLM(OBSERVER_SYSTEM_PROMPT, userPrompt, {
+    observations = await callLLM(systemPromptFor(mode), userPrompt, {
       model, temperature, maxTokens, provider, ollamaUrl,
     });
   } catch (err) {

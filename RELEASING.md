@@ -46,9 +46,11 @@ one of them disagrees with the pushed tag.
 
 The workflow takes it from there: tests run, all five version places are
 checked against the tag, npm publish runs with a provenance attestation,
-and a GitHub release is created with auto-generated notes. The MCP-server
-version in `src/mcp/server.ts` is intentionally independent — do **not**
-bump it with the package version.
+and a GitHub release is created — its notes are the curated `CHANGELOG.md`
+`## [X.Y.Z]` section, and it posts a linked announcement in the public repo's
+Discussions **Announcements** category. The MCP-server version in
+`src/mcp/server.ts` is intentionally independent — do **not** bump it with the
+package version.
 
 ## What the workflow does
 
@@ -59,7 +61,8 @@ Triggered by any push of a tag matching `v*`:
 3. **`npm ci`**, **`npm run build`**, **`npm test`** — full suite must pass.
 4. **Verify all five release-version places agree** — `vX.Y.Z` tag against `package.json` version, `package-lock.json` top-level + self-entry, `packages/openclaw-memory-kernel/package.json` `memory-kernel` dep pin (`^X.Y.Z`), and `CHANGELOG.md` `## [X.Y.Z]` section. Any mismatch fails the job — we'd rather fail the publish than ship an artifact whose version disagrees with its lockfile, openclaw pin, or changelog.
 5. **`npm publish --provenance --access public`** — signed via sigstore using the GitHub Actions OIDC token. The published artifact carries an attestation tying it to this commit + workflow run.
-6. **`gh release create`** — GitHub release with auto-generated notes from PRs merged since the previous tag.
+6. **Build release notes from CHANGELOG** — `scripts/changelog-section.sh "$version" --body-only` extracts the `## [X.Y.Z]` section body (the same extractor `sync-to-public.sh` uses for the synthetic-commit body — one source of truth). The five-place check in step 4 already guaranteed the section exists.
+7. **`gh release create --notes-file release-notes.md --discussion-category "Announcements"`** — GitHub release whose notes are the curated CHANGELOG section, plus an auto-created linked announcement in the public repo's Discussions. Requires the workflow's `discussions: write` permission and the **Announcements** category to exist on the public repo (it does).
 
 ## One-time setup
 

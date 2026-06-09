@@ -137,6 +137,17 @@ mk consolidate -d {dir} --json              # promote to active
 
 Consolidation detects duplicates against the active store via BM25 ranking and skips them. Use `--all` to include manually-created drafts too.
 
+### Capture finished knowledge docs (KNOWLEDGE/)
+
+When a session produces a durable artifact — a design doc, research note, or report — drop it as Markdown in `KNOWLEDGE/` rather than leaving it in chat. Docs there are observed into atoms with a document-focused prompt (decisions/conclusions, not "what happened"):
+
+```bash
+mk observe KNOWLEDGE/<doc>.md --mode document -d {dir}
+mk reflect -d {dir}    # turn the observations into atoms
+```
+
+`KNOWLEDGE/draft/` is never observed (scratch space). The full convention is seeded as a standing preference atom during `/mk-memory-setup` (Step 6c) and documented in `KNOWLEDGE/README.md`. (Nightly auto-observe of `KNOWLEDGE/` is a planned `mk init --cron` follow-up.)
+
 ---
 
 ## Every 5 Sessions

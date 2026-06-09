@@ -19,9 +19,10 @@ import type { LLMProvider } from '../llm.js';
 export function registerObserveCommand(program: Command): void {
   program
     .command('observe')
-    .description('Extract observations from a conversation log using LLM')
-    .argument('<log-path>', 'Path to the conversation log file')
+    .description('Extract observations from a conversation log or knowledge document using LLM')
+    .argument('<log-path>', 'Path to the source file (conversation log, or a KNOWLEDGE/ document with --mode document)')
     .option('-d, --dir <path>', 'Memory directory', './memory')
+    .option('--mode <mode>', 'Source kind: "conversation" (default) or "document" (KNOWLEDGE/ docs — extracts decisions/conclusions)', 'conversation')
     .option('--session-date <date>', 'Session date label (default: today, YYYY-MM-DD)')
     .option('--model <model>', 'LLM model: omit for claude -p (default), or Ollama model e.g. "qwen2.5:14b"')
     .option('--temperature <n>', 'LLM temperature (0.0-1.0)', '0.3')
@@ -33,6 +34,7 @@ export function registerObserveCommand(program: Command): void {
     .option('--json', 'Output structured JSON')
     .action(async (logPath: string, opts: {
       dir: string;
+      mode?: string;
       sessionDate?: string;
       model?: string;
       temperature?: string;
@@ -75,10 +77,18 @@ export function registerObserveCommand(program: Command): void {
       }
       const provider = opts.provider as LLMProvider | undefined;
 
+      // Validate mode option
+      const validModes = ['conversation', 'document'];
+      if (opts.mode && !validModes.includes(opts.mode)) {
+        exitWithError(`--mode must be one of: ${validModes.join(', ')}`, opts.json);
+      }
+      const mode = opts.mode as 'conversation' | 'document' | undefined;
+
       try {
         const result = await observeConversation({
           logPath: resolvedLog,
           memoryDir,
+          mode,
           sessionDate: opts.sessionDate,
           model: opts.model,
           temperature,

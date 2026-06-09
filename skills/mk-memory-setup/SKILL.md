@@ -203,6 +203,41 @@ Re-seed instructions live in [`seed-atoms/lifecycle/README.md`](seed-atoms/lifec
 
 ---
 
+## Step 6c: Initialize the KNOWLEDGE/ folder
+
+`mk init` (Step 4) already created `KNOWLEDGE/`, `KNOWLEDGE/draft/`, and a
+`KNOWLEDGE/README.md` documenting the convention. Confirm and explain it to the
+operator:
+
+```bash
+ls -la "{MEMORY_DIR}/KNOWLEDGE"   # README.md + draft/
+```
+
+**The convention** (also in `KNOWLEDGE/README.md`):
+
+- Drop finished knowledge — design docs, research notes, reports — as `.md`
+  files in `KNOWLEDGE/`. They get **observed into atoms**, so conclusions flow
+  into recall without a manual `mk remember`.
+- **`KNOWLEDGE/draft/` is never observed** — scratch space; move a doc out of
+  `draft/` when it's ready.
+- Docs are observed with the **document** prompt:
+  `mk observe KNOWLEDGE/<doc>.md --mode document -d {MEMORY_DIR}` then
+  `mk reflect` to turn observations into atoms.
+
+> The **nightly** KNOWLEDGE scan (mtime manifest in the `mk init --cron`
+> memory-sync wrapper) is a follow-up; until it ships, observe docs on demand
+> with the command above.
+
+**Seed a standing instruction** so any agent rendered from this store inherits
+the convention automatically:
+
+```bash
+npx mk remember -d "{MEMORY_DIR}" -t preference --tags knowledge,session-loop \
+  "Knowledge convention: drop design docs, research, and reports as Markdown in KNOWLEDGE/ — they are observed into atoms automatically. Use KNOWLEDGE/draft/ for work in progress (never observed). Don't paste finished knowledge into chat expecting it to persist; put it in KNOWLEDGE/."
+```
+
+---
+
 # Part 2 — Pick a host branch
 
 The universal core is done. The host determines how the agent actually *consumes* this memory. Auto-detect first, then ask.

@@ -27,6 +27,7 @@ import { renderConfigCheck } from './checks/render-config.js';
 import { wrapperDriftCheck } from './checks/wrapper-drift.js';
 import { atomFrontmatterCheck } from './checks/atom-frontmatter.js';
 import { atomRelationsSectionCheck } from './checks/atom-relations-section.js';
+import { orphanProseRefsCheck } from './checks/orphan-prose-refs.js';
 
 /**
  * Default check registry. Order is the order results are reported in —
@@ -37,6 +38,7 @@ export const DEFAULT_CHECKS: readonly Check[] = [
   linksCheck,
   atomFrontmatterCheck,
   atomRelationsSectionCheck,
+  orphanProseRefsCheck,
   conflictsCheck,
   storeSchemaCheck,
   storePermissionsCheck,

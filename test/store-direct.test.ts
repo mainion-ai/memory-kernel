@@ -192,6 +192,7 @@ describe('assertWithinDir — used by initMemoryDir + writeView/readView indirec
       'EVIDENCE',
       'CONFLICTS',
       'ARCHIVE',
+      'KNOWLEDGE',
       'INDEX.md',
       'HANDOFF.md',
       'events.ndjson',
@@ -200,5 +201,27 @@ describe('assertWithinDir — used by initMemoryDir + writeView/readView indirec
         assertWithinDir(testDir, path.join(testDir, child)),
       ).not.toThrow();
     }
+  });
+});
+
+describe('initMemoryDir — KNOWLEDGE/ scaffold (#244)', () => {
+  it('creates KNOWLEDGE/, KNOWLEDGE/draft/, and a KNOWLEDGE/README.md', () => {
+    initMemoryDir(testDir);
+    expect(fs.statSync(path.join(testDir, 'KNOWLEDGE')).isDirectory()).toBe(true);
+    expect(fs.statSync(path.join(testDir, 'KNOWLEDGE', 'draft')).isDirectory()).toBe(true);
+    const readme = path.join(testDir, 'KNOWLEDGE', 'README.md');
+    expect(fs.existsSync(readme)).toBe(true);
+    const body = fs.readFileSync(readme, 'utf-8');
+    expect(body).toContain('# KNOWLEDGE/');
+    expect(body).toContain('draft/'); // documents the never-observed convention
+    expect(body).toContain('--mode document');
+  });
+
+  it('does not clobber an existing KNOWLEDGE/README.md on re-init', () => {
+    initMemoryDir(testDir);
+    const readme = path.join(testDir, 'KNOWLEDGE', 'README.md');
+    fs.writeFileSync(readme, '# my custom knowledge index\n');
+    initMemoryDir(testDir); // idempotent re-init
+    expect(fs.readFileSync(readme, 'utf-8')).toBe('# my custom knowledge index\n');
   });
 });

@@ -20,7 +20,7 @@ vi.stubGlobal('fetch', mockFetch);
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
-import { observeConversation } from '../src/observe.js';
+import { observeConversation, buildObservePrompt } from '../src/observe.js';
 
 let testDir: string;
 let logFile: string;
@@ -400,5 +400,43 @@ describe('observeConversation', () => {
     });
 
     expect(mockFetch).toHaveBeenCalled();
+  });
+});
+
+describe('observeConversation — document mode (#244)', () => {
+  // Long enough to clear the observer's 50-char minimum.
+  const DOC =
+    '# Design decision\n\nWe chose SQLite over Postgres for the index because the ' +
+    'store is single-writer and embeds cleanly. This records the conclusion and rationale.';
+
+  it('uses the document system prompt when mode=document', async () => {
+    mockClaudeResponse(SAMPLE_OBSERVATIONS);
+    writeLog(DOC);
+    const result = await observeConversation({
+      logPath: logFile,
+      memoryDir: testDir,
+      mode: 'document',
+    });
+    expect(result.written).toBe(true);
+    // The system prompt is passed via argv: spawn(bin, [..., '--system-prompt', <prompt>, ...]).
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    const sysIdx = args.indexOf('--system-prompt');
+    expect(sysIdx).toBeGreaterThanOrEqual(0);
+    expect(args[sysIdx + 1]).toContain('finished knowledge document');
+    expect(args[sysIdx + 1]).not.toContain('conversation session between a user');
+  });
+
+  it('uses the conversation system prompt by default (backward compat)', async () => {
+    mockClaudeResponse(SAMPLE_OBSERVATIONS);
+    writeLog(DOC);
+    await observeConversation({ logPath: logFile, memoryDir: testDir });
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    const sysIdx = args.indexOf('--system-prompt');
+    expect(args[sysIdx + 1]).toContain('conversation session between a user');
+  });
+
+  it('frames the user prompt noun by mode', () => {
+    expect(buildObservePrompt('x', 'document')).toContain('Here is the document to extract');
+    expect(buildObservePrompt('x')).toContain('Here is the conversation to extract');
   });
 });

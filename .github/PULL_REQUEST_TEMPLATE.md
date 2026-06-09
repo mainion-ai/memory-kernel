@@ -24,7 +24,7 @@ no API surface change, say so explicitly.
 
 - [ ] `npm test` passes locally — full suite, no skips. Update any documentation that quotes a test count to match (see the "Version numbers and test counts" rule in [`CODING_INSTRUCTIONS.md`](../CODING_INSTRUCTIONS.md))
 - [ ] `npm run build` produces no TypeScript errors
-- [ ] If this PR adds or changes a CLI command / SDK export / config field, the README + relevant `docs/*.md` are updated in the same commit
+- [ ] If this PR adds or changes a CLI command / flag, an `src/index.ts` export, or a config field, **`README.md` is updated in the same commit** (enforced by the docs-hygiene Layer-2 surface map — a `CHANGELOG.md`-only touch does not satisfy it), plus the relevant `skills/*/SKILL.md` if the agent-facing install / upgrade / diagnostic flow changed
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` or the next version section if the change is user-visible
 - [ ] All other `.md` files affected by your change are updated in the same PR — see the "Documentation hygiene" section in [`CODING_INSTRUCTIONS.md`](../CODING_INSTRUCTIONS.md) for the canonical table
 

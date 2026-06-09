@@ -9,6 +9,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — releases now publish CHANGELOG notes + an Announcements discussion
+
+`release.yml`'s main-package job now derives its GitHub-release notes from the curated `CHANGELOG.md` `## [X.Y.Z]` section (via a new shared `scripts/changelog-section.sh`) instead of PR auto-notes, and posts a linked announcement in the public repo's Discussions **Announcements** category (`gh release create --notes-file … --discussion-category "Announcements"`; needs the new `discussions: write` workflow permission). `scripts/sync-to-public.sh` was migrated onto the same extractor so the CHANGELOG-section logic lives in exactly one place.
+
+- **`scripts/changelog-section.sh`** (new) — extract one version's CHANGELOG section; `--body-only` omits the heading. +9 tests (`test/changelog-section.test.ts`).
+- **`.github/workflows/release.yml`** — release notes from CHANGELOG; Announcements discussion; `discussions: write`.
+- **`scripts/sync-to-public.sh`** — reuse the shared extractor (sibling-relative resolution via `SCRIPT_DIR`).
+
+CI / release-infra only — no version bump.
+
 ### Fixed — Dependabot auto-merge workflow could not read status checks
 
 The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `statusCheckRollup`, which GitHub resolves through `commit.statusCheckRollup`. Reading that nested rollup needs `checks: read` and `statuses: read`, but the workflow's `permissions:` block granted only `contents: write` + `pull-requests: write`. Under the Dependabot-context `GITHUB_TOKEN` (undeclared permissions default to none), the GraphQL drill-down was denied with `Resource not accessible by integration`, so the job failed on its first poll and **every** Dependabot PR fell back to manual merge (e.g. #239).
@@ -16,6 +26,30 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 - **`.github/workflows/dependabot-auto-merge.yml`** — adds `checks: read` and `statuses: read` to the workflow `permissions:` block. No `run:` step or trigger change.
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
+
+## [1.29.0] — 2026-06-10
+
+### Added — `KNOWLEDGE/` canonical dir + `mk observe --mode document` (#244)
+
+A first-class place for finished knowledge docs (design docs, research notes, reports) to flow into the atom store without a manual `mk remember`.
+
+- **Store layout:** `mk init` now creates `KNOWLEDGE/` (added to the canonical `DIRS`), a `KNOWLEDGE/draft/` subdir (never observed — scratch space), and a `KNOWLEDGE/README.md` documenting the convention. `INDEX.md` references it.
+- **`mk observe --mode <conversation|document>`:** new flag (default `conversation`, unchanged behavior). `--mode document` swaps in a document-focused observer prompt that extracts the decisions/conclusions a finished doc *establishes* (vs. what *happened* in a conversation). Output still appends to `observations.md` — atom creation stays downstream in `reflect`/`remember` (no direct atom writes).
+- **Docs:** `/mk-memory-setup` Step 6c (convention + a seeded standing-preference atom), README (On-Disk Layout + the `mk observe` row), `docs/agent-session-loop.md` (KNOWLEDGE capture), `mk-doctor` Step 3 (expected dirs).
+- +5 tests (`observe.test.ts` document-mode + prompt framing; `store-direct.test.ts` KNOWLEDGE scaffold + re-init idempotency).
+
+Deferred follow-up (#256): the nightly mtime-scan observe loop in the `mk init --cron` memory-sync wrapper (`generateCronWrapper()` + `.knowledge-manifest` + `draft/` skip).
+
+### Added — `orphan-prose-refs` doctor check (#243)
+
+New warn-level `mk doctor` check that flags atoms whose **body prose** names another atom by ID (e.g. "Extends BELI-…") where that atom **exists in the store** but the reference is **not** wired as a formal `frontmatter.relations[].target`. These are disconnected islands in the atom graph — connected in human-readable text, invisible to graph traversal / Obsidian.
+
+- Scans all non-archived atoms (`listAtoms` = ENTITIES + CONFLICTS); the referenced ID must exist (ENTITIES + CONFLICTS + ARCHIVE, plus the shared namespace in per-agent mode) so a dead/typo'd ref isn't mistaken for an unwired one. Reuses `buildAllIds` (now exported from the `atom-frontmatter` check).
+- Relation words matched case-insensitively against `RELATION_TYPES`; ID prefixes `BELI`/`FACT`/`DECI`/`PREF`/`OPEN`. Self-references and dead refs are skipped; repeated refs to the same target dedupe.
+- **Detection-only** — inferring the correct relation type from prose is ambiguous, so no `fix()` in v1; the operator wires the relation manually (or via `mk relink`). Distinct from `atom-frontmatter`'s `broken-relation-ref` (which catches the inverse: a formal relation whose target is missing).
+- `src/doctor/checks/orphan-prose-refs.ts` + `run.ts` registry line; `skills/mk-doctor/SKILL.md` Step 4 updated. +12 tests (`test/doctor-orphan-prose-refs.test.ts`).
+
+MINOR — the new `mk observe --mode` flag + `KNOWLEDGE/` dir from #244 set the version; the #243 doctor check (no public API) rides along.
 
 ## [1.28.5] — 2026-06-09
 

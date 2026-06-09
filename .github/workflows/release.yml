@@ -6,7 +6,10 @@
 #
 # Each job runs the full test suite, sanity-checks that the tag matches
 # the relevant package.json version, publishes to npm with provenance,
-# and creates a GitHub release with auto-generated notes.
+# and creates a GitHub release. The main-package release derives its notes
+# from the curated CHANGELOG "## [X.Y.Z]" section (via scripts/changelog-section.sh)
+# and posts a linked announcement in the public repo's Discussions
+# "Announcements" category.
 #
 # Both jobs are guarded by `github.repository == 'mainion-ai/memory-kernel'`
 # so the workflow is a no-op on `-dev`. The sync workflow (sync-on-tag.yml)
@@ -44,11 +47,15 @@ concurrency:
   group: release
   cancel-in-progress: false
 
-# id-token: needed for npm provenance attestation (sigstore signing).
-# contents: needed to create the GitHub release.
+# id-token:    needed for npm provenance attestation (sigstore signing).
+# contents:    needed to create the GitHub release.
+# discussions: needed for `gh release create --discussion-category` to post the
+#              linked Announcements discussion (requires the "Announcements"
+#              category to exist in the public repo's Discussions).
 permissions:
   id-token: write
   contents: write
+  discussions: write
 
 jobs:
   # Main `memory-kernel` package. Fires on v* tags.
@@ -144,13 +151,32 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub release
+      # Release notes come from the curated CHANGELOG section (the project's
+      # "shipped record" — four-surface model), not PR auto-notes. The
+      # five-place version gate above already guaranteed the section exists.
+      # Extraction is shared with sync-to-public.sh via scripts/changelog-section.sh.
+      - name: Build release notes from CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/changelog-section.sh "$version" --body-only > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG section for ${version} (the version gate should have caught this)"
+            exit 1
+          fi
+          echo "Release notes for ${version}:"
+          cat release-notes.md
+
+      # `--discussion-category "Announcements"` makes GitHub auto-create a
+      # linked announcement Discussion (category must exist on the public repo;
+      # needs the `discussions: write` permission declared above).
+      - name: Create GitHub release + Announcements discussion
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            --notes-file release-notes.md \
+            --discussion-category "Announcements"
 
   # Subpackage `openclaw-memory-kernel`. Fires on openclaw-memory-kernel-v* tags
   # per #197's independent-tag-track policy. Different working directory,
@@ -226,6 +252,14 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # NOTE: unlike the main-package job, this intentionally uses a static
+      # pointer rather than CHANGELOG-extracted notes + an Announcements
+      # discussion. The subpackage tag track (openclaw-memory-kernel-v*) is not
+      # yet wired into sync-on-tag (see RELEASING.md § Subpackage releases), so
+      # this job does not fire via the normal flow today. Release-notes parity
+      # for the subpackage — `changelog-section.sh "$ver" --body-only --file
+      # packages/openclaw-memory-kernel/CHANGELOG.md` + a discussion — is a
+      # follow-up to land when that tag track is actually wired (tracked in #254).
       - name: Create GitHub release for subpackage
         working-directory: ${{ github.workspace }}
         env:

@@ -20,6 +20,7 @@ const DIRS = [
   'EVIDENCE',
   'CONFLICTS',
   'ARCHIVE',
+  'KNOWLEDGE',
 ];
 
 const VIEW_FILES = [
@@ -52,6 +53,17 @@ export function initMemoryDir(memoryDir: string): void {
       const template = getTemplate(file);
       writeFileAtomic(filePath, template, 0o600);
     }
+  }
+
+  // KNOWLEDGE/ scaffold (#244). The dir itself is created by the DIRS loop;
+  // here we add the `draft/` subdir (never auto-observed — scratch space) and a
+  // README documenting the convention. The nightly observe scan of KNOWLEDGE/
+  // is a deferred follow-up — TODO(#256); until then the README points at the
+  // manual `mk observe <file> --mode document` path.
+  fs.mkdirSync(path.join(memoryDir, 'KNOWLEDGE', 'draft'), { recursive: true });
+  const knowledgeReadme = path.join(memoryDir, 'KNOWLEDGE', 'README.md');
+  if (!fs.existsSync(knowledgeReadme)) {
+    writeFileAtomic(knowledgeReadme, getTemplate('KNOWLEDGE/README.md'), 0o600);
   }
 
   // Create events log. 0o600 because the event envelope (atom_refs,
@@ -279,7 +291,7 @@ updated_at: ${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}
 # Memory Index
 
 > Routing map for this memory store. Kept under 200 lines.
-> Heavy content lives in ENTITIES/, EPISODES/, and topic files.
+> Heavy content lives in ENTITIES/, EPISODES/, KNOWLEDGE/, and topic files.
 
 ## Active Context
 
@@ -300,6 +312,33 @@ _None._
 ## Entities
 
 _None tracked._
+`;
+
+    case 'KNOWLEDGE/README.md':
+      return `# KNOWLEDGE/
+
+Drop finished knowledge here — design docs, research notes, reports, project
+write-ups — as Markdown files. memory-kernel observes new and changed \`.md\`
+files in this directory (and subdirectories) and extracts atoms from them, so
+conclusions you record here flow into recall without a manual \`mk remember\`.
+
+## Convention
+
+- **Everything here is watched** — observed and turned into atoms — **except \`draft/\`.**
+- **\`draft/\` is never observed.** It's scratch space for work in progress; move
+  a doc out of \`draft/\` once it's ready to be atomized.
+- Docs are observed with a *document* prompt ("what decisions and conclusions
+  does this document establish?"), not the conversation prompt.
+
+## Observing a doc
+
+The nightly KNOWLEDGE scan will be wired through the \`mk init --cron\` memory-sync
+wrapper (not yet shipped). Until then, observe a doc on demand:
+
+\`\`\`bash
+mk observe KNOWLEDGE/path/to/doc.md --mode document -d <memory-dir>
+mk reflect -d <memory-dir>   # dedup / score / promote the observations into atoms
+\`\`\`
 `;
 
     case 'HANDOFF.md':

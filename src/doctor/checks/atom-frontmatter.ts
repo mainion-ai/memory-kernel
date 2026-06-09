@@ -33,7 +33,7 @@ const REF_DIRS = ['ENTITIES', 'CONFLICTS', 'ARCHIVE'];
  * agent→shared edge is not reported as a broken-relation-ref. Widening the
  * known-ID set can only suppress false positives — it never creates new ones.
  */
-function buildAllIds(memoryDir: string): Set<string> {
+export function buildAllIds(memoryDir: string): Set<string> {
   const roots = [memoryDir];
   if (path.basename(path.dirname(memoryDir)) === 'agents') {
     roots.push(getSharedDir(path.dirname(path.dirname(memoryDir))));

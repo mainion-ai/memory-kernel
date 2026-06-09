@@ -90,7 +90,7 @@ If multiple hosts are detected (or zero), ask `AskUserQuestion` which one this d
 ls -la "$MEMORY_DIR"/
 ```
 
-Expected directories: `ENTITIES/`, `ARCHIVE/`, `EVIDENCE/`, `CONFLICTS/`, `EPISODES/`. Expected files: `events.ndjson`, optionally `.memory-index.db`, optionally `config.yaml` (for per-agent isolation).
+Expected directories: `ENTITIES/`, `ARCHIVE/`, `EVIDENCE/`, `CONFLICTS/`, `EPISODES/`, `KNOWLEDGE/` (with `KNOWLEDGE/README.md` + `KNOWLEDGE/draft/`). Expected files: `events.ndjson`, optionally `.memory-index.db`, optionally `config.yaml` (for per-agent isolation).
 
 **Missing directories:** `mk init "$MEMORY_DIR"` recreates them safely (no-op for existing ones).
 
@@ -104,7 +104,7 @@ Expected directories: `ENTITIES/`, `ARCHIVE/`, `EVIDENCE/`, `CONFLICTS/`, `EPISO
 npx mk doctor -d "$MEMORY_DIR" --json
 ```
 
-Validates atom frontmatter, broken atom-ID references, and active conflicts. JSON output makes it easy to act on programmatically.
+Validates atom frontmatter, broken atom-ID references, active conflicts, and graph-connectivity gaps (prose that names another atom without a formal relation). JSON output makes it easy to act on programmatically.
 
 **`mk: command not found`** — the CLI isn't installed. Don't auto-install into `/tmp` without asking. Use `AskUserQuestion`:
 
@@ -113,6 +113,8 @@ Validates atom frontmatter, broken atom-ID references, and active conflicts. JSO
 - *"Skip — I'll install it myself"*
 
 **Broken links:** report which atom references which missing target. Offer to run `mk relink --apply` (regenerates relations from body text).
+
+**Orphan prose refs** (`orphan-prose-refs`, warn): an atom's body names another *existing* atom (e.g. "Extends BELI-…") but has no matching `relations[]` entry — so the edge is invisible to the graph. Detection-only (the correct relation type is ambiguous from prose). Surface each one and wire the relation manually, or try `mk relink --apply`.
 
 **Active conflicts:** list them; explain that `mk reflect` followed by manual `resolveConflict()` calls (or editing the atom files) is the path forward.
 

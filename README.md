@@ -204,6 +204,7 @@ my-memory/
 ├── EVIDENCE/              ← Content-addressed blobs (SHA-256)
 ├── CONFLICTS/             ← Conflict atoms
 ├── EPISODES/              ← Session summaries
+├── KNOWLEDGE/             ← Drop knowledge docs here; observed into atoms (draft/ is never observed)
 ├── events.ndjson          ← Append-only event log
 ├── INDEX.md               ← Routing map (auto-generated)
 ├── HANDOFF.md             ← Cross-session context (auto-generated)
@@ -260,6 +261,7 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 |---------|-------------|
 | `mk import --from <file> [--dry-run]` | Import markdown as atoms |
 | `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using an LLM (Claude CLI or Ollama) |
+| `mk observe <path> -d <dir> [--mode conversation\|document] [--model <model>] [--dry-run] [--json]` | Append LLM observations to `observations.md`. `--mode document` reads a `KNOWLEDGE/` doc and extracts its decisions/conclusions (vs. what happened in a conversation); `mk reflect` then turns observations into atoms. See the [`/mk-memory-setup`](skills/mk-memory-setup/SKILL.md) KNOWLEDGE step |
 | `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active |
 | `mk lint -d <dir> [--json] [--stale-days N]` | Semantic health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
 | `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
