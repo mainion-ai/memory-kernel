@@ -17,6 +17,7 @@ import os from 'os';
 import {
   renderRelationsSection,
   stripRelationsSection,
+  parseRelationsSection,
   RELATIONS_SENTINEL,
   generateGraphConfig,
   TYPE_COLORS,
@@ -110,6 +111,47 @@ describe('stripRelationsSection', () => {
   it('trims trailing whitespace before sentinel', () => {
     const body = `Body.\n\n\n${RELATIONS_SENTINEL}\n## Relations`;
     expect(stripRelationsSection(body)).toBe('Body.');
+  });
+});
+
+// --- parseRelationsSection (inverse of renderRelationsSection) ---
+
+describe('parseRelationsSection', () => {
+  it('returns [] when no sentinel present', () => {
+    expect(parseRelationsSection('Just body text, no section.')).toEqual([]);
+  });
+
+  it('round-trips with renderRelationsSection (incl. hyphenated display types)', () => {
+    const relations: Relation[] = [
+      { type: 'extends', target: 'FACT-1' },
+      { type: 'caused_by', target: 'FACT-2' },
+      { type: 'applied_to', target: 'FACT-3' },
+    ];
+    const rendered = renderRelationsSection(relations);
+    const parsed = parseRelationsSection(rendered);
+    expect(new Set(parsed.map((e) => `${e.type}:${e.target}`))).toEqual(
+      new Set(relations.map((r) => `${r.type}:${r.target}`)),
+    );
+  });
+
+  it('strips an Obsidian display alias from the target', () => {
+    const raw = `${RELATIONS_SENTINEL}\n## Relations\n\n- related [[FACT-2026-01-01-y-fghij|the Y fact]]\n`;
+    expect(parseRelationsSection(raw)).toEqual([
+      { type: 'related', target: 'FACT-2026-01-01-y-fghij' },
+    ]);
+  });
+
+  it('ignores reverse/incoming display types not in RELATION_TYPES', () => {
+    const raw = `${RELATIONS_SENTINEL}\n## Relations\n\n- extends [[A]]\n- extended-by [[B]]\n`;
+    expect(parseRelationsSection(raw)).toEqual([{ type: 'extends', target: 'A' }]);
+  });
+
+  it('parses the real (last) section when the sentinel also appears earlier in prose', () => {
+    const raw =
+      `Doc atom describing the format: a line like \`${RELATIONS_SENTINEL}\` opens the section.\n` +
+      `- extends [[DECOY-from-prose]]\n\n` +
+      `${RELATIONS_SENTINEL}\n## Relations\n\n- supports [[REAL-TARGET]]\n`;
+    expect(parseRelationsSection(raw)).toEqual([{ type: 'supports', target: 'REAL-TARGET' }]);
   });
 });
 

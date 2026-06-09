@@ -141,6 +141,15 @@ major bumps never reach the polling step.
 - Adding a new required check (e.g. a future `lint` or `type-check`
   workflow) requires updating the `REQUIRED_CHECKS` env var in this
   workflow. Documented in the workflow comments.
+- The poll reads the PR's `statusCheckRollup`, which GitHub resolves
+  through `commit.statusCheckRollup`. That nested rollup requires
+  **`checks: read`** (CheckRun) and **`statuses: read`** (Status) in the
+  workflow `permissions:` block. They are easy to omit because
+  `contents: write` + `pull-requests: write` look sufficient — but the
+  Dependabot-context token defaults undeclared permissions to none, so the
+  GraphQL drill-down fails with `Resource not accessible by integration`.
+  Both reads were added 2026-06-07 after every Dependabot PR (e.g. #239)
+  fell back to manual merge.
 
 ## Revisit triggers
 

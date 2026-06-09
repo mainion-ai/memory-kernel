@@ -11,11 +11,60 @@
  * Files are truth; the section is a derived view.
  */
 
-import type { Relation } from './types.js';
-import { ATOM_TYPES } from './types.js';
+import type { Relation, RelationType } from './types.js';
+import { ATOM_TYPES, RELATION_TYPES } from './types.js';
 
 /** Sentinel marking the start of the machine-managed relations section. */
 export const RELATIONS_SENTINEL = '<!-- mk:relations -->';
+
+/** Canonical relation type → Obsidian display form (`caused_by` → `caused-by`). */
+export function relationTypeToDisplay(type: string): string {
+  return type.replace(/_/g, '-');
+}
+
+/** Obsidian display form → canonical relation type (`caused-by` → `caused_by`). */
+export function relationDisplayToType(display: string): string {
+  return display.replace(/-/g, '_');
+}
+
+/** Display forms of every known outgoing relation type. Built once. */
+const VALID_RELATION_DISPLAY_TYPES = new Set(RELATION_TYPES.map(relationTypeToDisplay));
+
+/**
+ * Parse outgoing edges from an atom's rendered `<!-- mk:relations -->` section.
+ *
+ * Inverse of {@link renderRelationsSection} — kept here, beside the renderer,
+ * so the line format (`- <display-type> [[target]]`) lives in exactly one
+ * place. Returns `{type, target}` pairs for bullets whose display type (after
+ * hyphen→underscore normalisation) is a known `RELATION_TYPE`; reverse/incoming
+ * display types (e.g. `extended-by`) are valid section content but are NOT in
+ * `RELATION_TYPES`, so they're ignored. Any Obsidian display alias is stripped
+ * (`[[target|alias]]` → `target`).
+ *
+ * Uses `lastIndexOf` because the section is always rendered at end-of-file; an
+ * earlier mention of the sentinel (e.g. quoted in an atom's prose body) must
+ * not be mistaken for the section start.
+ */
+export function parseRelationsSection(
+  rawContent: string,
+): Array<{ type: RelationType; target: string }> {
+  const idx = rawContent.lastIndexOf(RELATIONS_SENTINEL);
+  if (idx === -1) return [];
+
+  const edges: Array<{ type: RelationType; target: string }> = [];
+  for (const line of rawContent.slice(idx).split('\n')) {
+    const m = line.match(/^-\s+(\S+)\s+\[\[([^\]]+)\]\]/);
+    if (!m) continue;
+    const [, displayType, rawTarget] = m;
+    if (VALID_RELATION_DISPLAY_TYPES.has(displayType)) {
+      edges.push({
+        type: relationDisplayToType(displayType) as RelationType,
+        target: rawTarget.split('|')[0].trim(),
+      });
+    }
+  }
+  return edges;
+}
 
 /**
  * Distinct colors for each atom type, as RGB integers for Obsidian's graph.json.
@@ -79,7 +128,7 @@ export function renderRelationsSection(relations: Relation[] | undefined): strin
     first = false;
     // Typed relation links: "- type [[target]]"
     // Replace underscores with hyphens for readability (caused-by > caused_by).
-    const displayType = type.replace(/_/g, '-');
+    const displayType = relationTypeToDisplay(type);
     for (const target of targets.sort()) {
       lines.push(`- ${displayType} [[${target}]]`);
     }

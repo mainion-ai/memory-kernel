@@ -9,6 +9,36 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed — Dependabot auto-merge workflow could not read status checks
+
+The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `statusCheckRollup`, which GitHub resolves through `commit.statusCheckRollup`. Reading that nested rollup needs `checks: read` and `statuses: read`, but the workflow's `permissions:` block granted only `contents: write` + `pull-requests: write`. Under the Dependabot-context `GITHUB_TOKEN` (undeclared permissions default to none), the GraphQL drill-down was denied with `Resource not accessible by integration`, so the job failed on its first poll and **every** Dependabot PR fell back to manual merge (e.g. #239).
+
+- **`.github/workflows/dependabot-auto-merge.yml`** — adds `checks: read` and `statuses: read` to the workflow `permissions:` block. No `run:` step or trigger change.
+
+No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
+
+## [1.28.4] — 2026-06-09
+
+### Added — `atom-frontmatter` + `atom-relations-section` doctor checks (#227)
+
+Two new `mk doctor` checks covering semantic constraints on atom frontmatter not caught by the existing Zod schema check. They are split by concern so each `CheckResult` carries a single severity, which lets `mk doctor` count and tag errors vs warnings correctly.
+
+**`atom-frontmatter`** — referential integrity + filename consistency (`severity: 'error'`):
+- `broken-relation-ref` — `relations[].target` references a non-existent atom ID (scans `ENTITIES/`, `CONFLICTS/`, and `ARCHIVE/`; in per-agent isolation mode the shared namespace is scanned too, so a valid agent→shared edge is not falsely flagged)
+- `id-mismatch` — frontmatter `id` does not match the file's basename (sans `.md`)
+- `duplicate-id` — two or more atoms in `ENTITIES/`/`CONFLICTS/` declare the same `id`
+
+**`atom-relations-section`** — section/frontmatter drift (`severity: 'warn'`):
+- `stale-relations-section` — a `<!-- mk:relations -->` section exists but is missing an outgoing edge present in `frontmatter.relations[]` (i.e. the section was not regenerated after a manual frontmatter edit)
+
+Neither check ships a `fix()` yet — referential/filename errors need human review, and section regeneration (a `renderRelationsSection` round-trip + file write) is deferred to its own PR.
+
+The relations-section parser lives beside its renderer as a new `parseRelationsSection()` in `src/obsidian.ts` (inverse of `renderRelationsSection`), so the bullet format and the underscore↔hyphen display conversion (`relationTypeToDisplay` / `relationDisplayToType`) are defined in one place. It anchors on the *last* sentinel (the section is always at EOF) and strips Obsidian display aliases (`[[target|alias]]` → `target`). These helpers are not re-exported from the package entrypoint — no new public API.
+
+**Also:** extended `ATOM_SCHEMA_MIGRATIONS` (the `atom-schema` auto-fix path) with `references → related` (an untyped link, no directionality to lose). The five directional reverse types (`referenced_by`, `extended_by`, `related_by`, `supported_by`, `applied_from`) map to `null` instead — they surface in `remaining[]` for manual review rather than silently collapsing edge direction under `mk doctor --fix`.
+
+Tests **1679 → 1708** across 116 files.
+
 ## [1.28.3] — 2026-06-04
 
 ### Fixed — CodeQL alert #4 (`actions/missing-workflow-permissions`) — explicit `contents: read` on CI workflow

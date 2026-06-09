@@ -25,6 +25,8 @@ import { storePermissionsCheck } from './checks/store-permissions.js';
 import { storeSchemaCheck } from './checks/store-schema.js';
 import { renderConfigCheck } from './checks/render-config.js';
 import { wrapperDriftCheck } from './checks/wrapper-drift.js';
+import { atomFrontmatterCheck } from './checks/atom-frontmatter.js';
+import { atomRelationsSectionCheck } from './checks/atom-relations-section.js';
 
 /**
  * Default check registry. Order is the order results are reported in —
@@ -33,6 +35,8 @@ import { wrapperDriftCheck } from './checks/wrapper-drift.js';
 export const DEFAULT_CHECKS: readonly Check[] = [
   schemaCheck,
   linksCheck,
+  atomFrontmatterCheck,
+  atomRelationsSectionCheck,
   conflictsCheck,
   storeSchemaCheck,
   storePermissionsCheck,

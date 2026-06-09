@@ -39,6 +39,16 @@ export const ATOM_SCHEMA_MIGRATIONS: Record<string, Record<string, MigrationOutc
     // Commit 2 seed — kebab-case predates the underscore canonicalisation.
     'caused-by': 'caused_by',
     'applied-to': 'applied_to',
+    // `references` was never in RELATION_TYPES; nearest valid equivalent is `related`.
+    'references': 'related',
+    // Reverse/incoming edge types that occasionally appear in frontmatter by mistake.
+    // null → surface in remaining[] for manual review. Collapsing direction is lossy
+    // (e.g. `extended_by: PARENT` → `related: PARENT` destroys hierarchy for graph-boost).
+    'referenced_by': null,
+    'extended_by': null,
+    'related_by': null,
+    'supported_by': null,
+    'applied_from': null,
   },
 };
 
