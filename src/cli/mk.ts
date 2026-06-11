@@ -1368,6 +1368,7 @@ program
   .option('--relation-weight <n>', 'Activation weight for explicit relation edges (default: 2.0)', parseFloat)
   .option('--type-weights <json>', 'Per-relation-type weights as JSON, e.g. \'{"extends":1.5,"related":0.3}\'')
   .option('--weight-preset <name>', 'Use a named weight preset: constitution, tension, narrative')
+  .option('--no-diverse-seeds', 'Disable type-diverse auto-seed selection (use plain top-N by citation weight)')
   .option('--json', 'Output as JSON')
   .action((opts: {
     dir: string;
@@ -1381,6 +1382,7 @@ program
     relationWeight?: number;
     typeWeights?: string;
     weightPreset?: string;
+    diverseSeeds?: boolean;
     json?: boolean;
   }) => {
     const memoryDir = resolveDir(opts.dir, getAgent());
@@ -1429,6 +1431,7 @@ program
       maxCollisions: opts.maxCollisions,
       relationWeight: opts.relationWeight,
       typeWeights,
+      diverseSeeds: opts.diverseSeeds,
     });
 
     if (opts.json) {

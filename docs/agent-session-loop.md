@@ -79,20 +79,24 @@ mk relations BELI-2026-04-01-CACHE-HYPOTHESIS -d {dir}
 ### Explore connections with wander
 
 ```bash
-mk wander -d {dir} --tags philosophy,architecture --steps 5 --json
+mk wander -d {dir} --steps 5 --json
 ```
 
 Run wander when exploring a new topic, when stuck, or during free time. Collisions in the output are atoms from different domains that activated together — these are worth investigating. No collisions means no unexpected connections found; move on.
 
-**Which tags to wander on:** Use the tags of the domain you're entering, or seed from a specific atom you just wrote. If you want to audit an atom's neighborhood rather than a domain, use `--seed` instead of `--tags`:
+**Auto-seeding (default):** With no `--tags` or `--seed` flags, wander selects seeds automatically using citation-primary, round-robin across atom types — the highest-cited belief, then the highest-cited fact, then the highest-cited decision, etc. This is the recommended default. It ensures cross-cluster connections can emerge even when the store is belief-heavy.
+
+**Targeted wander:** Use `--tags` or `--seed` when you want to explore a specific domain or audit a specific atom's neighborhood:
 
 ```bash
-# Domain entry
+# Domain entry — explore atoms tagged with these concepts
 mk wander -d {dir} --tags infrastructure,performance --steps 5 --json
 
-# Specific atom neighborhood
+# Specific atom neighborhood — start from a known atom
 mk wander -d {dir} --seed BELI-2026-04-01-CACHE-HYPOTHESIS --steps 3 --json
 ```
+
+**Note:** `mk wander` requires `mk citations` to have been run first — citations is the input to its activation scoring. The weekly cron runs `mk citations` at step 3. If you want to run wander mid-session before the next weekly cron, run `mk citations -d {dir}` first (it's fast, ~1s).
 
 **Session counting for every-5-sessions rule:** One episode = one session. Check your episode count with `mk episodes -d {dir} --limit 1 --json` and track the cadence yourself, or keep a `preference` atom like `"Last reflect: 2026-04-19, next at session 5"` and update it after each reflect run.
 
@@ -113,6 +117,31 @@ mk episode -d {dir} \
 ```
 
 **Why episodes, not FACT atoms:** Episodes capture the arc of a session — context, decisions, open threads — in a format that `--include-episodes` can pull efficiently at session start. FACT atoms are for durable individual facts. Writing session state as FACT atoms pollutes the atom store with ephemeral content and inflates recall noise.
+
+### Surface implicit connections with wander (optional)
+
+After writing the episode summary, run wander to surface cross-cluster connections that the session may have primed:
+
+```bash
+mk citations -d {dir}
+mk wander -d {dir} --steps 5 --json
+```
+
+**What to do with the output:** Scan the `collisions` array. If any pair has `score > 0.4`, those two atoms activated together strongly enough to warrant a belief atom capturing the connection. Write it now while the session context is fresh:
+
+```bash
+mk remember "ATOM-A and ATOM-B are connected because ..." \
+  -d {dir} -t belief --confidence 0.6 \
+  --tags <shared-theme>
+mk relate BELI-<new-id> extends BELI-<atom-a> -d {dir}
+mk relate BELI-<new-id> extends BELI-<atom-b> -d {dir}
+```
+
+If no collision scores exceed 0.4, skip — no connections worth capturing this session.
+
+**Cleanup:** The `atom_citations` table written by `mk citations` persists until the next weekly cron (which rebuilds it). No manual cleanup needed.
+
+**Note for stores with few relation edges:** `mk wander` output quality scales with graph density. If you rarely run `mk relate`, wander can only traverse explicit relation edges — the walk will be short and local. Build the graph by running `mk relate` whenever you notice a connection between atoms.
 
 ### Extract atoms from conversation log (optional)
 

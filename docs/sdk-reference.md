@@ -701,6 +701,22 @@ closeIndex('./memory');
 
 Or use the CLI: `mk wander -d ./memory --tags philosophy accounting --steps 5 --json`
 
+**Auto-seed selection.** When neither `seeds` nor `seedTags` is given, wander
+auto-selects its starting atoms **citation-primary** (#280): atoms are ranked by
+raw citation count first, with recency (base-level activation) only breaking ties
+among equally-cited atoms. A heavily-cited foundational atom therefore always
+outranks a freshly-written uncited one — seeds are the graph's well-connected
+anchors, not "whatever was touched last." Run `mk citations` first so citation
+counts exist; with no citation data the ranking degrades gracefully to pure
+recency.
+
+Auto-seeds are also drawn **round-robin across atom types** by default
+(`diverseSeeds: true`, #281): the best-ranked belief, then the best fact, then
+the best decision, and so on. In a type-monoculture store (e.g. ~90% beliefs)
+the plain top-N would be three beliefs from one tight cluster and the walk would
+never escape it; type-diverse seeds let activation bridge to other clusters. Set
+`diverseSeeds: false` (CLI `--no-diverse-seeds`) for the plain top-N behavior.
+
 ---
 
 ## Per-Agent Isolation

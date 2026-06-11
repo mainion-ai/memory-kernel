@@ -500,7 +500,7 @@ mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `seeds` | 3 most recent | Atom IDs to start from |
+| `seeds` | auto | Atom IDs to start from. When omitted, 3 seeds are auto-selected **citation-primary** (most-cited first, recency as tiebreak) and drawn **round-robin across types** so the walk spans clusters rather than one type-monoculture |
 | `seedTags` | — | Tags to resolve into seeds |
 | `steps` | 3 | Spreading depth |
 | `threshold` | 0.05 | Minimum activation to survive |
@@ -508,6 +508,7 @@ mk wander -d ./memory --tags philosophy accounting --steps 5 --json
 | `decay` | 0.5 | Spread decay factor |
 | `maxCollisions` | 5 | Max collision candidates |
 | `relationWeight` | 2.0 | Activation weight for explicit relation edges |
+| `diverseSeeds` (CLI `--no-diverse-seeds` to disable) | `true` | Round-robin auto-seeds across atom types; disable for plain top-N by citation weight |
 
 ### Closure — Operational Closure Metrics
 

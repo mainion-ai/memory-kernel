@@ -96,6 +96,10 @@ export interface WanderOptions {
    *  Defaults to DEFAULT_TYPE_WEIGHTS. Set a preset name ('constitution',
    *  'tension', 'narrative') or provide a custom record. */
   typeWeights?: Record<string, number>;
+  /** When auto-selecting seeds (no explicit seeds/seedTags), draw them
+   *  round-robin across atom types so the walk starts from multiple clusters
+   *  instead of one type-monoculture (default: true). See #281. */
+  diverseSeeds?: boolean;
   /** If set, shared namespace atoms participate in the graph (per-agent isolation). */
   sharedMemoryDir?: string;
   /** Root memory directory (used for path validation when sharedMemoryDir is set). */
@@ -323,16 +327,69 @@ function resolveTagSeeds(
 }
 
 /**
- * Select top N seeds by recency when no explicit seeds provided.
+ * Select top N seeds when no explicit seeds are provided.
+ *
+ * Ranking is **citation-primary** (#280): atoms are ordered first by raw
+ * citation count (descending), then by base-level activation as a recency
+ * tiebreak among equally-cited atoms. This guarantees that a heavily-cited
+ * foundational atom always outranks an uncited one as a seed, regardless of
+ * how recently the uncited atom was written.
+ *
+ * Why not rank by `base_activation` directly: that score folds recency and
+ * frequency into one number (ln(n) − 0.5·ln(ageDays)), and the age term is
+ * clamped to ≥0.01 days — so a same-session atom earns a ≈+2.3 recency spike,
+ * enough to outrank a 28×-cited belief from prior sessions. Seeds are meant to
+ * be the graph's well-connected anchors, not "whatever was touched last," so
+ * citation weight (a connectivity proxy) drives selection and recency only
+ * breaks ties.
+ *
+ * When no citation data exists yet (the `atom_citations` table is unpopulated,
+ * or in file-scan mode where counts are always 0), every count is 0 and the
+ * ranking degrades gracefully to pure recency — the only signal available.
+ *
+ * **Type diversity (#281).** When `diverse` is true (the default), seeds are
+ * drawn round-robin across atom *types* rather than taking the global top-N.
+ * In a belief-monoculture store (e.g. ~90% beliefs) the global top-N are all
+ * beliefs from one tight cluster, so the walk never escapes it — defeating the
+ * whole point of spreading activation (cross-cluster surprise). Round-robin
+ * pulls the best-ranked atom of each type in turn (beliefs lead, then the top
+ * fact, decision, procedure …), so the seed set spans multiple clusters and the
+ * walk can bridge between them. Within each type, atoms keep the citation-primary
+ * order above. With only one type present, this reduces to the plain top-N.
  */
 function autoSeeds(
   graph: Map<string, GraphNode>,
   n: number,
+  diverse: boolean = true,
 ): string[] {
-  return [...graph.entries()]
-    .sort((a, b) => b[1].base_activation - a[1].base_activation)
-    .slice(0, n)
-    .map(([id]) => id);
+  const ranked = [...graph.entries()].sort((a, b) =>
+    b[1].citation_count - a[1].citation_count ||
+    b[1].base_activation - a[1].base_activation,
+  );
+
+  if (!diverse) {
+    return ranked.slice(0, n).map(([id]) => id);
+  }
+
+  // Group ids by type, preserving the citation-primary order within each type.
+  // Map insertion order reflects rank: the first type seen is the one holding
+  // the globally top-ranked atom, so stronger clusters still lead the rotation.
+  const queuesByType = new Map<string, string[]>();
+  for (const [id, node] of ranked) {
+    const queue = queuesByType.get(node.type);
+    if (queue) queue.push(id);
+    else queuesByType.set(node.type, [id]);
+  }
+
+  // Round-robin across the type queues until n seeds are picked (or all drain).
+  const typeQueues = [...queuesByType.values()];
+  const seeds: string[] = [];
+  for (let i = 0; seeds.length < n && typeQueues.some((q) => q.length > 0); i++) {
+    const queue = typeQueues[i % typeQueues.length];
+    const next = queue.shift();
+    if (next !== undefined) seeds.push(next);
+  }
+  return seeds;
 }
 
 /**
@@ -456,7 +513,7 @@ function wanderWithGraph(
   }
 
   if (seeds.length === 0) {
-    seeds = autoSeeds(graph, 3);
+    seeds = autoSeeds(graph, 3, options.diverseSeeds ?? true);
   }
 
   if (seeds.length === 0) {

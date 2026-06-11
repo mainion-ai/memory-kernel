@@ -1,6 +1,6 @@
 {
   "name": "memory-kernel",
-  "version": "1.30.0",
+  "version": "1.31.0",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",

@@ -20,6 +20,8 @@ import {
 } from '../src/index.js';
 import { wander, wanderFromFiles } from '../src/wander.js';
 import type { WanderResult } from '../src/wander.js';
+import { indexCitations } from '../src/citations.js';
+import { openIndex } from '../src/index-db.js';
 
 let testDir: string;
 
@@ -970,6 +972,172 @@ describe('wander — spreading activation', () => {
       );
       expect(acCollision).toBeDefined();
       expect(acCollision!.dissimilarity).toBe(1);
+    });
+  });
+
+  describe('auto-seed selection (#280 — citation-primary, not recency-biased)', () => {
+    // Helper: backdate an atom's created_at/updated_at on disk, then reindex
+    // so the SQLite snapshot reflects the older timestamp.
+    function backdate(filePath: string, iso: string) {
+      const rewritten = fs.readFileSync(filePath, 'utf-8')
+        .replace(/created_at: .*/, `created_at: "${iso}"`)
+        .replace(/updated_at: .*/, `updated_at: "${iso}"`);
+      fs.writeFileSync(filePath, rewritten);
+    }
+
+    it('a heavily-cited prior-session atom outranks a fresh uncited atom as a seed', () => {
+      // Foundational, well-cited belief written ~30 days ago.
+      const foundational = createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'foundational-anchor',
+        body: 'A foundational, frequently-referenced belief.',
+        scope: { tags: ['core'] },
+      });
+      const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      backdate(foundational.filePath!, old);
+
+      // Fresh, uncited atom written this session (age ≈ 0).
+      const fresh = createAtom({
+        ...base(testDir),
+        type: 'fact',
+        slug: 'current-session-note',
+        body: 'A note jotted down in the current session.',
+        scope: { tags: ['scratch'] },
+      });
+
+      reindex(testDir);
+
+      // Give the foundational atom a heavy citation count (28 citations).
+      // indexCitations() ensures the atom_citations table exists; we then
+      // insert a deterministic count so the test does not depend on
+      // concept-name matching heuristics.
+      indexCitations(testDir);
+      const db = openIndex(testDir);
+      db.prepare(
+        `INSERT OR REPLACE INTO atom_citations (source_id, target_id, count, type)
+         VALUES (?, ?, ?, 'concept_name')`,
+      ).run(fresh.frontmatter.id, foundational.frontmatter.id, 28);
+
+      const result = wander({ memoryDir: testDir, steps: 0, maxCollisions: 0 });
+
+      // Both are auto-selected as seeds, but the cited foundational atom must
+      // rank ahead of the fresh uncited one. Under the old base_activation-only
+      // ordering, the fresh atom's +2.3 recency spike outranked the cited atom.
+      const fi = result.seeds_used.indexOf(foundational.frontmatter.id);
+      const si = result.seeds_used.indexOf(fresh.frontmatter.id);
+      expect(fi).toBeGreaterThanOrEqual(0);
+      expect(si).toBeGreaterThanOrEqual(0);
+      expect(fi).toBeLessThan(si);
+    });
+
+    it('falls back to recency ordering when no citation data exists', () => {
+      // No citations anywhere → ranking degrades to base_activation (recency).
+      const older = createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'older-belief',
+        body: 'An older belief.',
+        scope: { tags: ['x'] },
+      });
+      backdate(older.filePath!, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString());
+
+      const newer = createAtom({
+        ...base(testDir),
+        type: 'belief',
+        slug: 'newer-belief',
+        body: 'A newer belief.',
+        scope: { tags: ['y'] },
+      });
+
+      reindex(testDir);
+
+      const result = wander({ memoryDir: testDir, steps: 0, maxCollisions: 0 });
+      const ni = result.seeds_used.indexOf(newer.frontmatter.id);
+      const oi = result.seeds_used.indexOf(older.frontmatter.id);
+      expect(ni).toBeGreaterThanOrEqual(0);
+      expect(oi).toBeGreaterThanOrEqual(0);
+      // With equal (zero) citations, the more recent atom wins the tiebreak.
+      expect(ni).toBeLessThan(oi);
+    });
+  });
+
+  describe('type-diverse auto-seeds (#281 — escape the belief monoculture)', () => {
+    // A belief-monoculture store: many beliefs in one tight cluster, plus a
+    // small number of other-type atoms that could bridge to other clusters.
+    function createMonoculture(dir: string) {
+      for (let i = 0; i < 8; i++) {
+        createAtom({
+          ...base(dir),
+          type: 'belief',
+          slug: `belief-${i}`,
+          body: `Belief number ${i} in the dense cluster.`,
+          scope: { tags: ['cluster', `b${i}`] },
+        });
+      }
+      createAtom({
+        ...base(dir),
+        type: 'fact',
+        slug: 'bridging-fact',
+        body: 'A lone fact from a different domain.',
+        scope: { tags: ['infra', 'fact-domain'] },
+      });
+      createAtom({
+        ...base(dir),
+        type: 'decision',
+        slug: 'bridging-decision',
+        body: 'A lone decision from yet another domain.',
+        scope: { tags: ['process', 'decision-domain'] },
+      });
+    }
+
+    it('default auto-seeds span multiple types in a belief-monoculture store', () => {
+      createMonoculture(testDir);
+      reindex(testDir);
+
+      const result = wander({ memoryDir: testDir, steps: 0, maxCollisions: 0 });
+
+      // 3 auto-seeds, drawn round-robin across types → must include the
+      // non-belief bridging atoms, not three beliefs from the one cluster.
+      // (Atom-ID prefixes: belief→BELI, fact→FACT, decision→DECI.)
+      expect(result.seeds_used.length).toBe(3);
+      const ids = result.seeds_used;
+      expect(ids.some((id) => id.startsWith('FACT-'))).toBe(true);
+      expect(ids.some((id) => id.startsWith('DECI-'))).toBe(true);
+    });
+
+    it('--no-diverse-seeds (diverseSeeds:false) reverts to plain top-N (all beliefs)', () => {
+      createMonoculture(testDir);
+      reindex(testDir);
+
+      const result = wander({
+        memoryDir: testDir,
+        steps: 0,
+        maxCollisions: 0,
+        diverseSeeds: false,
+      });
+
+      // Plain top-N citation-primary: all 8 beliefs are zero-citation and
+      // freshest-equal, so the top 3 are beliefs — no bridging types.
+      expect(result.seeds_used.length).toBe(3);
+      expect(result.seeds_used.every((id) => id.startsWith('BELI-'))).toBe(true);
+    });
+
+    it('reduces to plain top-N when only one type is present', () => {
+      for (let i = 0; i < 4; i++) {
+        createAtom({
+          ...base(testDir),
+          type: 'belief',
+          slug: `only-belief-${i}`,
+          body: `Belief ${i}.`,
+          scope: { tags: ['t'] },
+        });
+      }
+      reindex(testDir);
+
+      const result = wander({ memoryDir: testDir, steps: 0, maxCollisions: 0 });
+      expect(result.seeds_used.length).toBe(3);
+      expect(result.seeds_used.every((id) => id.startsWith('BELI-'))).toBe(true);
     });
   });
 });

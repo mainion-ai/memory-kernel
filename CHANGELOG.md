@@ -27,6 +27,31 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.31.0] — 2026-06-11
+
+`mk wander` seed-selection fixes — surfaced by the first live `wander` dry-runs on real stores (Taj, Jun 11). Auto-seeds now reflect graph connectivity (citation weight) and span clusters (type diversity) instead of pulling session noise from one monoculture.
+
+### Added — `mk wander` type-diverse auto-seed selection (#281)
+
+In a type-monoculture store (Taj's is ~90% beliefs), `autoSeeds()` returned the global top-N — all beliefs from one tight cluster — so the walk never escaped it and produced intra-cluster redundancy instead of the cross-cluster surprise spreading activation is meant to surface (observed live, Jun 11: 14/17 activated atoms from a single Apr-18–22 belief arc, zero cross-cluster collisions).
+
+- **`src/wander.ts`** — `autoSeeds()` now draws seeds **round-robin across atom types** (best-ranked belief, then best fact, then best decision, …) so the seed set spans multiple clusters and the walk can bridge between them. Within each type, the citation-primary order from #280 is preserved. Reduces to plain top-N when only one type is present. Default on via the new `WanderOptions.diverseSeeds` (default `true`); CLI `--no-diverse-seeds` reverts to plain top-N. +3 tests (`test/wander.test.ts`).
+- **`src/cli/mk.ts`** — new `mk wander --no-diverse-seeds` flag.
+
+New public API (`WanderOptions.diverseSeeds` field + `--no-diverse-seeds` CLI flag) — **sets the MINOR**. ([PR #286](https://github.com/mainion-ai/memory-kernel-dev/pull/286))
+
+> **Out of scope (noted on #281):** embedding-distance ("semantic surprise") collision scoring. Tier-1 `wander` is by-design LLM-free / pure-SQLite; embedding-backed scoring belongs to a future Tier-2 wander, not this change. The observed problem (walk stuck in one cluster) is fully addressed by type-diverse seeding.
+
+### Fixed — `mk wander` auto-seed selection was recency-biased, not citation-weighted (#280)
+
+When no seeds were supplied, `autoSeeds()` ranked candidates purely by ACT-R base-level activation, `ln(citations+1) − 0.5·ln(ageDays)`. Because `ageDays` is clamped to ≥0.01, an atom written in the current session earns a ≈+2.3 recency spike — enough to outrank a 28×-cited foundational atom. The result: wander consistently pulled the most-recently-touched atom as a seed regardless of graph connectivity, injecting session noise into spreading activation (observed live on Taj's store, Jun 11).
+
+- **`src/wander.ts`** — `autoSeeds()` now ranks **citation-primary**: by raw `citation_count` descending, with `base_activation` only breaking ties among equally-cited atoms. A cited atom always outranks an uncited one as a seed. With no citation data (table unpopulated, or file-scan mode) the ranking degrades gracefully to pure recency. +2 regression tests (`test/wander.test.ts`). ([PR #285](https://github.com/mainion-ai/memory-kernel-dev/pull/285))
+
+### Docs
+
+- **`docs/agent-session-loop.md`** — added `mk wander` integration instructions for the agent session loop (#282, [PR #288](https://github.com/mainion-ai/memory-kernel-dev/pull/288)).
+
 ## [1.30.0] — 2026-06-11
 
 Draft-atom lifecycle (#274) — the mk-side prerequisite for #268's session-end extract. Two halves: a recall/render visibility gate (Gap 1) and tiered promotion in `reflect` (Gap 2).
