@@ -27,6 +27,30 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.30.0] — 2026-06-11
+
+Draft-atom lifecycle (#274) — the mk-side prerequisite for #268's session-end extract. Two halves: a recall/render visibility gate (Gap 1) and tiered promotion in `reflect` (Gap 2).
+
+### Added — auto-extracted drafts excluded from recall/render by default (#274 Gap 1)
+
+Session-end extract (#268) lands `status: draft` atoms tagged `auto-extracted`. Those are unvetted, but recall ranked `draft` just below `active`, so they entered live context (and #267's recall-inject) immediately. Recall, the SQLite index query, and fill-mode render now **exclude `status: draft` atoms that carry the `auto-extracted` tag** by default.
+
+- Scoped to the `auto-extracted` tag, **not** all drafts — hand-authored draft beliefs (the developmental-arc resting state, held in draft by Gap 2) still render. An explicit `statuses: ['draft']` filter still surfaces them for inspection.
+- New opt-in: `mk recall --include-drafts`, `RecallQuery.include_drafts`, and the `mk_recall` MCP tool's `include_drafts` param (CLI / library / MCP parity).
+- Three enforcement points kept in sync via a shared `AUTO_EXTRACTED_TAG` constant (`src/types.ts`, also used by the `mk extract` producer and `mk consolidate`) + a shared `isUnvettedDraft()` predicate: `recall.ts` `filterAtoms` (file-scan path), `index-db.ts` `queryIndex` (SQL path), `render.ts` fill-mode. Isolated recall inherits the exclusion (routes through `recall()`).
+- +6 tests (`test/recall-draft-visibility.test.ts`). ([PR #276](https://github.com/mainion-ai/memory-kernel-dev/pull/276))
+
+### Changed — tiered draft promotion in `reflect` (#274 Gap 2)
+
+Replaced the old `belief → fact @ confidence 0.9` auto-promote (which converted the over-produced type — the opposite of the monoculture-fix intent) with type-tiered, **status-only** promotion (draft → active; type unchanged, no file rename):
+
+- **fact / preference / decision:** promote after **48h** if `confidence ≥ 0.7` **and** no contradiction with an existing active atom of the same type/scope (reuses the `detectConflicts` heuristic).
+- **open_question:** promote immediately (additive, no quality risk).
+- **belief:** held in draft (over-produced + re-extraction drift — review-gated).
+- **procedure:** held in draft (interim; the "executed-once" tool-trace signal is a separate sub-task — aspirational procedures must not auto-activate).
+
+Promotion strips the `auto-extracted` tag (matching `mk consolidate`, so a reflect-promoted atom isn't left looking unvetted). The contradiction check shares a single `atomsConflict()` predicate + `CONFLICT_CONFIDENCE_GAP` constant with `detectConflicts` (no drift between the promotion gate and the detector). The `atom_promoted` event now carries `{ from_status, to_status, type }` (was `{ from_type, to_type }`). +11 tests (`test/reflect-tiered-promotion.test.ts`); ~10 existing tests that asserted the old belief→fact rule updated to the new semantics. Closes #274; unblocks #268's fork-side `MK_EXTRACT_ON_END=1`. ([PR #277](https://github.com/mainion-ai/memory-kernel-dev/pull/277))
+
 ## [1.29.1] — 2026-06-11
 
 ### Fixed — `memory-kernel` bin alias was missing

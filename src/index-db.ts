@@ -28,6 +28,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import type { Atom, AtomType, AtomStatus, Classification, RecallQuery } from './types.js';
+import { AUTO_EXTRACTED_TAG } from './types.js';
 import { listAtoms } from './store.js';
 import { listEpisodes } from './episodes.js';
 
@@ -865,6 +866,19 @@ export function queryIndex(memoryDir: string, query: RecallQuery = {}, opts?: { 
     // Exclude archived/expired/superseded by default — only when no explicit status filter is given
     if (!query.statuses || query.statuses.length === 0) {
       conditions.push("a.status NOT IN ('archived', 'expired', 'superseded')");
+      // Auto-extracted drafts (session-end extract output, #268 — tagged
+      // `auto-extracted` by mk extract) are unvetted — exclude from the
+      // candidate pool by default so they can't enter live context before
+      // reflect promotes them (#274 Gap 1). Scoped to the auto-extracted tag,
+      // NOT all drafts, so hand-authored draft beliefs still surface. Opt in
+      // via include_drafts; an explicit `statuses` filter (below) still surfaces
+      // them. Mirrors the file-scan path in recall.ts filterAtoms.
+      if (!query.include_drafts) {
+        // AUTO_EXTRACTED_TAG is a trusted compile-time constant (no injection risk).
+        conditions.push(
+          `NOT (a.status = 'draft' AND a.atom_id IN (SELECT atom_id FROM atom_tags WHERE tag = '${AUTO_EXTRACTED_TAG}'))`,
+        );
+      }
     }
 
     // Exclude SECRET and PERSONAL by default

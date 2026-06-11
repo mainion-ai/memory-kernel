@@ -43,7 +43,7 @@ mk remember "The deploy pipeline takes ~4 minutes end-to-end" \
 mk remember "Use cursor pagination — offset pagination breaks under concurrent writes" \
   -d {dir} -t decision --tags api,performance
 
-# An unverified hypothesis (will be promoted to fact at confidence ≥ 0.9 during reflect)
+# An unverified hypothesis — beliefs are held in draft for explicit review, not auto-promoted
 mk remember "The cache layer may reduce p99 by ~40% — untested" \
   -d {dir} -t belief --confidence 0.5 --tags performance,cache
 
@@ -157,7 +157,7 @@ mk reflect -d {dir}
 mk gc -d {dir}
 ```
 
-**Why reflect:** Deduplicates near-identical atoms, expires atoms past their TTL, promotes beliefs with confidence ≥ 0.9 to facts, and detects conflicts between atoms. Without regular reflect runs, stale and duplicate atoms accumulate and degrade recall quality.
+**Why reflect:** Deduplicates near-identical atoms, expires atoms past their TTL, promotes eligible drafts to active (fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction; open_question immediately; beliefs and procedures held for review), and detects conflicts between atoms. Without regular reflect runs, stale and duplicate atoms accumulate and degrade recall quality.
 
 **Why gc after reflect:** Reflect marks atoms as expired; gc archives them. Running gc without reflect first is safe but leaves atoms that reflect would have expired. The pair together keeps the store clean.
 

@@ -15,7 +15,8 @@ import { appendEvent } from './event-log.js';
 import { dotProduct, normalizeVector, deserializeVector, getEmbeddingConfig, embedText } from './embeddings.js';
 import { DEFAULT_TYPE_WEIGHTS, DEFAULT_CONFIDENCE_FLOOR, DEFAULT_TYPE_RESERVATIONS } from './schema.js';
 import { selectAtomsWithReservations, estimateTokens, frontmatterJson } from './budget.js';
-import type { Atom, ContextBundle, Episode, RecallQuery, AtomType } from './types.js';
+import type { Atom, AtomFrontmatter, ContextBundle, Episode, RecallQuery, AtomType } from './types.js';
+import { AUTO_EXTRACTED_TAG } from './types.js';
 
 // --- Configurable hybrid ranking parameters ---
 
@@ -996,6 +997,17 @@ export async function recallWithEmbeddings(
 /**
  * Filter atoms based on query criteria.
  */
+/**
+ * An "unvetted draft" — a `status: draft` atom carrying the `auto-extracted`
+ * tag (session-end extract output, #268). These are excluded from recall and
+ * fill-mode render by default (#274 Gap 1); the gate is scoped to this tag so
+ * hand-authored draft beliefs still surface. Shared by `filterAtoms` (here) and
+ * `renderFill` (render.ts); the SQL path in `queryIndex` mirrors it.
+ */
+export function isUnvettedDraft(fm: AtomFrontmatter): boolean {
+  return fm.status === 'draft' && (fm.scope?.tags ?? []).includes(AUTO_EXTRACTED_TAG);
+}
+
 function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
   return atoms.filter((atom) => {
     const fm = atom.frontmatter;
@@ -1008,6 +1020,13 @@ function filterAtoms(atoms: Atom[], query: RecallQueryInternal): Atom[] {
         fm.status === 'superseded'
       )
         return false;
+      // Auto-extracted drafts (session-end extract output, #268) are unvetted:
+      // keep them out of the recall candidate pool by default so they can't
+      // enter live context before reflect promotes them (#274 Gap 1). Scoped to
+      // the auto-extracted tag, NOT all drafts, so hand-authored draft beliefs
+      // (the developmental-arc resting state) still surface. Opt in with
+      // include_drafts; an explicit `statuses` filter (handled below) still sees them.
+      if (isUnvettedDraft(fm) && !query.include_drafts) return false;
     }
 
     // Exclude SECRET and PERSONAL by default

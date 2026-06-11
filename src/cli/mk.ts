@@ -432,6 +432,7 @@ program
   .option('--decay-half-life <days>', 'Half-life for temporal decay in days (default: 30)', parseFloat)
   .option('--decay-weight <n>', 'Weight of recency in scoring, 0-1 (default: 0.2)', parseFloat)
   .option('--include-episodes', 'Include EPISODES/ session summaries in context bundle')
+  .option('--include-drafts', 'Surface auto-extracted draft atoms (session-end extract output, excluded by default)')
   .option('--graph', 'Enable graph-relation neighbor boost (default: on)')
   .option('--no-graph', 'Disable graph-relation neighbor boost')
   .option('--reservations', 'Enable type-based token reservations (default: on for no-task, off for --task)')
@@ -447,6 +448,7 @@ program
     decayHalfLife?: number;
     decayWeight?: number;
     includeEpisodes?: boolean;
+    includeDrafts?: boolean;
     graph: boolean; // Commander sets this to true/false via --graph/--no-graph
     reservations?: boolean; // Commander sets via --reservations/--no-reservations
     embed?: boolean;
@@ -473,6 +475,7 @@ program
       decay_half_life: opts.decayHalfLife,
       decay_weight: opts.decayWeight,
       include_episodes: opts.includeEpisodes,
+      include_drafts: opts.includeDrafts,
       graph_boost: opts.graph,
       no_reservations: noReservations,
     };

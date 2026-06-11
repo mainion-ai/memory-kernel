@@ -20,6 +20,7 @@ import { detectAndResolveConflicts } from './conflict-detect.js';
 import { escapeXmlBoundary } from './store.js';
 import type { ConflictResolution } from './conflict-detect.js';
 import type { AtomType, AtomFrontmatter } from './types.js';
+import { AUTO_EXTRACTED_TAG } from './types.js';
 import type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom };
@@ -313,7 +314,7 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
 
     // Build scope with auto-extracted tag and extraction metadata
     const tags: string[] = [
-      'auto-extracted',
+      AUTO_EXTRACTED_TAG,
       ...(candidate.tags ?? []),
     ];
 

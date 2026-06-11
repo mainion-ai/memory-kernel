@@ -909,32 +909,35 @@ describe('Reflect — full cycle', () => {
     expect(archiveFiles.length).toBe(1);
   });
 
-  it('should auto-promote belief at confidence 0.9', () => {
+  it('should auto-promote an aged, confident draft to active (status-only — #274 Gap 2)', () => {
     initMemoryDir(testDir);
     const atom = createAtom({
-      ...base(testDir), type: 'belief', slug: 'promote-90', body: 'High confidence belief',
-      confidence: 0.9,
+      ...base(testDir), type: 'fact', slug: 'promote-aged', body: 'A settled fact',
+      confidence: 0.8, status: 'draft', ttl_days: null,
     });
+    // Backdate >48h so the age gate passes.
+    atom.frontmatter.created_at = '2026-01-01T00:00:00Z';
+    writeAtom(atom, atom.filePath!);
 
     reflect(base(testDir));
 
     const loaded = readAtom(atom.filePath!);
-    expect(loaded.frontmatter.type).toBe('fact');
     expect(loaded.frontmatter.status).toBe('active');
-    expect(loaded.frontmatter.ttl_days).toBeNull();
+    expect(loaded.frontmatter.type).toBe('fact'); // status-only, no type change
   });
 
-  it('should NOT auto-promote belief at confidence 0.89', () => {
+  it('should NOT auto-promote a draft below confidence 0.7', () => {
     initMemoryDir(testDir);
     const atom = createAtom({
-      ...base(testDir), type: 'belief', slug: 'no-promote', body: 'Low confidence belief',
-      confidence: 0.89,
+      ...base(testDir), type: 'fact', slug: 'no-promote', body: 'Low confidence draft',
+      confidence: 0.6, status: 'draft', ttl_days: null,
     });
+    atom.frontmatter.created_at = '2026-01-01T00:00:00Z';
+    writeAtom(atom, atom.filePath!);
 
     reflect(base(testDir));
 
-    const loaded = readAtom(atom.filePath!);
-    expect(loaded.frontmatter.type).toBe('belief');
+    expect(readAtom(atom.filePath!).frontmatter.status).toBe('draft');
   });
 
   it('should NOT auto-promote active beliefs (only draft)', () => {
@@ -955,16 +958,18 @@ describe('Reflect — full cycle', () => {
 
   it('should emit atom_promoted event on promotion', () => {
     initMemoryDir(testDir);
-    createAtom({
-      ...base(testDir), type: 'belief', slug: 'promote-event', body: 'High confidence',
-      confidence: 0.95,
+    const atom = createAtom({
+      ...base(testDir), type: 'fact', slug: 'promote-event', body: 'Settled fact',
+      confidence: 0.8, status: 'draft', ttl_days: null,
     });
+    atom.frontmatter.created_at = '2026-01-01T00:00:00Z';
+    writeAtom(atom, atom.filePath!);
 
     reflect(base(testDir));
 
     const events = readEventsByAction(testDir, 'atom_promoted');
     expect(events.length).toBe(1);
-    expect(events[0].meta).toEqual({ from_type: 'belief', to_type: 'fact' });
+    expect(events[0].meta).toMatchObject({ from_status: 'draft', to_status: 'active', type: 'fact' });
   });
 
   it('should detect active conflicts', () => {
@@ -1024,8 +1029,10 @@ describe('Reflect — full cycle', () => {
     createAtom({ ...base(testDir), type: 'fact', slug: 'dup-a', body: 'Same fact' });
     createAtom({ ...base(testDir), type: 'fact', slug: 'dup-b', body: 'Same fact' });
 
-    // 3. High-confidence belief to promote
-    createAtom({ ...base(testDir), type: 'belief', slug: 'will-promote', body: 'Promote me', confidence: 0.95 });
+    // 3. Aged, confident fact draft to promote (status-only)
+    const willPromote = createAtom({ ...base(testDir), type: 'fact', slug: 'will-promote', body: 'Promote me', confidence: 0.8, status: 'draft', ttl_days: null });
+    willPromote.frontmatter.created_at = oldDate; // reuse the 60-day-old date → clears the 48h gate
+    writeAtom(willPromote, willPromote.filePath!);
 
     const result = reflect(base(testDir));
     expect(result.expired).toBe(1);
@@ -1423,16 +1430,18 @@ describe('Full E2E lifecycle', () => {
   it('create → update → archive → reflect → recall', () => {
     initMemoryDir(testDir);
 
-    // 1. Create atoms
+    // 1. Create atoms — an active fact, an aged draft fact (promotable), a decision
     const fact = createAtom({ ...base(testDir), type: 'fact', slug: 'e2e-fact', body: 'E2E fact' });
-    const belief = createAtom({ ...base(testDir), type: 'belief', slug: 'e2e-belief', body: 'E2E belief', confidence: 0.6 });
+    const draftFact = createAtom({ ...base(testDir), type: 'fact', slug: 'e2e-draft', body: 'E2E draft fact', confidence: 0.6, status: 'draft', ttl_days: null });
+    draftFact.frontmatter.created_at = '2026-01-01T00:00:00Z'; // >48h so the age gate passes
+    writeAtom(draftFact, draftFact.filePath!);
     const decision = createAtom({ ...base(testDir), type: 'decision', slug: 'e2e-decision', body: 'E2E decision' });
 
     expect(listAtoms(testDir).length).toBe(3);
 
-    // 2. Update belief confidence
+    // 2. Update the draft's confidence to clear the 0.7 promotion gate (emits atom_updated)
     updateAtom({
-      ...base(testDir), filePath: belief.filePath!,
+      ...base(testDir), filePath: draftFact.filePath!,
       updates: { confidence: 0.95 },
     });
 
@@ -1440,17 +1449,16 @@ describe('Full E2E lifecycle', () => {
     archiveAtom({ ...base(testDir), filePath: decision.filePath! });
     expect(listAtoms(testDir).length).toBe(2);
 
-    // 4. Reflect (should promote belief → fact)
+    // 4. Reflect — promotes the aged, confident draft fact (status-only)
     const result = reflect(base(testDir));
     expect(result.promoted).toBe(1);
 
     // 5. Recall
     const bundle = recall(testDir);
-    expect(bundle.atoms.length).toBe(2); // fact + promoted belief
+    expect(bundle.atoms.length).toBe(2); // active fact + promoted draft fact
     const types = bundle.atoms.map((a) => a.frontmatter.type);
     expect(types).toContain('fact');
     expect(types).not.toContain('decision'); // Archived
-    expect(types).not.toContain('belief'); // Promoted to fact
 
     // 6. Verify event trail
     const events = readEvents(testDir);
@@ -1766,33 +1774,38 @@ describe('Sprint 1 — reflect keeps index in sync', () => {
     expect(found).toBeUndefined();
   });
 
-  it('reflect promotion should update index with new type', () => {
+  it('reflect promotion should update index with new status', () => {
     initMemoryDir(testDir);
 
-    // Create a belief with high confidence (eligible for promotion)
+    // Create an aged, confident draft fact (eligible for status-only promotion)
     const atom = createAtom({
       ...base(testDir),
-      type: 'belief',
+      type: 'fact',
       slug: 'will-promote',
-      body: 'High confidence belief',
-      confidence: 0.95,
+      body: 'A settled fact',
+      confidence: 0.8,
+      status: 'draft',
+      ttl_days: null,
     });
+    atom.frontmatter.created_at = '2026-01-01T00:00:00Z';
+    writeAtom(atom, atom.filePath!);
 
     // Build index
     reindex(testDir);
 
-    // Verify atom is in index as belief
+    // Verify atom is in index as a draft (non-auto-extracted drafts are queryable)
     const queryBefore = queryIndex(testDir);
     const beforeEntry = queryBefore?.find((r) => r.atom_id === atom.frontmatter.id);
-    expect(beforeEntry?.type).toBe('belief');
+    expect(beforeEntry?.status).toBe('draft');
 
-    // Reflect should promote it
+    // Reflect should promote it (status-only)
     const result = reflect(base(testDir));
     expect(result.promoted).toBe(1);
 
-    // Verify index now shows it as fact
+    // Verify index now shows it as active, type unchanged
     const queryAfter = queryIndex(testDir);
     const afterEntry = queryAfter?.find((r) => r.atom_id === atom.frontmatter.id);
+    expect(afterEntry?.status).toBe('active');
     expect(afterEntry?.type).toBe('fact');
   });
 });
@@ -1923,31 +1936,34 @@ describe('Sprint 1 — checkpoint error handling', () => {
 // ============================================================================
 
 describe('Sprint 1 — promoted atom ID invariant', () => {
-  it('promoted atom should have type=fact but retain BELI- ID prefix', () => {
+  it('promotion is status-only: id and type are unchanged (no rename — #274 Gap 2)', () => {
     initMemoryDir(testDir);
 
     const atom = createAtom({
       ...base(testDir),
-      type: 'belief',
+      type: 'fact',
       slug: 'id-invariant',
-      body: 'High-confidence belief',
-      confidence: 0.95,
+      body: 'A settled fact',
+      confidence: 0.8,
+      status: 'draft',
+      ttl_days: null,
     });
+    atom.frontmatter.created_at = '2026-01-01T00:00:00Z';
+    writeAtom(atom, atom.filePath!);
 
     const originalId = atom.frontmatter.id;
-    expect(originalId).toMatch(/^BELI-/);
+    expect(originalId).toMatch(/^FACT-/);
 
-    // Reflect should promote it
+    // Reflect should promote it (status-only — no type change, no file rename)
     const result = reflect(base(testDir));
     expect(result.promoted).toBe(1);
 
-    // Find the promoted atom on disk
     const atoms = listAtoms(testDir);
     const promoted = atoms.find((a) => a.frontmatter.id === originalId);
 
     expect(promoted).toBeDefined();
-    expect(promoted!.frontmatter.type).toBe('fact');
-    expect(promoted!.frontmatter.id).toMatch(/^BELI-/); // ID prefix preserved
+    expect(promoted!.frontmatter.type).toBe('fact'); // unchanged
+    expect(promoted!.frontmatter.id).toBe(originalId); // unchanged
     expect(promoted!.frontmatter.status).toBe('active');
   });
 });
@@ -2611,24 +2627,27 @@ describe('Reflect — single-pass and review gaps', () => {
     expect(result.events_emitted).toBe(actualEmitted);
   });
 
-  it('promoted atom has type fact but retains BELI- prefix in ID', () => {
+  it('promoted draft keeps its id and type; only status changes (#274 Gap 2)', () => {
     initMemoryDir(testDir);
 
-    createAtom({
+    const atom = createAtom({
       ...base(testDir),
-      type: 'belief',
+      type: 'fact',
       slug: 'promote-id-test',
-      body: 'High confidence belief',
-      confidence: 0.95,
+      body: 'A settled fact',
+      confidence: 0.8,
+      status: 'draft',
+      ttl_days: null,
     });
+    atom.frontmatter.created_at = '2026-01-01T00:00:00Z';
+    writeAtom(atom, atom.filePath!);
 
     const result = reflect({ ...base(testDir) });
     expect(result.promoted).toBe(1);
 
-    const atoms = listAtoms(testDir);
-    const promoted = atoms.find((a) => a.frontmatter.type === 'fact');
+    const promoted = listAtoms(testDir).find((a) => a.frontmatter.id === atom.frontmatter.id);
     expect(promoted).toBeDefined();
-    expect(promoted!.frontmatter.id).toMatch(/^BELI-/);
+    expect(promoted!.frontmatter.id).toBe(atom.frontmatter.id);
     expect(promoted!.frontmatter.type).toBe('fact');
     expect(promoted!.frontmatter.status).toBe('active');
   });

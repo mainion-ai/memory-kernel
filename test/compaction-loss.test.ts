@@ -511,15 +511,24 @@ describe('reflect idempotence', () => {
 // ---------------------------------------------------------------------------
 
 describe('recall correctness after reflect', () => {
-  it('12. recall returns promoted atom as fact after reflect promotes belief', () => {
-    // confidence 0.95 >= 0.9 → will be promoted to fact
-    createAtom({
+  it('12. recall returns a promoted draft fact as active after reflect', () => {
+    // Aged, confident fact draft → promoted draft→active (status-only, #274 Gap 2).
+    const draft = createAtom({
       ...base(testDir),
-      type: 'belief',
+      type: 'fact',
       slug: 'promotable',
-      body: '## Belief\nThe system scales horizontally.',
+      body: '## Fact\nThe system scales horizontally.',
       confidence: 0.95,
+      status: 'draft',
+      ttl_days: null,
     });
+    // Backdate >48h so the promotion age gate passes.
+    const old = '2026-01-01T00:00:00Z';
+    const backdated = fs.readFileSync(draft.filePath!, 'utf-8')
+      .replace(/created_at: .*/, `created_at: "${old}"`)
+      .replace(/updated_at: .*/, `updated_at: "${old}"`);
+    fs.writeFileSync(draft.filePath!, backdated);
+
     createAtom({
       ...base(testDir),
       type: 'fact',
@@ -529,7 +538,7 @@ describe('recall correctness after reflect', () => {
     });
 
     const r = reflect(base(testDir));
-    expect(r.promoted).toBe(1); // the belief was promoted
+    expect(r.promoted).toBe(1); // the aged draft fact was promoted
 
     // Recall with type filter: only facts
     const bundle = recall(testDir, { types: ['fact'] });

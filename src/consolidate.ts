@@ -14,7 +14,7 @@ import { appendEvent } from './event-log.js';
 import { serializeAtom } from './format.js';
 import { searchFts, indexExists } from './index-db.js';
 import type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult, Relation } from './types.js';
-import { RELATION_TYPES } from './types.js';
+import { RELATION_TYPES, AUTO_EXTRACTED_TAG } from './types.js';
 
 export type { ConsolidateOptions, ConsolidateResult, ConsolidateAtomResult };
 export type { ConsolidateAtomStatus } from './types.js';
@@ -127,7 +127,7 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
   // 2. Filter by auto-extracted tag unless --all
   if (!all) {
     drafts = drafts.filter((a) =>
-      a.frontmatter.scope?.tags?.includes('auto-extracted'),
+      a.frontmatter.scope?.tags?.includes(AUTO_EXTRACTED_TAG),
     );
   }
 
@@ -217,7 +217,7 @@ export async function consolidateAtoms(opts: ConsolidateOptions): Promise<Consol
     try {
       // Promote: update status to 'active', remove 'auto-extracted' tag
       const currentTags = atom.frontmatter.scope?.tags ?? [];
-      const newTags = currentTags.filter((t) => t !== 'auto-extracted');
+      const newTags = currentTags.filter((t) => t !== AUTO_EXTRACTED_TAG);
 
       // Build scope update: preserve existing scope, update tags (omit empty array)
       const newScope = atom.frontmatter.scope

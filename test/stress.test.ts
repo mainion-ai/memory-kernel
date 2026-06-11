@@ -320,10 +320,11 @@ describe('TTL / expiry', () => {
 // ============================================================================
 
 describe('auto-promotion boundary', () => {
-  it('belief with confidence=0.9 IS promoted (threshold is >=0.9)', () => {
+  it('belief at confidence 0.9 is held in draft — no auto-promotion (#274 Gap 2)', () => {
+    // The old belief→fact@0.9 rule was removed; beliefs are held for review.
     createAtom({ ...base(testDir), type: 'belief', slug: 'high', body: 'b', confidence: 0.9 });
     const r = reflect({ ...base(testDir) });
-    expect(r.promoted).toBe(1);
+    expect(r.promoted).toBe(0);
   });
 
   it('belief with confidence=0.899 is NOT promoted', () => {

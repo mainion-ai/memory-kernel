@@ -163,6 +163,7 @@ const recallSchema = {
   statuses: z.array(z.enum(ATOM_STATUSES)).optional().describe('Filter by status'),
   tags: z.array(z.string()).optional().describe('Filter by scope tags'),
   include_episodes: z.boolean().optional().describe('Include episode summaries'),
+  include_drafts: z.boolean().optional().describe('Surface auto-extracted draft atoms (excluded by default)'),
   max_tokens: z.number().int().min(0).optional().describe('Token budget'),
   decay_half_life: z.number().positive().optional().describe('Half-life for temporal decay in days (default: 30)'),
   decay_weight: z.number().min(0).max(1).optional().describe('Weight of recency vs relevance, 0-1 (default: 0.2)'),
@@ -180,6 +181,7 @@ export type RecallInput = {
   statuses?: Array<(typeof ATOM_STATUSES)[number]>;
   tags?: string[];
   include_episodes?: boolean;
+  include_drafts?: boolean;
   max_tokens?: number;
   decay_half_life?: number;
   decay_weight?: number;
@@ -202,6 +204,7 @@ export async function handleRecall(ctx: McpContext, input: RecallInput): Promise
       statuses: input.statuses,
       tags: input.tags,
       include_episodes: input.include_episodes,
+      include_drafts: input.include_drafts,
       max_tokens: input.max_tokens,
       decay_half_life: input.decay_half_life,
       decay_weight: input.decay_weight,

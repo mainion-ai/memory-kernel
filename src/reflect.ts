@@ -20,6 +20,7 @@ import { assertWithinDir, listAtoms, readAtom, writeAtom, atomFilePath, writeVie
 import { indexExists, indexAtom, removeFromIndex } from './index-db.js';
 import { generateAtomId } from './schema.js';
 import type { Atom, AtomType, ReflectResult } from './types.js';
+import { AUTO_EXTRACTED_TAG } from './types.js';
 
 export interface ReflectOptions {
   agent_id: string;
@@ -313,59 +314,110 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): { count: number; archivedId
 }
 
 /**
- * Auto-promote beliefs with high confidence to facts.
- * Renames the file to match the new type for consistency.
+ * Tiered draft promotion (#274 Gap 2).
  *
- * Note: The atom ID retains its original `BELI-` prefix after promotion.
- * This is intentional — IDs are immutable identifiers that trace an atom's
- * origin. The `type` field and file path change to reflect the promotion,
- * but the ID serves as a permanent reference across event log entries.
+ * Replaces the old `belief → fact @ confidence 0.9` rule (which auto-converted
+ * the over-produced type and did the opposite of the monoculture-fix intent).
+ * Promotion is now status-only (draft → active, type unchanged — no file
+ * rename), gated by type:
+ *   - fact / preference / decision: promote after 48h if confidence ≥ 0.7 AND
+ *     no contradiction with an existing active atom of the same type/scope.
+ *   - open_question: promote immediately (additive, no quality risk).
+ *   - belief: held in draft (over-produced + re-extraction drift; review-gated).
+ *   - procedure: held in draft (interim — the "executed-once" tool-trace signal
+ *     is a separate sub-task; aspirational procedures must not auto-activate).
+ *   - others (constraint, entity_summary, conflict): not extract-produced; held.
+ *
+ * The atom ID retains its original type prefix — IDs are immutable.
  */
+const DRAFT_PROMOTE_AGE_MS = 48 * 60 * 60 * 1000; // 48h
+const DRAFT_PROMOTE_MIN_CONFIDENCE = 0.7;
+const AGE_GATED_PROMOTE_TYPES: AtomType[] = ['fact', 'preference', 'decision'];
+
 function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
   let count = 0;
+  const now = Date.now();
 
   for (const atom of atoms) {
-    if (
-      atom.frontmatter.type === 'belief' &&
-      atom.frontmatter.status === 'draft' &&
-      atom.frontmatter.confidence >= 0.9 &&
-      atom.filePath
-    ) {
-      const oldPath = atom.filePath;
+    const fm = atom.frontmatter;
+    if (fm.status !== 'draft' || !atom.filePath) continue;
 
-      atom.frontmatter.type = 'fact';
-      atom.frontmatter.status = 'active';
-      atom.frontmatter.updated_at = normalizeTimestamp();
-      atom.frontmatter.ttl_days = null; // Facts don't expire
-
-      // Write to new path matching the promoted type
-      const newPath = atomFilePath(opts.memoryDir, atom.frontmatter.id, 'fact');
-      writeAtom(atom, newPath);
-
-      // Remove old file (if different path)
-      if (oldPath !== newPath && fs.existsSync(oldPath)) {
-        fs.unlinkSync(oldPath);
-      }
-
-      appendEvent(opts.memoryDir, 'atom_promoted', {
-        agent_id: opts.agent_id,
-        session_id: opts.session_id,
-        atom_refs: [atom.frontmatter.id],
-        schema_version: 2,
-        atom_snapshot: serializeAtom(atom),
-        meta: { from_type: 'belief', to_type: 'fact' },
-      });
-
-      // Keep index in sync (update with new type/status)
-      if (indexExists(opts.memoryDir)) {
-        indexAtom(opts.memoryDir, atom);
-      }
-
-      count++;
+    let shouldPromote = false;
+    if (fm.type === 'open_question') {
+      shouldPromote = true; // additive — no age/confidence gate
+    } else if (AGE_GATED_PROMOTE_TYPES.includes(fm.type)) {
+      const ageMs = now - Date.parse(fm.created_at);
+      const oldEnough = Number.isFinite(ageMs) && ageMs >= DRAFT_PROMOTE_AGE_MS;
+      const confident = fm.confidence >= DRAFT_PROMOTE_MIN_CONFIDENCE;
+      shouldPromote = oldEnough && confident && !draftContradictsActive(atom, atoms);
     }
+    // belief / procedure / others: held in draft (no auto-promotion).
+
+    if (!shouldPromote) continue;
+
+    fm.status = 'active';
+    fm.updated_at = normalizeTimestamp();
+    // A promoted atom is no longer a pending auto-extracted draft — strip the
+    // tag so it matches consolidate's promotion path and isn't re-flagged as
+    // unvetted (the #274 Gap 1 recall/render gate keys on draft + this tag).
+    if (fm.scope?.tags?.includes(AUTO_EXTRACTED_TAG)) {
+      fm.scope = { ...fm.scope, tags: fm.scope.tags.filter((t) => t !== AUTO_EXTRACTED_TAG) };
+    }
+    writeAtom(atom, atom.filePath); // status-only — same path (type unchanged)
+
+    appendEvent(opts.memoryDir, 'atom_promoted', {
+      agent_id: opts.agent_id,
+      session_id: opts.session_id,
+      atom_refs: [fm.id],
+      schema_version: 2,
+      atom_snapshot: serializeAtom(atom),
+      meta: { from_status: 'draft', to_status: 'active', type: fm.type },
+    });
+
+    if (indexExists(opts.memoryDir)) {
+      indexAtom(opts.memoryDir, atom);
+    }
+
+    count++;
   }
 
   return count;
+}
+
+/** Confidence-gap threshold above which two same-scope same-type atoms are
+ * treated as disagreeing. Shared by the promotion gate and conflict detection
+ * so the heuristic can't drift between them. */
+const CONFLICT_CONFIDENCE_GAP = 0.3;
+
+/**
+ * The shared conflict heuristic: two atoms of the same type whose scope paths
+ * overlap (when both are scoped) and whose confidence differs by more than
+ * CONFLICT_CONFIDENCE_GAP. Used by both `detectConflicts` (active–active pairs)
+ * and `draftContradictsActive` (a draft vs the active set) so a future tweak to
+ * the rule changes both call sites at once.
+ */
+function atomsConflict(a: Atom, b: Atom): boolean {
+  if (a.frontmatter.type !== b.frontmatter.type) return false;
+  const aPaths = a.frontmatter.scope?.paths ?? [];
+  const bPaths = b.frontmatter.scope?.paths ?? [];
+  if (aPaths.length > 0 && bPaths.length > 0) {
+    if (!aPaths.some((ap) => bPaths.some((bp) => pathOverlaps(ap, bp)))) return false;
+  }
+  return Math.abs(a.frontmatter.confidence - b.frontmatter.confidence) > CONFLICT_CONFIDENCE_GAP;
+}
+
+/**
+ * Would promoting this draft create a contradiction? Checks the draft against
+ * every ACTIVE atom via the shared `atomsConflict` heuristic. Drafts aren't
+ * conflict-eligible while draft, so this is what activating it would collide with.
+ */
+function draftContradictsActive(draft: Atom, atoms: Atom[]): boolean {
+  return atoms.some(
+    (other) =>
+      other.frontmatter.id !== draft.frontmatter.id &&
+      other.frontmatter.status === 'active' &&
+      atomsConflict(draft, other),
+  );
 }
 
 /**
@@ -414,20 +466,11 @@ function detectConflicts(opts: ReflectOptions, atoms: Atom[]): { total: number; 
       const a = eligible[i];
       const b = eligible[j];
 
-      // Must be the same type
-      if (a.frontmatter.type !== b.frontmatter.type) continue;
+      // Same type + overlapping scope + confidence gap (shared heuristic).
+      if (!atomsConflict(a, b)) continue;
 
-      // Must have overlapping scope paths (if both have paths)
       const aPaths = a.frontmatter.scope?.paths ?? [];
       const bPaths = b.frontmatter.scope?.paths ?? [];
-      if (aPaths.length > 0 && bPaths.length > 0) {
-        const overlaps = aPaths.some((ap) => bPaths.some((bp) => pathOverlaps(ap, bp)));
-        if (!overlaps) continue;
-      }
-
-      // Confidence gap > 0.3 signals potential disagreement
-      const confidenceGap = Math.abs(a.frontmatter.confidence - b.frontmatter.confidence);
-      if (confidenceGap <= 0.3) continue;
 
       // Check for duplicate — if both IDs already appear in an existing conflict body, skip
       const duplicate = [...existingConflictBodies].some(
@@ -488,7 +531,7 @@ function detectConflicts(opts: ReflectOptions, atoms: Atom[]): { total: number; 
         //       JSON.stringify(frontmatter), which could not be round-tripped
         //       through parseAtom and diverged from the snapshot contract.
         atom_snapshot: serializeAtom(conflictAtom),
-        meta: { reason: 'confidence-gap', gap: confidenceGap },
+        meta: { reason: 'confidence-gap', gap: Math.abs(a.frontmatter.confidence - b.frontmatter.confidence) },
       });
 
       if (indexExists(opts.memoryDir)) {

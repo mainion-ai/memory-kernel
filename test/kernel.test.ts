@@ -225,7 +225,7 @@ describe('reflect', () => {
     expect(handoff).toContain('3 active atoms');
   });
 
-  it('auto-promotes high-confidence beliefs to facts', () => {
+  it('holds high-confidence beliefs in draft (no auto-promotion — #274 Gap 2)', () => {
     initMemoryDir(testDir);
     const base = { memoryDir: testDir, agent_id: 'a', session_id: 's' };
 
@@ -239,10 +239,11 @@ describe('reflect', () => {
 
     reflect({ memoryDir: testDir, agent_id: 'a', session_id: 's' });
 
-    // Re-read the atom
+    // The old belief→fact@0.9 auto-promote was removed: beliefs are over-produced
+    // and carry re-extraction drift, so they're held in draft for explicit review.
     const updated = parseAtom(fs.readFileSync(atom.filePath!, 'utf-8'));
-    expect(updated.frontmatter.type).toBe('fact');
-    expect(updated.frontmatter.status).toBe('active');
+    expect(updated.frontmatter.type).toBe('belief');
+    expect(updated.frontmatter.status).toBe('draft');
   });
 
   it('deduplicates identical atoms', () => {

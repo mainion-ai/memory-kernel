@@ -3,7 +3,7 @@
  * Used by `mk render <memory-dir> <output-path>`.
  */
 
-import { recall } from './recall.js';
+import { recall, isUnvettedDraft } from './recall.js';
 import { recallIsolated } from './isolation-recall.js';
 import { countEvents } from './event-log.js';
 import { getAllRelations } from './index-db.js';
@@ -203,6 +203,7 @@ export function renderFill(
     a.frontmatter.status !== 'archived'
     && a.frontmatter.status !== 'expired'
     && a.frontmatter.status !== 'superseded'
+    && !isUnvettedDraft(a.frontmatter)         // #274 Gap 1: never render unvetted auto-extracted drafts (#268)
     && a.frontmatter.classification !== 'SECRET'
     && a.frontmatter.classification !== 'PERSONAL',
   );

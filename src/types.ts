@@ -86,6 +86,14 @@ export const RELATION_TYPES = [
 
 export type RelationType = (typeof RELATION_TYPES)[number];
 
+/**
+ * Tag stamped by `mk extract` on every draft atom it produces (session-end
+ * extract, #268). The single source of truth for the literal — the producer
+ * (extract), the promoter (consolidate), and the recall/render visibility gates
+ * (#274 Gap 1) all reference this so a typo can't silently disable one site.
+ */
+export const AUTO_EXTRACTED_TAG = 'auto-extracted';
+
 export interface Relation {
   target: string; // Atom ID
   type: RelationType;
@@ -207,6 +215,7 @@ export interface RecallQuery {
   paths?: string[]; // Scope paths to match
   types?: AtomType[]; // Filter by atom type
   statuses?: AtomStatus[]; // Filter by status
+  include_drafts?: boolean; // Opt-in to surface status:draft atoms (default: excluded — #274 Gap 1)
   tags?: string[]; // Filter by tags
   include_episodes?: boolean; // Include EPISODES/ session summaries in context bundle
   max_tokens?: number; // Budget for context

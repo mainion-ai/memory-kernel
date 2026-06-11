@@ -11,7 +11,7 @@ mk remember "The deploy pipeline takes ~4 minutes end-to-end" \
 mk remember "Use cursor pagination — offset pagination breaks under concurrent writes" \
   -d {dir} -t decision --tags api,performance
 
-# An unverified hypothesis (promoted to fact at confidence ≥ 0.9 during reflect)
+# An unverified hypothesis — beliefs are held in draft for explicit review, not auto-promoted
 mk remember "The cache layer may reduce p99 by ~40% — untested" \
   -d {dir} -t belief --confidence 0.5 --tags performance,cache
 

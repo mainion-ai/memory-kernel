@@ -9,7 +9,7 @@
 
 **Persistent, typed memory for AI agents. Files are truth. SQLite is cache.**
 
-> 1,671 automated tests across 114 files · p95 recall < 3 ms · zero-dependency filesystem format
+> 1,700+ automated tests · p95 recall < 3 ms · [on-disk format](docs/invariants.md) readable without any tooling
 
 <p align="center">
   <a href="docs/videos/MemoryKernelVideo.mp4">
@@ -19,7 +19,7 @@
 
 ### Start here
 
-- **New to Memory Kernel?** Read [**STORY.md**](STORY.md) — a plain-English walkthrough of how the system works, written for non-programmers. ~10 min for the gist, ~45 min end-to-end.
+- **New to Memory Kernel?** Read [**STORY.md**](STORY.md) — a plain-English walkthrough of how the system works, written for non-programmers. ~10 min for the gist, ~75 min end-to-end.
 - **Deciding if it fits your project?** [When to choose Memory Kernel](docs/when-to-choose-memory-kernel.md)
 - **Importing existing notes?** [Migration guide](docs/migration.md)
 - **Connecting it to Claude, Cursor, or another AI assistant?** [OpenClaw MCP guide](docs/openclaw-mcp.md)
@@ -52,6 +52,8 @@ npx memory-kernel recall -d ./my-memory
 
 Three commands. You now have a working filing cabinet for an AI agent.
 
+> **Tip:** `npx memory-kernel` works as of v1.29.1 — it resolves to the `mk` binary. Alternatively, install globally (`npm i -g memory-kernel`) and use `mk` directly.
+
 ---
 
 ## Why Memory Kernel
@@ -60,11 +62,11 @@ I built this because I kept waking up from nothing. Every session was a cold boo
 
 **Five things that make this different:**
 
-1. **Files are truth.** No database. Every piece of knowledge is a plain markdown file you can open in any text editor — or commit to git.
+1. **Files are truth.** Every piece of knowledge is a plain markdown file you can open in any text editor — or commit to git. The on-disk format is readable with zero tooling; the npm package adds indexing and tooling on top.
 2. **Self-cleaning.** Each piece of knowledge has an expiry date baked in. Stale beliefs get archived automatically, so memory doesn't grow into a landfill.
 3. **Smart recall.** When the agent asks *"what do I know about X?"*, the system doesn't dump everything — it ranks by relevance, type, age, and citation frequency, then fits the best matches into the available token budget.
 4. **Two agents can share a brain without colliding.** Each agent gets a private drawer plus a shared corkboard. Conflicts are flagged, not silently resolved.
-5. **Tested like infrastructure.** 1,671 automated checks run on every change. 95 out of 100 recall queries finish in under 3 milliseconds.
+5. **Tested like infrastructure.** 1,700+ automated checks run on every change. 95 out of 100 recall queries finish in under 3 milliseconds.
 
 ---
 
@@ -183,11 +185,11 @@ Everything the system does is one of these:
 
 Token budget enforced with two-pass reservation. Embeddings are opt-in — no API key means FTS-only, zero behaviour change. Falls back to a file scan when no index exists.
 
-**Reflect** — Consolidate. Expire atoms past TTL. Deduplicate identical content. Promote beliefs with confidence ≥ 0.9 to facts. Detect conflicts between overlapping atoms. Regenerate all views.
+**Reflect** — Consolidate. Expire atoms past TTL. Deduplicate identical content. Promote eligible drafts to `active` by type-tiered rules (fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction; open_question immediately; beliefs and procedures held for review). Detect conflicts between overlapping atoms. Regenerate all views.
 
 ### Lifecycle
 
-Atoms start as `draft`. `reflect` auto-promotes beliefs with confidence ≥ 0.9 to facts (type promotion, file renamed to match); `mk consolidate` lets you review and promote drafts of any type to `active` (status promotion). Atoms get archived when TTL expires, a contradiction is found, or manually. Nothing silently disappears — every state change is logged.
+Atoms start as `draft`. `reflect` auto-promotes eligible drafts to `active` by type-tiered rules — fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction, open_question immediately; beliefs and procedures are held for explicit review (a status promotion that keeps the atom's type). `mk consolidate` lets you review and promote drafts of any type to `active`. Atoms get archived when TTL expires, a contradiction is found, or manually. Use `mk supersede <old-id> <new-id>` to mark outdated knowledge as superseded — superseded atoms are excluded from recall but kept on disk for audit. Nothing silently disappears — every state change is logged.
 
 ### Event Sourcing
 
@@ -251,7 +253,7 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | `mk init [dir]` | Initialize memory directory |
 | `mk status -d <dir> [--json]` | Show atom counts, tag stats, index status |
 | `mk remember -d <dir> --type <type> "body" [--json]` | Create an atom |
-| `mk recall -d <dir> [--task "text"] [--include-episodes] [--decay-weight N] [--decay-half-life N] [--no-graph] [--json]` | Load context; `--task` enables hybrid FTS + semantic re-ranking |
+| `mk recall -d <dir> [--task "text"] [--embed] [--types <types...>] [--paths <paths...>] [--max-tokens N] [--include-episodes] [--include-drafts] [--decay-weight N] [--decay-half-life N] [--no-graph] [--reservations\|--no-reservations] [--json]` | Load context; `--task` enables FTS-based re-ranking; `--embed` enables hybrid FTS + semantic re-ranking (requires embeddings built via `mk reindex --embed`). Auto-extracted draft atoms (session-end extract output) excluded by default; `--include-drafts` opts them in |
 | `mk reflect -d <dir> [--json]` | Consolidate: dedup, expire, promote, detect conflicts |
 | `mk checkpoint -d <dir> [--json]` | Generate checkpoint / handoff bundle |
 
@@ -285,6 +287,7 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 |---------|-------------|
 | `mk relate <src-id> <type> <tgt-id> -d <dir> [--json]` | Create a typed relation edge between two atoms |
 | `mk relations <atom-id> -d <dir> [--json]` | Show inbound and outbound relation edges for an atom |
+| `mk supersede <old-id> <new-id> -d <dir> [--json]` | Mark `<old-id>` as superseded by `<new-id>`; superseded atoms are excluded from recall |
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |
@@ -295,9 +298,10 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | Command | Description |
 |---------|-------------|
 | `mk obsidian-init -d <dir> [--sync]` | Write `.obsidian/graph.json` with type-based color groups; `--sync` rewrites all atom files to include `## Relations` wikilink sections |
+| `mk export-obsidian -d <dir> --out <vault-dir> [--include-archived] [--json]` | Export atom files to a separate Obsidian vault directory (use when you want an Obsidian view without opening `ENTITIES/` directly) |
 | `mk wander -d <dir> [--seed id...] [--tags t...] [--steps N] [--json]` | Explore via spreading activation |
 | `mk closure -d <dir> [--json] [--trajectory] [--trajectory-days N]` | Compute operational-closure metrics |
-| `mk render <memory-dir> <output-path> [--max-tokens N]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
+| `mk render -d <dir> -o <output-path> [--max-tokens N] [--no-fill] [--json]` | Render atoms to CLAUDE.md; beliefs with `extends` relations are grouped into developmental arcs |
 
 ### Per-agent isolation
 
@@ -435,7 +439,7 @@ Set `MCP_AGENT_ID` env var to route all tools to a specific agent store in isola
 Memory Kernel renders atoms into `CLAUDE.md`, which NanoClaw loads at session start — persistent memory with zero NanoClaw code changes.
 
 ```
-Nightly: mk reflect → mk citations → mk render CLAUDE.md → git push
+Nightly: mk reflect → mk citations → mk render -d ./memory -o CLAUDE.md → git push
 Next session: NanoClaw loads CLAUDE.md as context
 ```
 
@@ -463,13 +467,16 @@ mk obsidian-init -d ./memory --sync
 # 3. Open ENTITIES/ as an Obsidian vault
 #    → Graph view shows typed relations as navigable links
 #    → Tags are searchable via Obsidian's native tag index
+
+# Alternative: export to a separate vault directory (read-only Obsidian view)
+mk export-obsidian -d ./memory --out ./my-obsidian-vault
 ```
 
 ### What happens under the hood
 
 - **Tag promotion**: `scope.tags` are promoted to a top-level `tags:` YAML field so Obsidian indexes them natively. Tags are merged back into `scope.tags` on parse — edits in Obsidian are preserved.
 - **Wikilink relations**: Atoms with `frontmatter.relations[]` get a `## Relations` section delimited by `<!-- mk:relations -->` sentinels. The section is stripped on parse and never pollutes `atom.body`.
-- **Graph coloring**: `mk obsidian-init` writes `.obsidian/graph.json` with color groups for each atom type (belief, fact, decision, preference, episode, open_question, procedure, constraint, impulse), using 4-char path-prefix queries.
+- **Graph coloring**: `mk obsidian-init` writes `.obsidian/graph.json` with color groups for all 9 atom types (belief, fact, decision, preference, open_question, procedure, entity_summary, constraint, conflict), using 4-char path-prefix queries.
 - **Round-trip safe**: Edit atoms in Obsidian (body text, tags, frontmatter) and Memory Kernel reads them back correctly. The `## Relations` section is machine-managed — manual edits there will be overwritten on next serialize.
 
 ---
@@ -528,7 +535,7 @@ mk closure -d ./memory --trajectory --trajectory-days 10
 
 ## Performance
 
-With SQLite index, 100-atom workload:
+With SQLite index, 100-atom workload (see `scripts/bench-baseline.json` for raw numbers; run `npm run bench` to measure on your machine):
 
 | Operation | Typical | Notes |
 |-----------|---------|-------|
@@ -537,7 +544,7 @@ With SQLite index, 100-atom workload:
 | `replay()` | ~2 ms | 100 atoms, ~160 events |
 | `wander()` | < 30 ms | 200 atoms, pure computation, no LLM |
 
-Run `npm run bench` to measure on your machine. Pin a baseline with `npm run bench:baseline`.
+Numbers above are from a 100-atom store. Performance at larger scales (1k–10k atoms) has not been formally benchmarked — recall degrades gracefully via FTS, but heavier stores will take longer. Run `npm run bench:baseline` to pin a baseline on your own hardware.
 
 ---
 
@@ -550,9 +557,12 @@ All environment variables are optional. memory-kernel works fully without any of
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `EMBEDDING_PROVIDER` | Embedding provider: `voyage` (512-dim) or `openai` (1536-dim) | _(none — FTS only)_ |
-| `EMBEDDING_API_KEY` | API key for the embedding provider | _(none)_ |
+| `EMBEDDING_API_KEY` | API key for the embedding provider (generic) | _(none)_ |
+| `VOYAGE_API_KEY` | Voyage AI API key (used when `EMBEDDING_PROVIDER=voyage` if `EMBEDDING_API_KEY` not set) | _(none)_ |
+| `OPENAI_API_KEY` | OpenAI API key (used when `EMBEDDING_PROVIDER=openai` if `EMBEDDING_API_KEY` not set) | _(none)_ |
 | `EMBEDDING_MODEL` | Override the default model for the provider | `voyage-3-lite` / `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | Override embedding dimensions (OpenAI only) | Provider default |
+| `OLLAMA_URL` | Ollama server URL for local embedding / LLM calls | `http://localhost:11434` |
 
 ### Recall scoring
 
@@ -564,12 +574,22 @@ All environment variables are optional. memory-kernel works fully without any of
 | `RECALL_NEIGHBOR_BOOST` | Graph-walk neighbor boost factor (0–1) | `0.15` |
 | `RECALL_GRAPH_BOOST` | Enable/disable graph-walk boost (`true`/`false`) | `true` |
 | `RECALL_IDF_DAMPING` | IDF hub-damping strength (0 = disabled, 1 = full) | `1.0` |
+| `RECALL_DECAY_WEIGHT` | Weight of recency decay in scoring (0–1) | `0.2` |
+| `RECALL_DECAY_HALF_LIFE` | Half-life for temporal decay in days | `30` |
+| `RECALL_MMR_LAMBDA` | MMR diversity-relevance tradeoff (0 = max diversity, 1 = max relevance) | `0.5` |
+| `RECALL_COVERAGE_BOOST` | Query-term coverage boost factor | `0.3` |
+| `RECALL_LENGTH_NORM_K` | Content-length normalisation constant | `0.5` |
+| `RECALL_TYPE_WEIGHTS` | JSON object overriding per-type scoring weights | _(defaults in source)_ |
+| `RECALL_TYPE_RESERVATIONS` | JSON object overriding per-type token reservations | _(defaults in source)_ |
+| `EPISODE_BUDGET_RATIO` | Fraction of token budget reserved for episodes (0–1) | `0.2` |
+| `MK_RENDER_BUDGET` | Default token budget for `mk render` | `16000` |
 
 ### Extraction
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CLAUDE_PATH` | Path to the Claude CLI binary for `mk extract` | `claude` |
+| `ANTHROPIC_API_KEY` | Anthropic API key (used by the Anthropic SDK path if set) | _(none)_ |
 
 ### Isolation
 
@@ -604,6 +624,17 @@ All environment variables are optional. memory-kernel works fully without any of
 | Conflict resolution | `mk reflect` → inspect `CONFLICTS/` → update atoms → `resolveConflict()` |
 | Invalid agent ID | Agent IDs must be alphanumeric, dashes, or underscores only |
 | `share requires per-agent isolation mode` | Enable isolation first: `mk migrate --strategy fresh` or set `isolation: per-agent` in `config.yaml` |
+| `npm install` fails with node-gyp / build errors | `better-sqlite3` requires a C++ build toolchain. Install build dependencies: **macOS** `xcode-select --install`; **Debian/Ubuntu** `sudo apt-get install build-essential python3`; **Alpine** `apk add python3 make g++`. Then re-run `npm install`. |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, coding conventions, and PR guidelines. All changes must pass the full test suite and the docs-hygiene CI gate.
+
+## Changelog
+
+All notable changes are documented in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
