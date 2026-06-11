@@ -1,13 +1,14 @@
 {
   "name": "memory-kernel",
-  "version": "1.29.0",
+  "version": "1.29.1",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "mk": "dist/cli/mk.js",
-    "mk-mcp": "dist/mcp/server.js"
+    "mk-mcp": "dist/mcp/server.js",
+    "memory-kernel": "dist/cli/mk.js"
   },
   "files": [
     "dist",

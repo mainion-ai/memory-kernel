@@ -27,6 +27,12 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.29.1] — 2026-06-11
+
+### Fixed — `memory-kernel` bin alias was missing
+
+The package registered two bin entries (`mk` and `mk-mcp`) but not a `memory-kernel` alias matching the package name. Running `npx memory-kernel` — or installing globally and calling `memory-kernel` — failed with `command not found`. Added `memory-kernel` to the `bin` field, pointing at `dist/cli/mk.js`; it is an alias for the canonical `mk` binary (`mk-mcp` remains the MCP-server entry).
+
 ## [1.29.0] — 2026-06-10
 
 ### Added — `KNOWLEDGE/` canonical dir + `mk observe --mode document` (#244)
