@@ -70,6 +70,13 @@ export interface AtomFrontmatter {
     blocked_by?: string[];
   };
   relations?: Relation[]; // Phase 3: typed graph edges to other atoms
+  /**
+   * When this atom was first confirmed executed (ISO-8601 UTC), set by
+   * `mk execute` or the session-end extractor (#309). For `procedure` drafts
+   * this is the auto-promotion signal — a procedure is only trustworthy once
+   * it has actually run, not as it was aspirationally written.
+   */
+  executed_at?: string;
 }
 
 // --- Relation types (Phase 3) ---

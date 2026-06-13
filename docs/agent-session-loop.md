@@ -194,7 +194,7 @@ mk reflect -d {dir}
 mk gc -d {dir}
 ```
 
-**Why reflect:** Deduplicates near-identical atoms, expires atoms past their TTL, promotes eligible drafts to active (fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction; open_question immediately; beliefs and procedures held for review), and detects conflicts between atoms. Without regular reflect runs, stale and duplicate atoms accumulate and degrade recall quality.
+**Why reflect:** Deduplicates near-identical atoms, expires atoms past their TTL, promotes eligible drafts to active (fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction; open_question immediately; procedures once confirmed executed via `mk execute` at confidence ≥ 0.7; beliefs held for review), and detects conflicts between atoms. Without regular reflect runs, stale and duplicate atoms accumulate and degrade recall quality.
 
 **Why gc after reflect:** Reflect marks atoms as expired; gc archives them. Running gc without reflect first is safe but leaves atoms that reflect would have expired. The pair together keeps the store clean.
 

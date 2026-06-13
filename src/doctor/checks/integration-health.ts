@@ -81,15 +81,68 @@ function resolvePathMk(): { version: string | null; location: string | null } {
   }
 }
 
+/**
+ * Pure diagnosis of the AGENT binary — the `mk` the cron wrapper invokes via
+ * `MK_BIN` (#330). A host can have several `mk`s at different versions; the
+ * agent-relevant one is whatever `MK_BIN` points at, which may differ from both
+ * the PATH `mk` and the kernel running this doctor. `binVersion === null` with
+ * a `binPath` set means MK_BIN is set but the binary wouldn't run.
+ */
+export function diagnoseMkBin(
+  kernelVersion: string,
+  binVersion: string | null,
+  binPath: string | null,
+): { ok: boolean; issues: string[] } {
+  if (!binPath) {
+    // MK_BIN not set — nothing to report (the PATH diagnosis covers the rest).
+    return { ok: true, issues: [] };
+  }
+  if (!binVersion) {
+    return {
+      ok: false,
+      issues: [`MK_BIN is set to ${binPath} but \`${binPath} --version\` did not run — the agent's binary is missing or broken`],
+    };
+  }
+  if (binVersion === kernelVersion) {
+    return { ok: true, issues: [`agent binary (MK_BIN): mk ${binVersion} at ${binPath}`] };
+  }
+  return {
+    ok: false,
+    issues: [
+      `agent binary (MK_BIN) at ${binPath} is mk ${binVersion}, but this kernel is ${kernelVersion} — the agent is running a different version; reinstall at MK_BIN or update the wrapper`,
+    ],
+  };
+}
+
+function resolveMkBin(env: NodeJS.ProcessEnv): { version: string | null; location: string | null } {
+  const binPath = env.MK_BIN;
+  if (!binPath) return { version: null, location: null };
+  try {
+    const raw = execFileSync(binPath, ['--version'], { encoding: 'utf8', timeout: 5000 }).trim();
+    const version = raw.split(/\s+/).pop() || null;
+    return { version, location: binPath };
+  } catch {
+    // Set but unrunnable — report the path so diagnoseMkBin can flag it.
+    return { version: null, location: binPath };
+  }
+}
+
 export const mkVersionCheck: Check = {
   name: 'mk-version',
   category: 'binary',
   defaultSeverity: 'warn',
   run(ctx: DoctorContext): CheckResult {
-    const { version, location } = resolvePathMk();
-    const { ok, issues } = diagnoseVersion(ctx.kernelVersion, version, location);
+    const pathMk = resolvePathMk();
+    const path = diagnoseVersion(ctx.kernelVersion, pathMk.version, pathMk.location);
+    // Also verify the binary the AGENT actually runs (MK_BIN), not just PATH.
+    const bin = resolveMkBin(ctx.env);
+    const agent = diagnoseMkBin(ctx.kernelVersion, bin.version, bin.location);
+    const ok = path.ok && agent.ok;
     // Only a genuine mismatch is a warning; "matches" / "nothing to compare" are info.
-    return { name: 'mk-version', category: 'binary', severity: ok ? 'info' : 'warn', ok, issues };
+    return {
+      name: 'mk-version', category: 'binary', severity: ok ? 'info' : 'warn', ok,
+      issues: [...path.issues, ...agent.issues],
+    };
   },
 };
 

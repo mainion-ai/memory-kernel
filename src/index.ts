@@ -139,6 +139,20 @@ export { bootstrapEvents } from './bootstrap.js';
 
 // Operations
 export { createAtom, updateAtom, archiveAtom, resolveConflict, snapshotAtom } from './retain.js';
+export {
+  seedLifecycle,
+  loadLifecycleManifest,
+  canonicalLifecycleSlugs,
+  canonicalLifecycleSet,
+  resolveSeedDir,
+  extractIdSlug,
+  normalizeSlug,
+} from './seed.js';
+export type { LifecycleSeedEntry, SeedResult, SeedSlugResult, SeedAction, SeedLifecycleOptions } from './seed.js';
+export { runUpgrade } from './upgrade.js';
+export type { UpgradeOptions, UpgradeResult, UpgradeStep } from './upgrade.js';
+export { markExecuted } from './cli/execute.js';
+export type { ExecuteOptions, ExecuteResult } from './cli/execute.js';
 export type {
   RetainOptions,
   ResolveConflictOptions,
@@ -259,6 +273,10 @@ export type {
 // Lint (semantic health checking)
 export { lintMemoryStore } from './lint.js';
 export type { LintFinding, LintOptions, LintResult } from './lint.js';
+
+// Eval — golden-query recall runner (#300)
+export { loadFixtures, runFixture, runEval, resolveEmbed, exitCodeForEval, EvalError, DEFAULT_TOP_K, DEFAULT_THRESHOLD } from './eval.js';
+export type { EvalQuery, EvalFixture, EvalQueryResult, EvalResult, EmbedMode, RunEvalOptions } from './eval.js';
 
 // Migration (shared → isolated)
 export { migrate } from './migrate.js';

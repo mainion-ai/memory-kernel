@@ -54,6 +54,9 @@ export const AtomFrontmatterSchema = z.object({
       }),
     )
     .optional(),
+  // #309: first-confirmed-execution timestamp; the promote signal for procedure
+  // drafts. Optional/additive — existing atoms validate unchanged.
+  executed_at: z.string().datetime().optional(),
 });
 
 // --- Event schema ---

@@ -54,12 +54,16 @@ import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
 import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { registerLintCommand } from './lint.js';
+import { registerEvalCommand } from './eval.js';
 import { registerExtractCommand } from './extract.js';
 import { registerConsolidateCommand } from './consolidate.js';
 import { registerExportObsidianCommand } from './export-obsidian.js';
 import { registerObsidianInitCommand } from './obsidian-init.js';
 import { registerObserveCommand } from './observe.js';
 import { registerSupersedeCommand } from './supersede.js';
+import { registerSeedCommand } from './seed.js';
+import { registerUpgradeCommand } from './upgrade.js';
+import { registerExecuteCommand } from './execute.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -1680,12 +1684,16 @@ registerRelinkCommand(program);
 registerCitationsCommand(program);
 registerEnrichRelationsCommand(program);
 registerLintCommand(program);
+registerEvalCommand(program);
 registerExtractCommand(program);
 registerConsolidateCommand(program);
 registerExportObsidianCommand(program);
 registerObsidianInitCommand(program);
 registerObserveCommand(program);
 registerSupersedeCommand(program);
+registerSeedCommand(program);
+registerUpgradeCommand(program);
+registerExecuteCommand(program);
 
 // Rewrite argv to strip/translate deprecated flags before commander parses.
 // Without this, `mk render --fill` (from an old wrapper) would fail with a

@@ -197,13 +197,47 @@ mk doctor -d $DIR --json
 Exit code 1 when issues found. Use for health checks — distinguishes "no results" (normal) from "broken state" (needs attention).
 
 **Integration-health checks (#305)** — beyond store/schema checks, `mk doctor` answers the post-upgrade / post-incident questions:
-- `mk-version` — warns if a stale `mk` on PATH shadows the running kernel version.
+- `mk-version` — warns if a stale `mk` on PATH shadows the running kernel version. Also resolves and reports the binary the **agent** runs via `MK_BIN` (the path the cron wrapper sets), warning if that differs from the running kernel — a host can have several `mk`s at different versions, and this makes the agent-relevant one unambiguous (#330).
+- `seed-set-freshness` — compares the store's **active lifecycle set** (atoms tagged `session-loop`, keyed by **slug + type** — the same identity `mk seed` reconciles on) against the canonical set shipped with the running kernel (#329/#330). **Errors** on **missing** or **duplicate** entries (a stale/partial re-seed — `8 stale + 3 dupes = 11` passes a count check but fails this set check); surfaces **extra** entries as **info** (a slug removed in this version, or a user's own `session-loop`-tagged atom — `session-loop` is an unreserved tag, so extras never fail the gate); silent (info) on a store with no lifecycle atoms. Re-run `mk seed --lifecycle` to fix missing/duplicate. This is the acceptance gate behind `mk upgrade`.
 - `embedding-key-source` — reports which env var supplied the embedding key (`EMBEDDING_API_KEY`, or the `OPENAI_API_KEY` / `VOYAGE_API_KEY` fallback) — last-4 only, never the key value; warns if a provider is set but no key resolves.
 - `embeddings-vectors-fresh` — warns when embeddings are configured but the store has **0 vectors** for >0 atoms (embedding stalled, e.g. "key set, 0 vectors"); a partial count is reported as info (SECRET/PERSONAL atoms are never embedded).
 - `smoke-recall` — read-only FTS probe that the recall/index path is queryable (no egress). Set `MK_DOCTOR_SMOKE_EMBED=1` (with a key, network not skipped) to also smoke the embedding recall path.
 - `sync-liveness` — reports how long since the last reindex (`.memory-index.db` mtime). It only **warns** when you've declared a freshness SLA by setting `MK_SYNC_MAX_AGE_HOURS` (so an idle / manually-managed store with no nightly cron isn't a false positive); past that threshold it flags a silently-stopped nightly sync.
 
 All are side-effect-free (read-only — a plain `mk doctor` never migrates the index). Boundary: `mk doctor` = integration health; knowledge/composition health (e.g. belief monoculture) stays in `mk lint`.
+
+### mk eval
+
+```bash
+mk eval -d $DIR                       # run every fixture in $DIR/eval/*.yaml
+mk eval -d $DIR --fixture recall.yaml # a specific fixture file (or dir)
+mk eval -d $DIR --json                # machine-readable, for CI
+```
+
+Runs golden-query recall fixtures and returns **pass/fail exit codes** so it can gate CI or alert as a post-sync canary:
+
+- **`0`** — all fixtures passed (`pass_rate >= threshold`)
+- **`1`** — one or more fixtures below threshold
+- **`2`** — runner error (missing store/dir, malformed fixture)
+
+Fixture format (YAML; default location `<dir>/eval/*.yaml`):
+
+```yaml
+threshold: 0.8        # pass when pass_rate >= 0.8 (optional; --threshold overrides; default 1.0)
+top_k: 5              # match cutoff (optional; --top-k overrides; default 5)
+queries:
+  - task: "what is the A2A fleet topology"
+    expect: ["FACT-2026-05-29-A2A-FLEET-TOPOLOGY"]   # pass if any expected id is in top-K (suffix-drift tolerant)
+    cat: mesh
+  - expect_content: "wander session"                 # KNOWLEDGE docs aren't atoms — grep KNOWLEDGE/** instead
+    cat: KNOWLEDGE
+```
+
+A query passes when ≥1 `expect` atom id surfaces in the top-K recall (or, for `expect_content`, the string is found in `KNOWLEDGE/`). Score = passing / total.
+
+**Embeddings:** `--embed` engages automatically when an embedding key **and** vectors exist; otherwise it's FTS-only. Pass `--no-embed` to force FTS. **In CI, run keyless** — recall is then deterministically FTS-only (no live API calls, no flakiness); point `--fixture` at a committed fixture store whose expectations pass on FTS. (Migrate a legacy `golden-queries.json` to a fixture with `node scripts/golden-json-to-yaml.mjs <file> > eval/recall.yaml`.)
+
+> Authoring the per-agent query *sets* + wiring the post-sync cadence is tracked separately in #266; this command is the runner those consume.
 
 ### mk checkpoint
 
@@ -386,6 +420,99 @@ Optional flags:
 - `--limit <n>` — max atoms to process (default: 50)
 - `--duplicate-threshold <n>` — BM25 rank threshold for duplicate detection (default: -2.0)
 - `--agent-id <id>`, `--session-id <id>` — for event attribution
+
+### mk execute
+
+```bash
+mk execute PROC-2026-06-13-DEPLOY-RUNBOOK-ab12 -d $DIR --json
+```
+
+```json
+{ "atom_id": "PROC-2026-06-13-DEPLOY-RUNBOOK-ab12", "type": "procedure", "changed": true, "executed_at": "2026-06-13T21:00:00Z" }
+```
+
+Stamps `executed_at` on an atom (#309). For draft **procedures** this is the auto-promotion signal: a procedure is only trustworthy once it has actually run, so `mk reflect` promotes executed procedure drafts (confidence ≥ 0.7, no contradiction) — never-executed ("aspirational") procedures stay in draft. **Idempotent** — a second call is a no-op preserving the first execution time. The session-end extractor (#268) can populate the same field when it detects a procedure was followed.
+
+Optional flags:
+- `--dry-run` — preview without writing
+- `--agent-id <id>`, `--session-id <id>` — for event attribution
+
+### mk seed
+
+```bash
+mk seed --lifecycle -d $DIR --json
+```
+
+```json
+{
+  "dry_run": false,
+  "seed_dir": "/usr/local/lib/node_modules/memory-kernel/skills/mk-memory-setup/seed-atoms/lifecycle",
+  "created": 0,
+  "updated": 1,
+  "unchanged": 9,
+  "deduped": 1,
+  "superseded": 3,
+  "results": [
+    { "slug": "session-start-procedure", "type": "procedure", "action": "unchanged", "active_id": "PROC-2026-06-13-SESSION-START-PROCEDURE-1ab", "superseded_ids": [] },
+    { "slug": "diagnostics-procedure", "type": "procedure", "action": "updated", "active_id": "PROC-2026-06-13-DIAGNOSTICS-PROCEDURE-7cd", "superseded_ids": ["PROC-2026-05-01-DIAGNOSTICS-PROCEDURE-x12"] }
+  ]
+}
+```
+
+Idempotently reconciles the store to the canonical lifecycle set (10 procedures + 1 constraint, described by `seed-atoms/lifecycle/manifest.json`, shipped in the package). Matches existing atoms on the **stable slug segment** of their id, so re-running supersedes stale/duplicate copies in place rather than duplicating. `action` is one of `created` / `updated` / `unchanged` / `deduped`.
+
+Optional flags:
+- `--dry-run` — report planned actions without writing files or emitting events
+- `--seed-dir <dir>` — override the shipped seed directory (testing / pinning a specific canonical set)
+- `--agent-id <id>`, `--session-id <id>` — for event attribution
+
+`skills/mk-memory-setup/seed-atoms/seed-lifecycle.sh` is a thin wrapper over this command.
+
+### mk upgrade
+
+```bash
+mk upgrade --to 1.33.0 -d $DIR --mk-bin /group/npm/bin/mk --cron-wrapper /etc/agent/sync.sh --json
+```
+
+```json
+{
+  "pass": true,
+  "to": "1.33.0",
+  "mk_bin": "/group/npm/bin/mk",
+  "dry_run": false,
+  "steps": [
+    { "step": "resolve-binary", "ok": true, "detail": "agent binary: /group/npm/bin/mk" },
+    { "step": "verify-runner", "ok": true, "detail": "runner is memory-kernel@1.33.0 (matches target)" },
+    { "step": "install", "ok": true, "detail": "installed memory-kernel@1.33.0 at /group/npm/bin/mk" },
+    { "step": "verify-agent-version", "ok": true, "detail": "/group/npm/bin/mk is mk 1.33.0" },
+    { "step": "seed", "ok": true, "detail": "created 0, updated 1, unchanged 10, deduped 0" },
+    { "step": "cron", "ok": true, "detail": "regenerated cron wrapper /etc/agent/sync.sh" },
+    { "step": "doctor-gate", "ok": true, "detail": "doctor: no errors (exit 0)" }
+  ],
+  "doctor": { "exit_code": 0, "issues": ["lifecycle seed set current: 11/11 canonical atoms active"] }
+}
+```
+
+**Host-side** one-command agent upgrade (#331). Runs the whole sequence and prints one PASS/FAIL (exit 1 on FAIL so a host wrapper / CI can gate):
+1. resolve the agent's real binary (`--mk-bin`, else the `MK_BIN` env var the cron wrapper sets — never PATH);
+2. install `memory-kernel@<ver>` at that binary's npm prefix;
+3. verify the binary now reports `<ver>`;
+4. idempotently re-seed lifecycle atoms (#329);
+5. regenerate the cron wrapper (when `--cron-wrapper` is given);
+6. gate on `mk doctor` (incl. the #330 seed-set-freshness check) — PASS = no error-severity issues; warnings are reported but don't block.
+
+**The agent cannot upgrade its own in-container binary** — run `mk upgrade` on the **host**, and **from the target version**: the seed bodies, canonical slug set, and doctor gate all come from the `mk` running the command, so a runner whose version ≠ `--to` would seed and validate the *wrong* version's set (the v1.32.0 "re-seeded the old set, doctor green" incident). The `verify-runner` step **hard-fails** that mismatch with the exact command to re-run:
+
+```bash
+npx memory-kernel@1.33.0 upgrade --to 1.33.0 -d /agent/kernel --mk-bin /group/npm/bin/mk
+```
+
+`mk doctor` (#330) is then how the agent subsequently *knows* the upgrade took.
+
+Optional flags:
+- `--mk-bin <path>` — the agent binary (defaults to `MK_BIN`)
+- `--cron-wrapper <path>` — regenerate this wrapper via `mk init --cron --update`
+- `--dry-run` — report the plan + current doctor state without installing / seeding / regenerating
 
 ### mk reindex
 

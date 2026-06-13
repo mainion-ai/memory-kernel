@@ -183,6 +183,39 @@ const compact = compactLog('./memory');
 console.log(`Removed ${compact.removed} intermediate events`);
 ```
 
+### Mark a procedure executed (v1.33.0+)
+
+```typescript
+import { markExecuted } from 'memory-kernel';
+
+// Stamp executed_at — the auto-promotion signal for draft procedures (#309).
+// Idempotent: a second call preserves the first execution time.
+const r = markExecuted({ memoryDir: './memory', atomId: 'PROC-2026-06-13-DEPLOY-ab12' });
+// → { atom_id, type, changed, executed_at }
+// The next `reflect()` promotes the procedure draft (status-only) at confidence ≥ 0.7.
+```
+
+### Idempotent lifecycle seed (v1.33.0+)
+
+```typescript
+import { seedLifecycle, canonicalLifecycleSlugs, extractIdSlug } from 'memory-kernel';
+
+// Reconcile a store to the canonical lifecycle set. Safe to re-run: existing
+// atoms are matched on the stable slug segment of their id and superseded in
+// place rather than duplicated.
+const res = seedLifecycle({ memoryDir: './memory', agent_id: 'cli', session_id: 'seed' });
+console.log(`created ${res.created}, unchanged ${res.unchanged}, deduped ${res.deduped}`);
+
+// The canonical slug set shipped with this version (used by the doctor
+// seed-set-freshness check).
+canonicalLifecycleSlugs(); // ['session-start-procedure', 'session-loop-pitfalls', ...]
+
+// Pull the stable slug segment out of any atom id.
+extractIdSlug('PROC-2026-06-13-SESSION-START-PROCEDURE-1ab'); // 'session-start-procedure'
+```
+
+`seedLifecycle` accepts `{ memoryDir, seedDir?, dryRun?, agent_id?, session_id? }`. Pass `seedDir` to point at a specific canonical set (tests / version pinning); it defaults to the seed directory shipped in the package.
+
 ---
 
 ## Event Sourcing (v0.4.0+)

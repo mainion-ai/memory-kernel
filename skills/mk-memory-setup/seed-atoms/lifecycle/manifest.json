@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "description": "Canonical lifecycle seed set (10 procedures + 1 constraint). Single source of truth for `mk seed --lifecycle`, seed-lifecycle.sh, and the doctor seed-set-freshness check (#330). Bodies live in the *.md files named here; tags mirror the prior seed-lifecycle.sh SEEDS array.",
+  "atoms": [
+    { "file": "01-session-start.md", "type": "procedure", "slug": "session-start-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "02-during-session.md", "type": "procedure", "slug": "during-session-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "03-session-end.md", "type": "procedure", "slug": "session-end-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "04-every-5-sessions.md", "type": "procedure", "slug": "every-5-sessions-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "05-maintenance-cadence.md", "type": "procedure", "slug": "maintenance-cadence-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "06-a2a-handoff.md", "type": "procedure", "slug": "a2a-handoff-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "07-diagnostics.md", "type": "procedure", "slug": "diagnostics-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "08-what-not-to-do.md", "type": "constraint", "slug": "session-loop-pitfalls", "tags": ["session-loop", "constraints", "agent-setup"] },
+    { "file": "09-verify-memory-claims.md", "type": "procedure", "slug": "verify-memory-claims-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "10-supersede-on-infra-change.md", "type": "procedure", "slug": "supersede-on-infra-change-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] },
+    { "file": "11-repeated-sequence-becomes-proc.md", "type": "procedure", "slug": "repeated-sequence-procedure", "tags": ["session-loop", "lifecycle", "agent-setup"] }
+  ]
+}

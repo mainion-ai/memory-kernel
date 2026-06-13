@@ -324,8 +324,9 @@ function dedup(opts: ReflectOptions, atoms: Atom[]): { count: number; archivedId
  *     no contradiction with an existing active atom of the same type/scope.
  *   - open_question: promote immediately (additive, no quality risk).
  *   - belief: held in draft (over-produced + re-extraction drift; review-gated).
- *   - procedure: held in draft (interim — the "executed-once" tool-trace signal
- *     is a separate sub-task; aspirational procedures must not auto-activate).
+ *   - procedure: promote when `executed_at` is set (confirmed at least once via
+ *     `mk execute` or the #268 extractor) AND confidence ≥ 0.7 AND no
+ *     contradiction (#309). Aspirational, never-executed procedures stay in draft.
  *   - others (constraint, entity_summary, conflict): not extract-produced; held.
  *
  * The atom ID retains its original type prefix — IDs are immutable.
@@ -350,8 +351,15 @@ function autoPromote(opts: ReflectOptions, atoms: Atom[]): number {
       const oldEnough = Number.isFinite(ageMs) && ageMs >= DRAFT_PROMOTE_AGE_MS;
       const confident = fm.confidence >= DRAFT_PROMOTE_MIN_CONFIDENCE;
       shouldPromote = oldEnough && confident && !draftContradictsActive(atom, atoms);
+    } else if (fm.type === 'procedure') {
+      // #309: a procedure is trustworthy once it has actually run — execution is
+      // the signal (no age gate). Aspirational, never-executed procedures stay
+      // in draft. `executed_at` is stamped by `mk execute` or the #268 extractor.
+      const executed = typeof fm.executed_at === 'string' && fm.executed_at.length > 0;
+      const confident = fm.confidence >= DRAFT_PROMOTE_MIN_CONFIDENCE;
+      shouldPromote = executed && confident && !draftContradictsActive(atom, atoms);
     }
-    // belief / procedure / others: held in draft (no auto-promotion).
+    // belief / others: held in draft (no auto-promotion).
 
     if (!shouldPromote) continue;
 

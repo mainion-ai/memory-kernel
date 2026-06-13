@@ -22,6 +22,7 @@ const KEY_ORDER: (keyof AtomFrontmatter)[] = [
   'provenance',
   'links',
   'relations',
+  'executed_at',
 ];
 
 /**

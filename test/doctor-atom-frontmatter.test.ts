@@ -246,3 +246,80 @@ describe('atomFrontmatterCheck — result shape', () => {
     expect(r.issues.every((i) => i.startsWith('error:'))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #327 — known IDs come from frontmatter id, not filename
+// ---------------------------------------------------------------------------
+
+describe('atomFrontmatterCheck — id resolved from frontmatter, not filename (#327)', () => {
+  it('does not falsely error on a relation to an atom whose archive file is doubled-named', async () => {
+    const realId = 'OPEN-2026-03-10-SEMANTIC-SEARCH-GAP-169qr';
+    // Legacy archive-rename bug: filename is the id DOUBLED, frontmatter id is the real id.
+    writeAtomFile(
+      archiveDir(),
+      `${realId}-${realId}.md`,
+      [
+        `id: ${realId}`,
+        'type: open_question',
+        'status: expired',
+        'confidence: 0.5',
+        `created_at: "${NOW}"`,
+        `updated_at: "${NOW}"`,
+        'ttl_days: null',
+        'classification: TEAM',
+        '',
+      ].join('\n'),
+    );
+    // Active atom with an inbound relation to the real id.
+    const srcId = 'BELI-2026-03-25-PRINCIPLE-EVOLUTION-1d705';
+    writeAtomFile(
+      entitiesDir(),
+      `${srcId}.md`,
+      [
+        `id: ${srcId}`,
+        'type: belief',
+        'status: active',
+        'confidence: 0.8',
+        `created_at: "${NOW}"`,
+        `updated_at: "${NOW}"`,
+        'ttl_days: null',
+        'classification: TEAM',
+        'relations:',
+        '  - type: related',
+        `    target: ${realId}`,
+        '',
+      ].join('\n'),
+    );
+
+    const r = await run();
+    // Before #327: buildAllIds knew only the doubled basename, so the relation
+    // to the real id was a false broken-relation-ref (error). Now the real id
+    // is registered from frontmatter → no false error.
+    const brokenToReal = r.issues.filter((i) => i.includes('broken-relation-ref') && i.includes(realId));
+    expect(brokenToReal).toEqual([]);
+  });
+
+  it('still flags a genuinely missing relation target', async () => {
+    const srcId = 'BELI-2026-03-25-DANGLING-REF-2a2a2';
+    writeAtomFile(
+      entitiesDir(),
+      `${srcId}.md`,
+      [
+        `id: ${srcId}`,
+        'type: belief',
+        'status: active',
+        'confidence: 0.8',
+        `created_at: "${NOW}"`,
+        `updated_at: "${NOW}"`,
+        'ttl_days: null',
+        'classification: TEAM',
+        'relations:',
+        '  - type: related',
+        '    target: FACT-2026-01-01-DOES-NOT-EXIST-zzzzz',
+        '',
+      ].join('\n'),
+    );
+    const r = await run();
+    expect(r.issues.some((i) => i.includes('broken-relation-ref') && i.includes('DOES-NOT-EXIST'))).toBe(true);
+  });
+});

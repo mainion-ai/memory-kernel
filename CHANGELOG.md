@@ -27,6 +27,69 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.33.0] — 2026-06-13
+
+### Added — procedure "executed-once" promote signal (#309)
+
+Completes the #274 tiered-promotion story. #274 correctly held `procedure` drafts but left *when* they promote unresolved — a procedure is only trustworthy once it has been **executed at least once** (it describes how the agent actually works, not how it aspires to).
+
+- **`executed_at` frontmatter field** (`AtomFrontmatter` + Zod schema + serializer key-order) — first-confirmed-execution timestamp. Optional/additive; existing atoms validate unchanged.
+- **`mk execute <atom-id>`** (engine `markExecuted`, `src/cli/execute.ts`) stamps `executed_at`, emits an `atom_updated` event (`meta.operation = 'execute'`), and reindexes. **Idempotent** — preserves the *first* execution time. `--dry-run` + `--json`. The session-end extractor (#268) can populate the same field downstream.
+- **`autoPromote` (`src/reflect.ts`)** gains a `procedure` branch: promote (status-only, draft → active) when `executed_at` is set AND confidence ≥ 0.7 AND no contradiction — no age gate (execution is the signal). Aspirational, never-executed procedures stay in draft.
+- New exports `markExecuted` + types. +9 tests (`test/execute.test.ts`, procedure cases in `test/reflect-tiered-promotion.test.ts`). **MINOR-class** (new command + field + export; folds into the v1.33.0 batch).
+
+### Added — eval cadence: delta-only post-sync alert + weekly digest (#266)
+
+Builds on `mk eval` (#300). Watching the absolute recall pass rate is noisy; the cadence turns a stream of `mk eval` runs into a signal.
+
+- **Engine `src/eval-cadence.ts`** (`summarizeEvalRun` + `decideCadence`, internal — not barrel-exported): reduces an `mk eval --json` run to a per-category + overall pass-rate snapshot, then compares the latest against a **rolling N-day baseline** (default 7d). Fires only when a category **drops > 10pp** (regression) or **improves > 15pp** (worth re-baselining); silent within thresholds and on a first observation. Emits a stable weekly digest regardless. Thresholds + window configurable; `nowMs` injectable for deterministic tests. +8 tests (`test/eval-cadence.test.ts`).
+- **`scripts/eval-cadence.mjs`** — I/O wrapper: appends the latest run to a JSONL history, runs the engine, prints the digest, and exits non-zero with `ALERT` lines on a fired alert (so a post-sync hook can gate). `--digest` reports without appending.
+- **`docs/eval-cadence.md`** — runbook for wiring it post-sync + weekly (operator-gated; **not deployed** to live agents).
+
+Engine internal + script + docs — no public API/CLI change → **PATCH-class** (folds into the v1.33.0 batch). Per-agent golden fixtures + live baselines were run on the local store copies and reported on the issue (private — never committed); the FTS-only floor confirmed the golden sets are embedding-dependent (an embed key is required for a meaningful baseline; the KNOWLEDGE-grep category scores without one).
+
+### Added — `mk upgrade`: host-side one-command agent upgrade (#331)
+
+Upgrading an agent was a manual multi-step dance with a wrong-binary footgun (a host can have several `mk`s — global, the group-npm `MK_BIN` the agent runs, a dev clone — at different versions), a non-idempotent re-seed, a cron-wrapper regen, and a doctor run against the right dir. v1.32.0 had an agent report "done" while silently stale.
+
+- **`mk upgrade --to <ver>`** (engine `src/upgrade.ts`, CLI `src/cli/upgrade.ts`) runs the whole sequence and prints one PASS/FAIL (exit 1 on FAIL): resolve the agent binary (`--mk-bin` / `MK_BIN`, never PATH) → install `memory-kernel@<ver>` at its npm prefix → verify it reports `<ver>` → idempotent re-seed (#329) → regenerate the cron wrapper (`--cron-wrapper`) → gate on `mk doctor` (incl. #330 seed-set-freshness). PASS = no error-severity doctor issues (warnings inform, don't block).
+- **Explicitly host-side** — the agent can't upgrade its own in-container binary; run on the host, **from the target version** (`npx memory-kernel@<ver> upgrade --to <ver>`). The seed bodies + canonical slug set + doctor gate all come from the running `mk`, so a `verify-runner` step **hard-fails** when the runner's version ≠ `--to` (preventing a re-seed of the wrong version's set — the v1.32.0 incident); version comparisons tolerate a leading `v`. `mk doctor` is how the agent subsequently knows it took.
+- The three external effects (npm install / version probe / cron regen) are injectable, so the orchestration / gating / dry-run logic is fully tested with no network and no live-agent contact. New exports `runUpgrade` + types. +7 tests (`test/upgrade.test.ts`). **MINOR-class** (new command + export; folds into the v1.33.0 batch).
+
+### Added — `mk doctor`: seed-set-freshness check + agent (MK_BIN) version reporting (#330)
+
+Nothing in `mk doctor` caught a **stale or incomplete lifecycle seed set** — during the v1.32.0 adoption an agent re-seeded the old set and doctor was green; the staleness was only caught by manually diffing the store against `origin/main`. "Upgrade done" now means "doctor green."
+
+- **`seed-set-freshness`** (new check, `src/doctor/checks/seed-set-freshness.ts`) compares the store's **active lifecycle SET** (atoms tagged `session-loop`, keyed by **slug + type** — the same identity `seedLifecycle` reconciles on) against the canonical set shipped with the running kernel (`canonicalLifecycleSet()`, #329). **Set, not count** — `8 stale + 3 dupes = 11` passes a count check but fails here. **Error** on missing/duplicate entries (naming them); **info** on extra entries (a slug removed in this version, or a user's own `session-loop`-tagged atom — `session-loop` is an unreserved tag, so extras are advisory and never flip the exit code); **info** on a store with no lifecycle atoms (plain non-agent stores aren't hard-failed) or an exact match. This is the acceptance gate behind `mk upgrade` (#331). Pure `diagnoseSeedSet()` is unit-testable without a store. New export `canonicalLifecycleSet()`.
+- **`mk-version` now also reports the agent binary** the cron wrapper runs via `MK_BIN`, not just `mk` on PATH — a host can have several `mk`s at different versions, so doctor makes the agent-relevant one unambiguous. New pure `diagnoseMkBin()` helper; MK_BIN mismatch / unrunnable → warn.
+- +37 tests (`test/doctor-seed-set-freshness.test.ts`, MK_BIN cases in `test/doctor-integration-health.test.ts`). Adds one public export (`canonicalLifecycleSet`) — **MINOR-class** (folds into the v1.33.0 batch alongside #329).
+
+### Added — `mk seed --lifecycle`: idempotent lifecycle seeding + seeds shipped in the package (#329)
+
+Re-seeding the canonical lifecycle atoms was **not idempotent** (`generateAtomId` always appends a unique counter+nonce, so `mk remember --slug` is not an upsert), and the canonical seeds **didn't ship in the npm tarball** — together these caused a silent stale seed during the v1.32.0 fleet adoption (one agent re-seeded the old 8-atom 1.28.3 set and reported "done").
+
+- **`mk seed --lifecycle -d <dir>`** (engine `src/seed.ts`, CLI `src/cli/seed.ts`) reconciles a store to the canonical set **idempotently**: it matches existing atoms on the **stable slug segment** of their id (`extractIdSlug()` — present on legacy atoms too, no new frontmatter field) and, per canonical slug, creates / supersedes-and-recreates / no-ops / dedups in place. Running it twice leaves exactly one active atom per slug with zero duplicates. `--dry-run` reports planned actions without writing; `--json` emits the structured `SeedResult`.
+- **Single source of truth:** `skills/mk-memory-setup/seed-atoms/lifecycle/manifest.json` (`{version, atoms:[{file,type,slug,tags}]}`) describes the 11 canonical atoms; consumed by `mk seed`, the rewritten `seed-lifecycle.sh` wrapper, and (forthcoming #330) the doctor seed-set-freshness check.
+- **B2:** added `skills/mk-memory-setup/seed-atoms` to `package.json` `files`, so the canonical bodies + manifest + wrapper ship with the release — a fresh `npm i -g memory-kernel` can seed without cloning the repo.
+- New exports: `seedLifecycle` / `loadLifecycleManifest` / `canonicalLifecycleSlugs` / `resolveSeedDir` / `extractIdSlug` / `normalizeSlug` (`src/index.ts`). +11 tests (`test/seed-lifecycle.test.ts`).
+
+New public command + exported engine — **MINOR-class**. Prerequisite for the `mk upgrade` helper (#331).
+
+### Fixed — `mk doctor` falsely errored on relations to drifted-filename atoms (#327)
+
+`atom-frontmatter`'s `buildAllIds()` registered each known atom id from the **filename**, so a file whose name had drifted from its id — e.g. a legacy doubled `<id>-<id>.md` archive file — was registered under the wrong id, and an inbound relation to the *real* id was reported as a `broken-relation-ref` error (kept `mk doctor` red on a healthy store; seen live on Mai @ v1.32.0). `buildAllIds` now also reads the authoritative frontmatter `id:` from each file (via `parseFrontmatter`, throw-guarded), in addition to the basename — widening the known-id set only suppresses false positives. +2 tests (`test/doctor-atom-frontmatter.test.ts`). No public API change.
+
+### Added — `mk eval`: first-class golden-query recall runner with pass/fail exit codes (#300)
+
+Promotes the host-side `mk-golden-eval.py` to a real `mk eval` command so recall quality can gate CI and serve as a post-sync canary:
+
+- **Exit codes** — `0` all fixtures pass (`pass_rate >= threshold`), `1` any below threshold, `2` runner error (missing store, malformed fixture).
+- **YAML fixtures** (`<store>/eval/*.yaml` by default; `--fixture <path>` override). A query passes when ≥1 `expect` atom id is in the top-K recall (suffix-drift-tolerant); `expect_content` greps `KNOWLEDGE/**` for doc-category queries (docs aren't atoms). Optional per-fixture `threshold` / `top_k`; `--threshold` / `--top-k` override.
+- **Embeddings auto-engage only when a key + vectors exist** (`--no-embed` forces FTS); keyless runs are deterministically FTS-only, so CI needs no live API calls.
+- New exports: `runEval` / `runFixture` / `loadFixtures` / `resolveEmbed` / `exitCodeForEval` / `EvalError` (`src/eval.ts`). One-shot migrator `scripts/golden-json-to-yaml.mjs` for legacy `golden-queries.json` sets. +17 tests (`test/eval.test.ts`, `test/cli-eval-e2e.test.ts`).
+
+New public API (`mk eval` command + exported engine) — **MINOR-class**. Query-set authoring + post-sync cadence stay on #266.
+
 ## [1.32.1] — 2026-06-13
 
 ### Security

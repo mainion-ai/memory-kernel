@@ -16,7 +16,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  initMemoryDir, createAtom, reflect, listAtoms, readAtom, closeAllIndexes,
+  initMemoryDir, createAtom, reflect, listAtoms, readAtom, closeAllIndexes, markExecuted,
 } from '../src/index.js';
 import { writeAtom, atomFilePath } from '../src/store.js';
 import { readEvents } from '../src/event-log.js';
@@ -126,11 +126,39 @@ describe('#274 Gap 2 — held types (belief, procedure)', () => {
     expect(listAtoms(testDir).find((a) => a.frontmatter.id === id)?.frontmatter.type).toBe('belief');
   });
 
-  it('holds a procedure draft (interim — executed-once signal not yet implemented)', () => {
+  it('holds a never-executed procedure draft regardless of age/confidence (#309)', () => {
     const id = seedDraft({ type: 'procedure', slug: 'proc', body: 'Steps to do X.', confidence: 0.9, ageHours: 72 });
     const r = reflectOnce();
     expect(r.promoted).toBe(0);
     expect(statusOf(id)).toBe('draft');
+  });
+});
+
+describe('#309 — procedure executed-once promote signal', () => {
+  it('promotes a procedure draft once executed_at is set + confidence ≥ 0.7', () => {
+    const id = seedDraft({ type: 'procedure', slug: 'ran-proc', body: 'Steps that actually ran.', confidence: 0.8 });
+    expect(statusOf(id)).toBe('draft');
+    markExecuted({ memoryDir: testDir, atomId: id });
+    const r = reflectOnce();
+    expect(r.promoted).toBe(1);
+    expect(statusOf(id)).toBe('active');
+  });
+
+  it('holds an executed procedure below the confidence floor (< 0.7)', () => {
+    const id = seedDraft({ type: 'procedure', slug: 'lowconf-proc', body: 'Ran but unsure.', confidence: 0.6 });
+    markExecuted({ memoryDir: testDir, atomId: id });
+    const r = reflectOnce();
+    expect(r.promoted).toBe(0);
+    expect(statusOf(id)).toBe('draft');
+  });
+
+  it('promotion is status-only — procedure type unchanged', () => {
+    const id = seedDraft({ type: 'procedure', slug: 'typed-proc', body: 'A procedure.', confidence: 0.9 });
+    markExecuted({ memoryDir: testDir, atomId: id });
+    reflectOnce();
+    const atom = listAtoms(testDir).find((a) => a.frontmatter.id === id);
+    expect(atom?.frontmatter.type).toBe('procedure');
+    expect(atom?.frontmatter.status).toBe('active');
   });
 });
 

@@ -31,6 +31,12 @@ Thumbs.db
 .memory-index.db-wal
 .memory-index.db-shm
 
+# Stray memory-kernel store: an `mk` command run from the repo root with no
+# `-d` defaults to ./memory and scaffolds an empty store here. Never project
+# content — real test stores go to /tmp. Root-anchored so it can't shadow a
+# legitimately-tracked `memory/` elsewhere in the tree.
+/memory/
+
 # npm auth (never commit)
 .npmrc
 

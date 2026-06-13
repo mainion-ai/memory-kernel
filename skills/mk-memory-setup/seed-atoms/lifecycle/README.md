@@ -38,28 +38,26 @@ bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory
 
 Verify after seeding:
 
+The seeder reports its own reconciliation summary (created / updated / unchanged / deduped). A dry re-run confirms idempotency:
+
 ```bash
-npx mk recall -d ~/mk-memory --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
-# Expected: 11
+npx mk seed --lifecycle -d ~/mk-memory --dry-run
+# Expected on a correctly-seeded store: 11 unchanged, 0 created/updated/deduped
 ```
 
-## Re-seeding after a section edit
+## Re-seeding after a section edit (#329)
 
-Atom IDs include a date and a unique suffix, so re-running `seed-lifecycle.sh` creates *new* atoms rather than overwriting the old ones. To refresh a single lifecycle atom after editing its section file:
+`mk seed --lifecycle` (which `seed-lifecycle.sh` delegates to) is **idempotent** — just re-run it after editing any section file:
 
 ```bash
-# 1. Locate the existing atom file (slug appears uppercased in the ID)
-ls ~/mk-memory/ENTITIES/PROC-*-SESSION-START-PROCEDURE-*.md
-
-# 2. Move it to ARCHIVE/ (soft-delete; preserves history)
-mv ~/mk-memory/ENTITIES/PROC-*-SESSION-START-PROCEDURE-*.md ~/mk-memory/ARCHIVE/
-
-# 3. Re-run the seeder — only the missing slug gets re-seeded; others are duplicated
-#    but with byte-identical bodies, so the next 'mk reflect' deduplicates them.
+# Refresh after editing one or more lifecycle/*.md bodies — no manual archiving needed.
 bash <skill-dir>/seed-atoms/seed-lifecycle.sh ~/mk-memory
+#   • unchanged sections: no-op
+#   • edited section:     old atom superseded in place, new one created (1 active per slug)
+#   • pre-existing dupes: collapsed to a single active atom per slug
 
-# 4. Re-render so the consuming host picks up the new content
+# Re-render so the consuming host picks up the new content
 npx mk render ~/mk-memory <path-to-CLAUDE.md-or-equivalent>
 ```
 
-If you re-seed without archiving first and the section content actually changed, both versions live in `ENTITIES/` until you archive one — `mk reflect` deduplicates only on byte-identical bodies. Archive the stale file first whenever the content has changed.
+Atoms are matched on the stable **slug segment** of their id (e.g. `session-start-procedure`), which both legacy and freshly-seeded atoms carry, so re-seeding never leaves duplicates — you no longer need to move stale files to `ARCHIVE/` by hand. Superseded versions stay on disk for audit and are excluded from recall.

@@ -1,6 +1,6 @@
 {
   "name": "memory-kernel",
-  "version": "1.32.1",
+  "version": "1.33.0",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -13,7 +13,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "skills/mk-memory-setup/seed-atoms"
   ],
   "scripts": {
     "build": "tsc",

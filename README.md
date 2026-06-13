@@ -189,7 +189,7 @@ Token budget enforced with two-pass reservation. Embeddings are opt-in — no AP
 
 ### Lifecycle
 
-Atoms start as `draft`. `reflect` auto-promotes eligible drafts to `active` by type-tiered rules — fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction, open_question immediately; beliefs and procedures are held for explicit review (a status promotion that keeps the atom's type). `mk consolidate` lets you review and promote drafts of any type to `active`. Atoms get archived when TTL expires, a contradiction is found, or manually. Use `mk supersede <old-id> <new-id>` to mark outdated knowledge as superseded — superseded atoms are excluded from recall but kept on disk for audit. Nothing silently disappears — every state change is logged.
+Atoms start as `draft`. `reflect` auto-promotes eligible drafts to `active` by type-tiered rules — fact/preference/decision after 48h at confidence ≥ 0.7 with no contradiction, open_question immediately, **procedures once confirmed executed** (`mk execute <id>` stamps `executed_at`; a procedure is only trustworthy once it has actually run) at confidence ≥ 0.7; beliefs are held for explicit review (a status promotion that keeps the atom's type). `mk consolidate` lets you review and promote drafts of any type to `active`. Atoms get archived when TTL expires, a contradiction is found, or manually. Use `mk supersede <old-id> <new-id>` to mark outdated knowledge as superseded — superseded atoms are excluded from recall but kept on disk for audit. Nothing silently disappears — every state change is logged.
 
 ### Event Sourcing
 
@@ -266,7 +266,8 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | `mk observe <path> -d <dir> [--mode conversation\|document] [--model <model>] [--dry-run] [--json]` | Append LLM observations to `observations.md`. `--mode document` reads a `KNOWLEDGE/` doc and extracts its decisions/conclusions (vs. what happened in a conversation); `mk reflect` then turns observations into atoms. See the [`/mk-memory-setup`](skills/mk-memory-setup/SKILL.md) KNOWLEDGE step |
 | `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active |
 | `mk lint -d <dir> [--json] [--stale-days N]` | Semantic health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
-| `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
+| `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity, lifecycle seed-set freshness, and the agent (`MK_BIN`) binary version; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
+| `mk eval -d <dir> [--fixture <path>] [--top-k N] [--threshold N] [--no-embed] [--json]` | Run golden-query recall fixtures (`<dir>/eval/*.yaml` by default) with **pass/fail exit codes** (0 pass / 1 below threshold / 2 runner error) — for CI regression gates and post-sync canaries |
 | `mk episode --session-id <id> --summary "text" [--json]` | Write a session episode |
 | `mk episodes [--limit N] [--json]` | List recent episodes |
 
@@ -288,6 +289,9 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | `mk relate <src-id> <type> <tgt-id> -d <dir> [--json]` | Create a typed relation edge between two atoms |
 | `mk relations <atom-id> -d <dir> [--json]` | Show inbound and outbound relation edges for an atom |
 | `mk supersede <old-id> <new-id> -d <dir> [--json]` | Mark `<old-id>` as superseded by `<new-id>`; superseded atoms are excluded from recall |
+| `mk execute <atom-id> -d <dir> [--dry-run] [--json]` | Stamp `executed_at` on an atom. For draft **procedures** this is the auto-promotion signal — `mk reflect` promotes executed procedures at confidence ≥ 0.7. Idempotent (preserves the first execution time) |
+| `mk seed --lifecycle -d <dir> [--dry-run] [--json]` | Idempotently seed the canonical lifecycle atoms (10 procedures + 1 constraint). Re-runnable: matches existing atoms on their stable slug segment and supersedes stale/duplicate copies in place instead of duplicating. Canonical bodies ship in the package (`skills/mk-memory-setup/seed-atoms/lifecycle/manifest.json`) |
+| `mk upgrade --to <ver> -d <dir> [--mk-bin <path>] [--cron-wrapper <path>] [--dry-run] [--json]` | **Host-side** one-command agent upgrade: install `<ver>` at the agent binary (`MK_BIN`), idempotently re-seed lifecycle atoms, regenerate the cron wrapper, and gate on `mk doctor` — single PASS/FAIL, exit 1 on failure. Run on the host, ideally from the target version (`npx memory-kernel@<ver> upgrade --to <ver>`) |
 | `mk migrate-relations -d <dir> [--dry-run\|--apply]` | Backfill `relations[]` from `links.related` and body-text atom ID references |
 | `mk relink -d <dir> [--dry-run\|--apply]` | Extract relation edges from body-text atom ID references |
 | `mk citations -d <dir> [--json]` | Extract and index concept-name citations across all atoms |

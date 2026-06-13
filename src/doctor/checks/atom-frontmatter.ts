@@ -17,15 +17,21 @@ import fs from 'fs';
 import path from 'path';
 import { listAtoms } from '../../index.js';
 import { getSharedDir } from '../../isolation.js';
+import { parseFrontmatter } from '../../internal/frontmatter.js';
 import type { Check, CheckResult, DoctorContext } from '../types.js';
 
 /** Directories that contribute valid atom IDs for broken-ref resolution. */
 const REF_DIRS = ['ENTITIES', 'CONFLICTS', 'ARCHIVE'];
 
 /**
- * Build the complete set of known atom IDs by scanning filenames in all
- * atom-bearing directories. Using filenames (not parsing) avoids false
- * positives from corrupt atoms that listAtoms() skips.
+ * Build the complete set of known atom IDs by scanning all atom-bearing
+ * directories. Each file contributes BOTH its basename (sans `.md`) and its
+ * authoritative frontmatter `id:` — registering the basename keeps corrupt
+ * atoms (that listAtoms() skips) contributing something, while the frontmatter
+ * id resolves files whose name has drifted from their id (legacy doubled
+ * `<id>-<id>.md` archive files), which otherwise produced false
+ * `broken-relation-ref` errors on inbound relations to the real id (#327).
+ * Widening the known-ID set can only suppress false positives — never create new ones.
  *
  * In per-agent isolation mode the resolved memoryDir is `baseDir/agents/<id>`,
  * but relations may legitimately target atoms in the shared namespace
@@ -33,6 +39,24 @@ const REF_DIRS = ['ENTITIES', 'CONFLICTS', 'ARCHIVE'];
  * agent→shared edge is not reported as a broken-relation-ref. Widening the
  * known-ID set can only suppress false positives — it never creates new ones.
  */
+/**
+ * Read just the head of a file (enough to contain atom frontmatter) without
+ * loading a potentially-large archived body into memory. If the closing `---`
+ * fence is beyond `bytes`, parseFrontmatter sees no close fence and returns no
+ * id — the basename fallback still applies, so this only trades a vanishingly
+ * rare giant-frontmatter case for bounded I/O.
+ */
+function readHead(filePath: string, bytes = 8192): string {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(bytes);
+    const n = fs.readSync(fd, buf, 0, bytes, 0);
+    return buf.toString('utf-8', 0, n);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function buildAllIds(memoryDir: string): Set<string> {
   const roots = [memoryDir];
   if (path.basename(path.dirname(memoryDir)) === 'agents') {
@@ -45,8 +69,17 @@ export function buildAllIds(memoryDir: string): Set<string> {
       const dirPath = path.join(root, dir);
       if (!fs.existsSync(dirPath)) continue;
       for (const f of fs.readdirSync(dirPath)) {
-        if (f.endsWith('.md')) {
-          ids.add(f.slice(0, -3));
+        if (!f.endsWith('.md')) continue;
+        ids.add(f.slice(0, -3)); // basename — back-compat + keeps corrupt atoms contributing
+        // Also register the authoritative frontmatter id (#327): a file whose
+        // name drifted from its id still resolves inbound relations to its real id.
+        // Read only the head (frontmatter is small) so a large archived body
+        // doesn't add unbounded I/O to `mk doctor` on a big ARCHIVE.
+        try {
+          const id = parseFrontmatter(readHead(path.join(dirPath, f))).data?.id;
+          if (typeof id === 'string' && id) ids.add(id);
+        } catch {
+          /* unreadable / malformed YAML — basename already added above */
         }
       }
     }

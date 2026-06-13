@@ -14,7 +14,9 @@ import { initMemoryDir, createAtom, reindex, closeAllIndexes } from '../src/inde
 import type { CheckResult, DoctorContext } from '../src/doctor/types.js';
 import {
   diagnoseVersion,
+  diagnoseMkBin,
   diagnoseSyncLiveness,
+  mkVersionCheck,
   embeddingKeySourceCheck,
   vectorsFreshCheck,
   smokeRecallCheck,
@@ -60,6 +62,48 @@ describe('diagnoseVersion', () => {
     const r = diagnoseVersion('1.31.0', null, null);
     expect(r.ok).toBe(true);
     expect(r.issues[0]).toMatch(/no `mk` on PATH/);
+  });
+});
+
+// --- (a2) diagnoseMkBin (pure, #330) --------------------------------------
+
+describe('diagnoseMkBin', () => {
+  it('MK_BIN unset → ok, no issues', () => {
+    const r = diagnoseMkBin('1.33.0', null, null);
+    expect(r.ok).toBe(true);
+    expect(r.issues).toEqual([]);
+  });
+  it('MK_BIN matches kernel → ok, reports the agent binary', () => {
+    const r = diagnoseMkBin('1.33.0', '1.33.0', '/opt/agent/bin/mk');
+    expect(r.ok).toBe(true);
+    expect(r.issues[0]).toContain('/opt/agent/bin/mk');
+    expect(r.issues[0]).toMatch(/agent binary/i);
+  });
+  it('MK_BIN version differs from kernel → not ok (agent on a stale binary)', () => {
+    const r = diagnoseMkBin('1.33.0', '1.28.3', '/opt/agent/bin/mk');
+    expect(r.ok).toBe(false);
+    expect(r.issues[0]).toContain('1.28.3');
+    expect(r.issues[0]).toContain('1.33.0');
+  });
+  it('MK_BIN set but unrunnable → not ok', () => {
+    const r = diagnoseMkBin('1.33.0', null, '/opt/agent/bin/mk');
+    expect(r.ok).toBe(false);
+    expect(r.issues[0]).toMatch(/did not run|missing|broken/);
+  });
+});
+
+describe('mkVersionCheck honors MK_BIN', () => {
+  it('reports the agent binary version when MK_BIN points at a runnable mk', () => {
+    // A fake `mk` that prints a version mismatching the kernel under test.
+    const fakeBin = path.join(testDir, 'fake-mk.sh');
+    fs.writeFileSync(fakeBin, '#!/usr/bin/env bash\necho "9.9.9"\n');
+    fs.chmodSync(fakeBin, 0o755);
+
+    const r = mkVersionCheck.run(ctx({ MK_BIN: fakeBin })) as CheckResult;
+    expect(r.issues.join(' ')).toContain('9.9.9');
+    // kernel under test is 1.31.0 → mismatch → warn.
+    expect(r.ok).toBe(false);
+    expect(r.severity).toBe('warn');
   });
 });
 

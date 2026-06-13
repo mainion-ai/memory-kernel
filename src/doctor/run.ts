@@ -28,6 +28,7 @@ import { wrapperDriftCheck } from './checks/wrapper-drift.js';
 import { atomFrontmatterCheck } from './checks/atom-frontmatter.js';
 import { atomRelationsSectionCheck } from './checks/atom-relations-section.js';
 import { orphanProseRefsCheck } from './checks/orphan-prose-refs.js';
+import { seedSetFreshnessCheck } from './checks/seed-set-freshness.js';
 import { integrationHealthChecks } from './checks/integration-health.js';
 
 /**
@@ -44,6 +45,7 @@ export const DEFAULT_CHECKS: readonly Check[] = [
   storeSchemaCheck,
   storePermissionsCheck,
   renderConfigCheck,
+  seedSetFreshnessCheck,
   ...integrationHealthChecks,
   wrapperDriftCheck,
 ];

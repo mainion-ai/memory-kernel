@@ -42,6 +42,32 @@ const base = (dir: string) => ({
   session_id: 'test-session',
 });
 
+/**
+ * Bulk-create N hub atoms by writing atom files directly + a single reindex,
+ * instead of N `createAtom()` calls (each does a file write + event append +
+ * incremental index). The BFS cap needs a >500-atom hub; building that via
+ * createAtom made setup slow enough to time out under parallel-worker I/O
+ * contention — the #319 flake (it always passed in isolation). Direct writes
+ * keep setup well under a second. Returns the created ids.
+ */
+function bulkHubAtoms(dir: string, n: number, slugPrefix: string, tags: string[]): string[] {
+  const entities = path.join(dir, 'ENTITIES');
+  const ts = '2026-06-13T00:00:00Z';
+  const tagBlock = tags.map((t) => `  - ${t}`).join('\n');
+  const ids: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = `FACT-2026-06-13-${slugPrefix.toUpperCase()}-${i}`;
+    fs.writeFileSync(
+      path.join(entities, `${id}.md`),
+      `---\nid: ${id}\ntype: fact\nstatus: active\nconfidence: 0.8\n` +
+        `created_at: "${ts}"\nupdated_at: "${ts}"\nttl_days: null\n` +
+        `tags:\n${tagBlock}\nscope:\n  tags:\n${tagBlock}\nclassification: TEAM\n---\n\nHub atom ${i}.\n`,
+    );
+    ids.push(id);
+  }
+  return ids;
+}
+
 /** Count stderr writes whose payload string contains the marker. */
 function countWarnings(spy: ReturnType<typeof vi.spyOn>, marker: string): number {
   let count = 0;
@@ -57,25 +83,15 @@ const BFS_CAP_MARKER = 'BFS frontier capped at 500 nodes';
 describe('tagDistance — BFS frontier cap (#102)', () => {
   it(
     '600-atom hub graph: bounded time + stderr warning + sensible result',
-    // 60s — 600x createAtom file-I/O setup takes ~7s in isolation but can
-    // exceed 30s under full-suite parallel I/O contention. The asserted
-    // budget (elapsedMs < 1000) still pins `tagDistance` performance.
-    { timeout: 60000 },
+    // Hub built via bulkHubAtoms (direct writes + one reindex) so setup is sub-second
+    // even under parallel-worker contention (#319). The elapsedMs < 1000 assertion below
+    // still pins `tagDistance` performance. 15s is ample headroom.
+    { timeout: 15000 },
     () => {
       // 600 atoms all share the same hub-tag. They form a fully-connected
       // BFS layer of 600 — without a cap, expanding the frontier through
       // hub-tag pulls all 600 in at once.
-      const hubIds: string[] = [];
-      for (let i = 0; i < 600; i++) {
-        const atom = createAtom({
-          ...base(testDir),
-          type: 'fact',
-          slug: `hub-${i}`,
-          body: `Hub atom ${i}`,
-          scope: { tags: ['hub-tag'] },
-        });
-        hubIds.push(atom.frontmatter.id);
-      }
+      const hubIds = bulkHubAtoms(testDir, 600, 'hub', ['hub-tag']);
 
       // One outlier with totally disjoint tags — high dissimilarity ensures
       // collision detection will invoke tagDistance(hub-atom, outlier).
@@ -163,25 +179,15 @@ describe('tagDistance — BFS frontier cap (#102)', () => {
 
   it(
     'warning fires at most once per tagDistance call (no per-step spam)',
-    // 60s — same reason as the 600-atom test: 1200x createAtom file-I/O
-    // setup races under parallel-suite scheduling.
-    { timeout: 60000 },
+    // Hub built via bulkHubAtoms (direct writes + one reindex), so setup stays
+    // sub-second under parallel-worker contention (#319). 15s is ample.
+    { timeout: 15000 },
     () => {
       // Build a hub of 1200 atoms so multiple BFS steps would each exceed
       // the cap if the warning were per-step rather than per-call. We
       // assert: total stderr writes is bounded (one per tagDistance call
       // that hit the cap), not multiplied by depth.
-      const hubIds: string[] = [];
-      for (let i = 0; i < 1200; i++) {
-        const atom = createAtom({
-          ...base(testDir),
-          type: 'fact',
-          slug: `mega-${i}`,
-          body: `Mega-hub atom ${i}`,
-          scope: { tags: ['hub-tag'] },
-        });
-        hubIds.push(atom.frontmatter.id);
-      }
+      const hubIds = bulkHubAtoms(testDir, 1200, 'mega', ['hub-tag']);
       const outlier = createAtom({
         ...base(testDir),
         type: 'belief',
