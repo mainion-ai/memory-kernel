@@ -8,6 +8,7 @@
 
 ```bash
 npm install memory-kernel          # installs mk binary
+mk --version                       # confirm the binary you're calling matches what you expect — a stale `mk` on PATH silently breaks --embed and recall semantics
 mk init ~/my-agent/memory          # creates directory structure
 
 # Or, for per-agent isolation (multiple agents sharing one directory):
@@ -28,7 +29,16 @@ export EMBEDDING_API_KEY=sk-...
 mk reindex -d $MEMORY_DIR --embed
 ```
 
+**Which key var?** mk reads **`EMBEDDING_API_KEY`** first (works for any provider). For convenience it *falls back* to the provider-specific var when `EMBEDDING_API_KEY` is unset: `OPENAI_API_KEY` (when `EMBEDDING_PROVIDER=openai`) or `VOYAGE_API_KEY` (when `=voyage`). Setting `OPENAI_API_KEY` alone with `EMBEDDING_PROVIDER=voyage` resolves **nothing** — the fallback is provider-matched. When in doubt set `EMBEDDING_API_KEY` explicitly, and run `mk doctor` — its `embedding-key-source` check reports exactly which var resolved (this ambiguity caused a multi-day "key set, 0 vectors" outage).
+
 Everything works without embeddings (FTS-only). No behavior change.
+
+**Verify the integration** — run this after setup, and any time recall feels off. It's the 30-second check that surfaces the entire deployment seam (stale binary, unresolved key, 0 vectors, broken recall, stale sync) that the 2026-06 fleet incident lived in:
+
+```bash
+mk doctor -d $MEMORY_DIR                              # version + embedding-key-source + vectors==atoms + smoke-recall + sync-liveness
+mk recall -d $MEMORY_DIR --task "smoke" --embed --json | head   # should return atoms (or recall_status no_match), never an error
+```
 
 ---
 
@@ -37,7 +47,7 @@ Everything works without embeddings (FTS-only). No behavior change.
 > **Tip:** All commands accept `-a, --agent <id>` for [per-agent isolation](isolation.md). In shared mode the flag is ignored.
 
 ```
-Session start  →  mk recall -d $DIR [-a $AGENT] --task "current task" --json
+Session start  →  mk recall -d $DIR [-a $AGENT] --task "current task" --embed --json
                   (or load pre-rendered CLAUDE.md)
 
 During session →  mk remember -d $DIR [-a $AGENT] -t fact "body text" --json
@@ -59,10 +69,14 @@ Periodic      →  mk consolidate -d $DIR [--dry-run] --json
 ```bash
 mk reflect -d $MEMORY_DIR
 mk citations -d $MEMORY_DIR
+mk reindex -d $MEMORY_DIR --embed   # so new atoms get vectors before render/recall
 mk render $MEMORY_DIR $OUTPUT_PATH
+mk doctor -d $MEMORY_DIR || true    # non-fatal self-canary — logs 0-vectors / stale-sync
 ```
 
-Order matters: reflect cleans/promotes, citations updates frequency counts for spreading activation, render produces fresh output incorporating both.
+Order matters: reflect cleans/promotes, citations updates frequency counts for spreading activation, `reindex --embed` refreshes vectors, render produces fresh output, and the `mk doctor` canary verifies the sync actually landed.
+
+**Use `mk init --cron` for the production wrapper.** It generates a hardened script (#303) that encodes the field lessons: a self-contained `PATH`, **fail-soft** guards on every step (no bare `set -e` — one non-fatal failure can't silently kill the whole sync), the `reindex --embed` step, and the `mk doctor` self-canary. Don't hand-roll the bare commands above for an unattended cron.
 
 ---
 
@@ -111,8 +125,10 @@ mk remember -d $DIR -t fact "The API rate limit is 1000 req/min" \
 ### mk recall
 
 ```bash
-mk recall -d $DIR --task "pagination API" --max-tokens 4000 --json
+mk recall -d $DIR --task "pagination API" --embed --max-tokens 4000 --json
 ```
+
+> **Always pass `--embed`** when embeddings are configured — it adds semantic re-ranking on top of FTS, so conceptual queries that miss on exact keywords still surface the right atom. Omit `--embed` for the FTS-only path (offline, or no embedding key). There is no `--no-embed` flag — omitting the flag *is* the FTS-only mode.
 
 Returns the full `ContextBundle` object:
 
@@ -133,6 +149,7 @@ When `--task` is provided, atoms are re-ranked by composite score (FTS BM25 + op
 
 Optional flags:
 - `--include-episodes` — include session episodes
+- `--include-drafts` — surface auto-extracted draft atoms (session-end extract output), which are excluded from recall by default
 - `--decay-weight N` — weight for temporal decay (0–1, default 0.2)
 - `--decay-half-life N` — recency half-life in days (default 30)
 - `--no-graph` — disable graph-walk boost
@@ -153,7 +170,7 @@ mk reflect -d $DIR --json
 }
 ```
 
-Consolidation: deduplicates identical content, expires atoms past TTL, promotes beliefs with confidence ≥ 0.9 to facts, detects contradictions. Idempotent — fast when nothing changed.
+Consolidation: deduplicates identical content, expires atoms past TTL, promotes vetted draft atoms to active (status-only, no type change — `open_question`s immediately; `fact`/`preference`/`decision` after 48h at confidence ≥ 0.7 with no active contradiction; `belief`/`procedure` held for review), detects contradictions. Idempotent — fast when nothing changed.
 
 ### mk gc
 
@@ -178,6 +195,15 @@ mk doctor -d $DIR --json
 ```
 
 Exit code 1 when issues found. Use for health checks — distinguishes "no results" (normal) from "broken state" (needs attention).
+
+**Integration-health checks (#305)** — beyond store/schema checks, `mk doctor` answers the post-upgrade / post-incident questions:
+- `mk-version` — warns if a stale `mk` on PATH shadows the running kernel version.
+- `embedding-key-source` — reports which env var supplied the embedding key (`EMBEDDING_API_KEY`, or the `OPENAI_API_KEY` / `VOYAGE_API_KEY` fallback) — last-4 only, never the key value; warns if a provider is set but no key resolves.
+- `embeddings-vectors-fresh` — warns when embeddings are configured but the store has **0 vectors** for >0 atoms (embedding stalled, e.g. "key set, 0 vectors"); a partial count is reported as info (SECRET/PERSONAL atoms are never embedded).
+- `smoke-recall` — read-only FTS probe that the recall/index path is queryable (no egress). Set `MK_DOCTOR_SMOKE_EMBED=1` (with a key, network not skipped) to also smoke the embedding recall path.
+- `sync-liveness` — reports how long since the last reindex (`.memory-index.db` mtime). It only **warns** when you've declared a freshness SLA by setting `MK_SYNC_MAX_AGE_HOURS` (so an idle / manually-managed store with no nightly cron isn't a false positive); past that threshold it flags a silently-stopped nightly sync.
+
+All are side-effect-free (read-only — a plain `mk doctor` never migrates the index). Boundary: `mk doctor` = integration health; knowledge/composition health (e.g. belief monoculture) stays in `mk lint`.
 
 ### mk checkpoint
 
@@ -245,7 +271,9 @@ mk wander -d $DIR --tags philosophy accounting --steps 5 --json
 
 **Tip:** Run `mk citations -d $DIR` before wander to index concept-name references — provides frequency data for ACT-R activation scoring, significantly improving wander quality.
 
-Parameters: `--seed` and `--tags` are space-separated (variadic). `--steps`, `--threshold`, `--top-k`, `--decay`, `--relation-weight`, `--max-collisions` are numeric.
+**Auto-seeding:** with no `--seed`/`--tags`, seeds are auto-selected **citation-primary** (most-cited first, recency as tiebreak) and drawn **round-robin across atom types** so the walk spans clusters instead of one type-monoculture. Pass `--no-diverse-seeds` for plain top-N by citation weight.
+
+Parameters: `--seed` and `--tags` are space-separated (variadic). `--steps`, `--threshold`, `--top-k`, `--decay`, `--relation-weight`, `--max-collisions` are numeric. `--no-diverse-seeds` is a boolean toggle.
 
 ### mk relate
 
@@ -397,7 +425,7 @@ mk remember -d $MEMORY_DIR -a agent-beta  -t fact "PostgreSQL for storage" --jso
 mk share FACT-2026-xxx --from agent-alpha -d $MEMORY_DIR --json
 
 # Agent Beta recalls: sees own atoms + shared ones
-mk recall -d $MEMORY_DIR -a agent-beta --task "data layer" --json
+mk recall -d $MEMORY_DIR -a agent-beta --task "data layer" --embed --json
 
 # View all agents at a glance
 mk status -d $MEMORY_DIR --all-agents --json

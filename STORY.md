@@ -239,7 +239,7 @@ What happens, in order:
 
 2. **Deduplicate** — If two atoms of the same type have identical body text, the older one gets archived. Why keep two copies of the same fact?
 
-3. **Promote** — Beliefs with confidence >= 0.9 get promoted to facts. Their type changes from `belief` to `fact`, their status changes from `draft` to `active`, and their TTL becomes permanent. The belief has been proven.
+3. **Promote** — Vetted draft atoms graduate from `draft` to `active` (status only — the *type* never changes). The promotion is tiered by type: `open_question`s promote immediately; `fact`, `preference`, and `decision` drafts promote after 48 hours at confidence ≥ 0.7, provided they don't contradict an existing active atom; `belief` and `procedure` drafts are held in draft for review. (Beliefs are deliberately *not* auto-converted to facts — that would erase the developmental history a belief carries.)
 
 4. **Detect conflicts** — Look for pairs of `fact` or `decision` atoms that cover the same territory (overlapping scope paths) but have very different confidence scores (more than 0.3 apart). When such a pair is found, a `conflict` atom is created in `CONFLICTS/` and both source atoms are linked to it. This is a heuristic — it catches obvious disagreements but isn't trying to resolve them.
 
@@ -498,7 +498,7 @@ At the end of the day (or via a cron job), `reflect()` runs:
 
 1. **Expire:** An old belief from 35 days ago (TTL was 30) gets archived
 2. **Dedup:** Two identical facts about the same API endpoint get merged (older archived)
-3. **Promote:** A belief from last week about database indexing had its confidence raised to 0.95 — it gets promoted to a fact
+3. **Promote:** A draft `decision` from two days ago about the indexing strategy, at confidence 0.8 and uncontradicted, graduates from `draft` to `active`
 4. **Views regenerated:** INDEX.md, DECISIONS.md, etc. all get fresh content
 
 A checkpoint creates the handoff document. Tomorrow's session will read it and pick up right where today left off.
@@ -608,7 +608,7 @@ Memory Kernel works because it respects a few simple principles:
 
 4. **Budget-aware retrieval.** An agent's context window has a limited size. Recall doesn't dump everything — it selects the most relevant atoms and fits them into the available token budget.
 
-5. **Automatic maintenance.** Reflect runs periodically and handles the housekeeping — expiring stale data, removing duplicates, promoting confirmed beliefs. The memory stays clean without manual intervention.
+5. **Automatic maintenance.** Reflect runs periodically and handles the housekeeping — expiring stale data, removing duplicates, promoting vetted drafts to active. The memory stays clean without manual intervention.
 
 6. **Collaboration without coordination.** When two agents work in parallel, their memories can be merged later without locking or synchronisation during the work. The event log records everything; the merge step reconciles it.
 
@@ -1156,7 +1156,7 @@ One edge case took a moment to get right: atoms dated in the future (scheduled d
 
 The second insight was simpler to state but harder to implement: a constraint is worth more than a belief. Not because a user said so — because of what the types *mean*. A constraint is a hard rule. A belief is a guess. When filling a limited context window, you'd rather have the constraint and miss the belief than the other way around.
 
-So each type gets a multiplier. Constraints count 1.5×. Decisions 1.3×. Procedures 1.2×. Facts and preferences 1.0×. Open questions 0.9×. Beliefs and entity-summaries 0.8×. These aren't arbitrary — they reflect how much weight each type deserves when the agent is trying to get something done.
+So each type gets a multiplier. Constraints count 1.5×. Decisions 1.3×. Procedures 1.2×. Facts and preferences 1.1×. Open questions 0.9×. Beliefs and entity-summaries 0.6× — strongly discounted, because beliefs are high-volume and exploratory and a single broad belief shouldn't bury the grounding facts an agent actually needs. These aren't arbitrary — they reflect how much weight each type deserves when the agent is trying to get something done.
 
 Confidence works alongside this. An atom with low confidence doesn't drop to zero — it falls to at worst 70% of its full weight. A low-confidence fact is still a valid data point; you don't want to silently suppress what you're unsure of.
 

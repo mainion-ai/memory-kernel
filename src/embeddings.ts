@@ -83,6 +83,47 @@ export function getEmbeddingConfig(): EmbeddingConfig | null {
   };
 }
 
+/** Which env var supplied the embedding key, for diagnostics (never the value). */
+export interface EmbeddingKeySource {
+  /** Configured provider (`EMBEDDING_PROVIDER`, default `none`). */
+  provider: EmbeddingProvider;
+  /** The env var whose value resolved as the API key, or null if none did. */
+  keySource: 'EMBEDDING_API_KEY' | 'OPENAI_API_KEY' | 'VOYAGE_API_KEY' | null;
+  /** True when provider !== none AND a key resolved (embeddings will work). */
+  configured: boolean;
+  /** Last 4 chars of the resolved key (diagnostic only; empty when none). No full-key egress. */
+  keyTail: string;
+}
+
+/**
+ * Report which embedding key source resolves, WITHOUT exposing the key value.
+ *
+ * Mirrors `getEmbeddingConfig()`'s exact resolution order (EMBEDDING_API_KEY
+ * first, then provider-specific OPENAI_API_KEY / VOYAGE_API_KEY) so the
+ * `mk doctor` embedding-key-source check can never drift from the real
+ * resolution logic. Retires the "EMBEDDING_API_KEY vs OPENAI_API_KEY"
+ * ambiguity that caused the "key set but vectors==0" confusion (#305).
+ */
+export function resolveEmbeddingKeySource(env: NodeJS.ProcessEnv = process.env): EmbeddingKeySource {
+  const provider = (env.EMBEDDING_PROVIDER || 'none') as EmbeddingProvider;
+  if (provider === 'none' || !PROVIDER_DEFAULTS[provider]) {
+    return { provider, keySource: null, configured: false, keyTail: '' };
+  }
+  let keySource: EmbeddingKeySource['keySource'] = null;
+  let key = '';
+  if (env.EMBEDDING_API_KEY) { keySource = 'EMBEDDING_API_KEY'; key = env.EMBEDDING_API_KEY; }
+  else if (provider === 'openai' && env.OPENAI_API_KEY) { keySource = 'OPENAI_API_KEY'; key = env.OPENAI_API_KEY; }
+  else if (provider === 'voyage' && env.VOYAGE_API_KEY) { keySource = 'VOYAGE_API_KEY'; key = env.VOYAGE_API_KEY; }
+  return {
+    provider,
+    keySource,
+    configured: keySource !== null,
+    // Last-4 only, and only when the key is long enough that the tail isn't the
+    // whole secret — a short/placeholder key would otherwise be fully exposed.
+    keyTail: key.length >= 8 ? key.slice(-4) : '',
+  };
+}
+
 // --- Embedding API ---
 
 /**

@@ -1,6 +1,6 @@
 # Lifecycle Seed Atoms
 
-These eight files are the bodies of the memory-kernel lifecycle atoms that `/mk-memory-setup` seeds during agent bootstrap. They turn the agent's own operating manual (`docs/agent-session-loop.md`) into typed, recallable memory so the agent's lifecycle is part of memory-kernel itself, not an out-of-band doc reference.
+These 11 files are the bodies of the memory-kernel lifecycle atoms that `/mk-memory-setup` seeds during agent bootstrap. They turn the agent's own operating manual (`docs/agent-session-loop.md`) into typed, recallable memory so the agent's lifecycle is part of memory-kernel itself, not an out-of-band doc reference.
 
 ## Files
 
@@ -14,6 +14,9 @@ These eight files are the bodies of the memory-kernel lifecycle atoms that `/mk-
 | `06-a2a-handoff.md` | `procedure` | `a2a-handoff-procedure` | `session-loop, lifecycle, agent-setup` |
 | `07-diagnostics.md` | `procedure` | `diagnostics-procedure` | `session-loop, lifecycle, agent-setup` |
 | `08-what-not-to-do.md` | `constraint` | `session-loop-pitfalls` | `session-loop, constraints, agent-setup` |
+| `09-verify-memory-claims.md` | `procedure` | `verify-memory-claims-procedure` | `session-loop, lifecycle, agent-setup` |
+| `10-supersede-on-infra-change.md` | `procedure` | `supersede-on-infra-change-procedure` | `session-loop, lifecycle, agent-setup` |
+| `11-repeated-sequence-becomes-proc.md` | `procedure` | `repeated-sequence-procedure` | `session-loop, lifecycle, agent-setup` |
 
 ## Why split, not one big atom
 
@@ -37,7 +40,7 @@ Verify after seeding:
 
 ```bash
 npx mk recall -d ~/mk-memory --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
-# Expected: 8
+# Expected: 11
 ```
 
 ## Re-seeding after a section edit

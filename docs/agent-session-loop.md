@@ -10,10 +10,17 @@ Memory-kernel is only useful if the loop is followed consistently. Skipping step
 
 ## Session Start
 
-**Every session, before doing anything else:**
+**Every session, before doing anything else** — first confirm the binary (a stale `mk` on PATH silently breaks embeddings / new flags / recall semantics):
+
+```bash
+mk --version    # compare to the expected-version atom; if it differs, fix PATH before proceeding
+```
+
+Then recall context:
 
 ```bash
 mk recall -d {dir} --task "description of what you're working on today" \
+  --embed \
   --include-episodes \
   --decay-weight 0.3 \
   --decay-half-life 60 \
@@ -22,6 +29,7 @@ mk recall -d {dir} --task "description of what you're working on today" \
 
 **Why each flag:**
 - `--task` — enables FTS + semantic re-ranking; without it you get type-grouped atoms, not task-relevant ones
+- `--embed` — use the embedding (semantic) recall path, not FTS-only. Conceptual queries that miss on exact keywords only surface with `--embed`; this is the flag you want. **Omit it** to fall back to FTS-only (offline / no key). If `mk doctor`'s `embedding-key-source` reports unconfigured, set `EMBEDDING_API_KEY` first — otherwise `--embed` silently degrades to FTS
 - `--include-episodes` — pulls in session episode summaries from EPISODES/; gives continuity across sessions without bloating atom count
 - `--decay-weight 0.3` — weights recency at 30% of the score (default is 0.2); slightly favors recent atoms for most work
 - `--decay-half-life 60` — atoms 60 days old score ~50% of fresh atoms; prevents old atoms from dominating recent work
@@ -301,6 +309,16 @@ mk reindex -d {dir}
 | CLAUDE.md looks stale | `mk render {dir} {output}` |
 | Want to see what two atoms have in common | `mk wander -d {dir} --seed ATOM-ID-A --seed ATOM-ID-B` |
 | Need to see all edges on a specific atom | `mk relations {atom-id} -d {dir}` |
+
+---
+
+## Operating Disciplines (always-on)
+
+These three are cross-cutting — they apply in every phase above, not at a single step. They are seeded as their own procedure atoms (`09`–`11`) so they're recallable, not just prose here.
+
+- **Verify claims about your own memory/config against the tool or filesystem — or hedge.** Never assert "embeddings are configured" / "atom X says Y" / "I'm on version Z" / "the sync ran" from in-context recall alone; run `mk doctor` / `mk recall` / `mk --version` / read the file. A verified "no" beats an unverified "yes" (see `09-verify-memory-claims`).
+- **On an infrastructure change, supersede the affected capability atoms in the *same* change.** A stale "embeddings not configured" atom actively sabotages a rollout once you've enabled them. If a change makes an atom false, that atom is part of the change (see `10-supersede-on-infra-change`).
+- **Every repeated action sequence becomes a `procedure` atom** — never bury a runbook inside a belief body or episode. The second time you do a multi-step sequence, write it as a typed `procedure` so it's recallable and supersedes cleanly (see `11-repeated-sequence-becomes-proc`).
 
 ---
 

@@ -27,6 +27,63 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.32.0] — 2026-06-13
+
+Round 1 of the epic #294 "operational correctness & self-diagnosis" pass: fix what was silently wrong on the live agents and make the integration self-diagnosing.
+
+### Fixed — `mk recall`: apostrophe `fts_unavailable` + beliefs outranked facts/prefs (#283)
+
+Two recall-quality bugs surfaced by the #266 golden-eval baselines:
+
+- **Apostrophe → `fts_unavailable`** — the FTS query sanitizer (`searchFts`, `src/index-db.ts`) stripped `. , ; ? !` (#214) but not the apostrophe `'` (the FTS5 string-literal delimiter), so any query with `Taj's` / `user's` raised an FTS5 syntax error → caught → null → `recall_status: fts_unavailable` (silent recall failure). Now strips `'` plus the two common typographic apostrophes (`’` `‘`); re-audited the remaining FTS5 syntax chars (all already stripped).
+- **Beliefs buried facts/prefs** — the recall-time type-weight lever (`DEFAULT_TYPE_WEIGHTS`) was too weak (belief `0.8` vs fact `1.0`): a semantically-broad belief still outranked grounding facts in ~8/11 golden queries. Strengthened to belief/entity_summary `0.6`, fact/preference `1.1` (fact/belief ratio 1.25× → 1.83×); ordering invariants preserved. Validated on local Mai+Taj copies (apostrophe queries now `match`; facts surface). +4 tests.
+
+### Changed — integration docs hardened: `--embed` on recall examples + verify-blocks (#296)
+
+The integration guides predated embeddings and steered agents into FTS-only recall. Updated `docs/cli-integration.md`, `docs/nanoclaw-integration.md`, `docs/host-integration-doctrine.md`, and `README.md`:
+
+- **`--embed` on the `mk recall` examples** (CLI docs); documented the FTS-only path as *omitting* `--embed` — there is no `--no-embed` flag.
+- **Key clarification**: `EMBEDDING_API_KEY` is read first; the `OPENAI_API_KEY`/`VOYAGE_API_KEY` fallback is **provider-matched** (OPENAI only with `EMBEDDING_PROVIDER=openai`, etc.) — the ambiguity behind the "key set, 0 vectors" outage.
+- **Version-assert** (`mk --version`) added to the top of each setup flow.
+- **Verify-block** at the end of each setup section — `mk doctor` (binary / key-source / vectors / smoke-recall / sync-liveness, from #305) + an `--embed` smoke recall — the 30-second deployment-seam check.
+- **`mk reindex --embed`** added to the NanoClaw nightly sync example (+ a pointer to the hardened `mk init --cron` wrapper, #303).
+
+Docs only — no library code, no version bump.
+
+### Changed — lifecycle seed atoms: `--embed` + version-assert + 3 new disciplines (#297)
+
+`/mk-memory-setup`'s seeded lifecycle atoms inherited the integration blind spots that caused the 2026-06-11 fleet failures. Fixed at the source:
+
+- **`01-session-start`** — the canonical recall command now includes `--embed` (FTS-only path = omit `--embed`; there is no `--no-embed` flag), and a `mk --version` assert is added at session start (catch a stale binary before it silently breaks recall semantics).
+- **Three new procedure atoms** (`09`–`11`), so the most common failure modes are structurally recallable rather than relying on in-context prose: verify claims about your own memory/config against the tool (not memory); supersede capability atoms in the *same* change as an infra change; every repeated action sequence becomes a `procedure` atom (never buried in a belief body).
+
+Lifecycle seed count **8 → 11** (10 procedures + 1 constraint): `seed-lifecycle.sh` SEEDS table, `lifecycle/README.md`, README, and the CLAUDE.md convention note updated; `docs/agent-session-loop.md` kept in sync (new "Operating Disciplines" section + the `--embed`/version-assert session-start change). Seed script validated end-to-end (`by_type: {constraint: 1, procedure: 10}`). Skills/docs only — no library code or version bump.
+
+### Changed — `mk init --cron` wrapper hardened with field lessons (#303)
+
+`generateCronWrapper` now encodes the operational fixes the fleet's hand-patched sync scripts carry, so new adopters don't inherit the silent-failure class that left a nightly sync dark for 6 days:
+
+- **Fail-soft** — dropped the bare `set -euo pipefail`; now `set -uo pipefail` + a `step()` helper that runs each step guarded (a non-fatal failure, e.g. a no-match grep exiting 1, is logged + counted but never aborts the whole sync).
+- **PATH self-add** — `export PATH="$(dirname "$(command -v node …)"):$HOME/.local/bin:$PATH"` so cron's minimal environment finds `mk`.
+- **`mk reindex --embed`** between reflect and render so new atoms get vectors (pairs with #305's `embeddings-vectors-fresh`).
+- **Self-canary** — a non-fatal `mk doctor` after sync surfaces 0-vectors / stale-sync / version drift in the cron log, with a per-run warning summary.
+
+Generated script validated with `bash -n`. Tests updated to the fail-soft contract + new guarantees (`test/cron-template.test.ts`). No new public API — PATCH-class wrapper-output change.
+
+### Added — `mk doctor` integration-health checks (#305)
+
+Five additive, read-only checks so `mk doctor` can answer the post-upgrade / post-incident questions (surfaced by the v1.29→1.30→1.31 upgrade chain):
+
+- **`mk-version`** — warns when a stale `mk` on PATH shadows the running kernel version.
+- **`embedding-key-source`** — reports which env var supplied the embedding key (`EMBEDDING_API_KEY` or the `OPENAI_API_KEY`/`VOYAGE_API_KEY` fallback; last-4 only, never the value); warns if a provider is set but no key resolves. Backed by a new exported `resolveEmbeddingKeySource()` in `src/embeddings.ts` that mirrors `getEmbeddingConfig`'s resolution order (no drift).
+- **`embeddings-vectors-fresh`** — warns on the unambiguous "key set, 0 vectors" stall; partial coverage is info (SECRET/PERSONAL atoms are never embedded).
+- **`smoke-recall`** — read-only FTS probe (no egress, no schema migration); opt-in embedding smoke via `MK_DOCTOR_SMOKE_EMBED=1`.
+- **`sync-liveness`** — reports time since last reindex (`.memory-index.db` mtime); only *warns* when a freshness SLA is declared via `MK_SYNC_MAX_AGE_HOURS` (idle/manual stores aren't false-flagged); folds in the closed #284.
+
+All checks are store-aware (`skipWhen: ['store']` where they touch the index) and degrade gracefully on a corrupt index (warn, never a hard error). `mk-version`'s PATH shell-outs are timeout-bounded (5s).
+
+All checks open the index **read-only** so a plain `mk doctor` never migrates the schema (that stays store-schema's `--fix` job). Boundary: doctor = integration health; composition-skew stays in `mk lint` (#316). +18 tests (`test/doctor-integration-health.test.ts`).
+
 ## [1.31.0] — 2026-06-11
 
 `mk wander` seed-selection fixes — surfaced by the first live `wander` dry-runs on real stores (Taj, Jun 11). Auto-seeds now reflect graph connectivity (citation weight) and span clusters (type diversity) instead of pulling session noise from one monoculture.

@@ -23,7 +23,7 @@ The universal core is the same for every host:
 4. Initialise the memory directory structure
 5. Optionally create a private GitHub backup repo
 6. Run the host-specific plumbing from the appropriate reference file
-7. Seed initial atoms (identity + preference + 8 lifecycle atoms via `seed-atoms/seed-lifecycle.sh`)
+7. Seed initial atoms (identity + preference + 11 lifecycle atoms via `seed-atoms/seed-lifecycle.sh`)
 8. Render or expose memory (host-aware: render for NanoClaw, plugin for OpenClaw, server for MCP)
 9. Schedule periodic reflect + render (cron line tuned to the host)
 10. Verify universally with `mk status`, `mk doctor`, `mk lint`
@@ -102,7 +102,7 @@ Then it runs all steps automatically.
 
 ## Post-Setup
 
-After setup, the agent's full operating loop ([docs/agent-session-loop.md](../../../docs/agent-session-loop.md)) is **already inside memory** as 8 typed atoms — 7 procedures (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics) and 1 constraint (Session-Loop Pitfalls — the hard "what not to do" rules). The agent recalls its own lifecycle via `mk recall` like any other knowledge:
+After setup, the agent's full operating loop ([docs/agent-session-loop.md](../../../docs/agent-session-loop.md)) is **already inside memory** as 11 typed atoms — 10 procedures (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics, Verify Memory Claims, Supersede On Infra Change, Repeated-Sequence→Procedure) and 1 constraint (Session-Loop Pitfalls — the hard "what not to do" rules). The agent recalls its own lifecycle via `mk recall` like any other knowledge:
 
 ```bash
 mk recall -d {memory-dir} --task "session loop lifecycle" --json

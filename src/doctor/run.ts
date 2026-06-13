@@ -28,10 +28,11 @@ import { wrapperDriftCheck } from './checks/wrapper-drift.js';
 import { atomFrontmatterCheck } from './checks/atom-frontmatter.js';
 import { atomRelationsSectionCheck } from './checks/atom-relations-section.js';
 import { orphanProseRefsCheck } from './checks/orphan-prose-refs.js';
+import { integrationHealthChecks } from './checks/integration-health.js';
 
 /**
  * Default check registry. Order is the order results are reported in —
- * memory-store checks first, then wrapper drift.
+ * memory-store checks first, then integration-health, then wrapper drift.
  */
 export const DEFAULT_CHECKS: readonly Check[] = [
   schemaCheck,
@@ -43,6 +44,7 @@ export const DEFAULT_CHECKS: readonly Check[] = [
   storeSchemaCheck,
   storePermissionsCheck,
   renderConfigCheck,
+  ...integrationHealthChecks,
   wrapperDriftCheck,
 ];
 

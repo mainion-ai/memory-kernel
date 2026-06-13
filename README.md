@@ -28,7 +28,7 @@
 
 If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end. Both are **host-agnostic** at their core and **host-aware** where it matters — they work for NanoClaw container agents, OpenClaw plugin-based agents, MCP clients (Claude Desktop, Cursor, Continue), or a generic native setup, branching to host-specific plumbing only where memory-kernel actually needs to adapt.
 
-- **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup. Detects (or asks) which host you're targeting, then runs the universal flow: install the CLI, initialize the memory directory, seed identity + preference atoms, seed the **8 lifecycle atoms** (the agent's operating manual as typed memory — see [`skills/mk-memory-setup/seed-atoms/lifecycle/`](skills/mk-memory-setup/seed-atoms/lifecycle/)), render or expose memory the way your host expects, and schedule nightly `mk reflect` + render. Host-specific plumbing (NanoClaw mounts, OpenClaw plugin + AGENTS.md/MEMORY.md doctrine, MCP server config) lives in [`skills/mk-memory-setup/references/`](skills/mk-memory-setup/references/).
+- **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup. Detects (or asks) which host you're targeting, then runs the universal flow: install the CLI, initialize the memory directory, seed identity + preference atoms, seed the **11 lifecycle atoms** (the agent's operating manual as typed memory — see [`skills/mk-memory-setup/seed-atoms/lifecycle/`](skills/mk-memory-setup/seed-atoms/lifecycle/)), render or expose memory the way your host expects, and schedule nightly `mk reflect` + render. Host-specific plumbing (NanoClaw mounts, OpenClaw plugin + AGENTS.md/MEMORY.md doctrine, MCP server config) lives in [`skills/mk-memory-setup/references/`](skills/mk-memory-setup/references/).
 
 - **[`/mk-doctor`](skills/mk-doctor/SKILL.md)** — self-diagnostic. Universal checks first (`mk doctor`, `mk lint`, `mk closure --trajectory`, lifecycle-atom audit, index health, render check), then host-specific checks for whatever host(s) it detects (NanoClaw mounts and allowlist; OpenClaw plugin + doctrine; MCP `claude_desktop_config.json` server entry; native cron). Run it any time memory feels off, before debugging further, or after changing your setup.
 
@@ -111,7 +111,7 @@ Files are truth. Everything else is derived. Delete the SQLite index — rebuild
 ## Integration Quick Links
 
 **For agents:**
-- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render. Also seeded as 7 procedure atoms + 1 constraint by `/mk-memory-setup`, so the lifecycle is recallable from inside memory itself.
+- [Session loop](docs/agent-session-loop.md) — when to remember, recall, wander, render. Also seeded as 10 procedure atoms + 1 constraint by `/mk-memory-setup`, so the lifecycle is recallable from inside memory itself.
 - [Container quickref](docs/agent-quickref-container.md) — paths, commands, /tmp workaround
 - [Native / Claude Code quickref](docs/agent-quickref-native.md) — host-side setup and workflow
 - **Setup:** run `/mk-memory-setup` from Claude Code on the host — auto-detects NanoClaw, OpenClaw, MCP-client, or generic and routes to the right flow. See the [mk-memory-setup skill](skills/mk-memory-setup/README.md).
@@ -233,7 +233,7 @@ my-memory/
 mk init ./memory -a alice                    # Initialize in isolated mode
 mk remember "..." -d ./memory -a alice -t fact
 mk share FACT-xxx --from alice -d ./memory   # Snapshot to shared namespace
-mk recall -d ./memory -a bob                 # Bob sees his atoms + shared
+mk recall -d ./memory -a bob --task "auth design" --embed   # Bob's atoms + shared, semantic re-ranking (--embed needs --task; omit --embed for FTS-only)
 ```
 
 Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `isolation: per-agent` in `config.yaml`, or the `MK_ISOLATION=per-agent` env var). Union recall merges agent + shared atoms (agent wins on ID collision). Share is copy-based — re-share to propagate updates. Migrate existing stores with `mk migrate --strategy fresh|partition|clone-to-shared`.

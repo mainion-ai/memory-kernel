@@ -798,8 +798,17 @@ export function searchFts(
     // Stripping turns dotted/punctuated queries into clean OR-token queries
     // that match against the (already similarly-tokenised) atom body.
     // See issue #214.
+    //
+    // The apostrophe (') is the FTS5 string-literal delimiter: an unbalanced
+    // one (e.g. "Taj's role") makes FTS5 read an unterminated string and raise
+    // `fts5: syntax error`, which the catch below turns into null —
+    // indistinguishable from "index absent" and surfaced as recall_status:
+    // fts_unavailable. We strip the ASCII apostrophe and the two common
+    // typographic variants (’ U+2019, ‘ U+2018) so possessive/contraction
+    // queries stay reachable. See issue #283. Remaining FTS5 query-syntax
+    // characters (" * ( ) : ^ -) are all already in the class below.
     const sanitised = queryText
-      .replace(/["*()^:\-./,;?!]/g, ' ')  // remove FTS5 syntax chars + tokenizer-boundary punctuation
+      .replace(/["'’‘*()^:\-./,;?!]/g, ' ')  // remove FTS5 syntax chars (incl. apostrophe) + tokenizer-boundary punctuation
       .replace(/\b(AND|OR|NOT|NEAR)\b/g, ' ') // remove boolean operators
       .replace(/\s+/g, ' ')
       .trim();

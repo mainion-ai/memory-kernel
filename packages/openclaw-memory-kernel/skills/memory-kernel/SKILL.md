@@ -37,7 +37,7 @@ Call when the user makes a decision, states a rule, shares a fact worth preservi
 Call at session start or when you need structured context. Pass `task` to get results ranked by relevance to what you're doing. Use `types: ["decision", "constraint"]` to load active rules without noise from facts.
 
 **`mk_reflect`**
-Call at end of session. Expires TTL'd atoms, deduplicates redundant atoms, auto-promotes high-confidence beliefs to facts, surfaces conflicts, and regenerates all view files. Also call after merging a remote memory directory.
+Call at end of session. Expires TTL'd atoms, deduplicates redundant atoms, auto-promotes vetted draft atoms to active (status-only, tiered by type — open_questions immediately; facts/preferences/decisions after 48h at confidence ≥ 0.7 with no active contradiction; beliefs/procedures held for review), surfaces conflicts, and regenerates all view files. Also call after merging a remote memory directory.
 
 **`mk_context_bundle`**
 Call when you want a single pre-assembled Markdown document with current context. Runs reflect + recall in one call. Best for session start when you need a full picture before beginning work.

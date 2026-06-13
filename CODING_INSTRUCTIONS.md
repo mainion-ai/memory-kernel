@@ -239,13 +239,15 @@ The schema uses `.min(1).nullable()`. Use `null` to mean "no expiry" and a posit
 
 ---
 
-## Auto-promotion threshold
+## Auto-promotion (tiered, status-only — #274 Gap 2)
 
-`confidence >= 0.9` for `status === 'draft'` beliefs only.
+`autoPromote` (`src/reflect.ts`) graduates `status === 'draft'` atoms to `status === 'active'`. It is **status-only** — the atom's *type* never changes (the old `belief → fact` rewrite was retired). Tiered by type:
 
-- `0.9` IS promoted.
-- `0.899` is NOT promoted.
-- `status === 'accepted'` beliefs are NOT promoted even at `confidence = 1`.
+- **`open_question`** — promoted immediately (additive, no quality risk).
+- **`fact` / `preference` / `decision`** (`AGE_GATED_PROMOTE_TYPES`) — promoted only when **all** hold: age ≥ `DRAFT_PROMOTE_AGE_MS` (48h), `confidence >= DRAFT_PROMOTE_MIN_CONFIDENCE` (0.7), and `!draftContradictsActive` (no same-type/scope active atom with a confidence gap > `CONFLICT_CONFIDENCE_GAP` = 0.3).
+- **`belief` / `procedure` / everything else** — held in `draft` for review (beliefs over-produce + drift on re-extraction; procedures must not auto-activate without an executed-once signal).
+
+On promotion the `auto-extracted` tag is stripped and an `atom_promoted` event is emitted with `meta: { from_status, to_status, type }`.
 
 ---
 

@@ -21,8 +21,8 @@ Remembers server configs, deployment procedures, past incidents. "Last time we u
 → *Strong fit. Infrastructure knowledge is exactly what expires and evolves.*
 
 **5. Research agent**
-Accumulates findings, tracks open questions, records beliefs with confidence. Reflect promotes confirmed hypotheses to facts, expires stale leads.
-→ *Good fit. The belief→fact lifecycle maps naturally to research.*
+Accumulates findings, tracks open questions, records beliefs with confidence. Reflect graduates vetted draft findings from `draft` to `active`, answers open questions, and expires stale leads.
+→ *Good fit. The draft→active lifecycle maps naturally to research.*
 
 ---
 

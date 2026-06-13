@@ -244,6 +244,16 @@ if (indexExists('./memory')) {
 }
 ```
 
+### Auto-extracted draft visibility (v1.30.0+)
+
+Session-end `mk extract` lands `status: draft` atoms tagged `auto-extracted`. These are unvetted, so recall (and fill-mode render) **excludes them by default** — gated on the `auto-extracted` tag, not bare `status: draft`, so hand-authored draft beliefs still surface. Opt in with `RecallQuery.include_drafts`:
+
+```typescript
+const withDrafts = recall('./memory', { task: 'pagination', include_drafts: true });
+```
+
+The same flag exists on the CLI (`mk recall --include-drafts`) and the `mk_recall` MCP tool (`include_drafts`). An explicit `statuses: ['draft']` filter also surfaces them.
+
 ---
 
 ## Semantic Search — Hybrid FTS + Embeddings (v1.3.0+)

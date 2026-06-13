@@ -57,6 +57,35 @@ describe('exported scoring defaults', () => {
     expect(DEFAULT_TYPE_WEIGHTS.fact).toBeGreaterThan(DEFAULT_TYPE_WEIGHTS.belief);
   });
 
+  it('belief discount is strong enough to stop burying facts/prefs (issue #283 Bug B)', () => {
+    // At the old 1.0/0.8 (1.25x) ratio a semantically-broad belief still outranked
+    // grounding facts in ~8/11 golden queries — the lever existed but was too weak.
+    // Lock a >=1.7x fact/belief ratio so a future edit can't silently weaken it back.
+    expect(DEFAULT_TYPE_WEIGHTS.fact / DEFAULT_TYPE_WEIGHTS.belief).toBeGreaterThanOrEqual(1.7);
+    expect(DEFAULT_TYPE_WEIGHTS.preference).toBeGreaterThan(DEFAULT_TYPE_WEIGHTS.belief);
+    expect(DEFAULT_TYPE_WEIGHTS.fact).toBeGreaterThan(DEFAULT_TYPE_WEIGHTS.entity_summary);
+  });
+
+  it('a fact outranks a higher-confidence belief with identical body (type lever dominates conf, #283)', () => {
+    const belief = createAtom({
+      memoryDir: testDir, agent_id: 'a', session_id: 's',
+      type: 'belief', slug: 'mesh-belief',
+      body: 'The mesh coordination layer routes peer review tasks',
+      confidence: 0.95,
+    });
+    const fact = createAtom({
+      memoryDir: testDir, agent_id: 'a', session_id: 's',
+      type: 'fact', slug: 'mesh-fact',
+      body: 'The mesh coordination layer routes peer review tasks',
+      confidence: 0.7,
+    });
+    closeAllIndexes();
+
+    const bundle = recall(testDir, { task: 'mesh coordination peer review', decay_weight: 0 });
+    const ids = bundle.atoms.map((a) => a.frontmatter.id);
+    expect(ids.indexOf(fact.frontmatter.id)).toBeLessThan(ids.indexOf(belief.frontmatter.id));
+  });
+
   it('DEFAULT_CONFIDENCE_FLOOR is 0.7', () => {
     expect(DEFAULT_CONFIDENCE_FLOOR).toBe(0.7);
   });

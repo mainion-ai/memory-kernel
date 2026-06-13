@@ -45,7 +45,7 @@ mk remember "Use PostgreSQL for the main datastore" \
 # Recall context for a specific task
 mk recall -d ~/mk-memory --task "optimize database queries"
 
-# Reflect — consolidate, deduplicate, expire, promote beliefs
+# Reflect — consolidate, deduplicate, expire, promote vetted drafts
 mk reflect -d ~/mk-memory --agent-id my-agent --session-id $(date +%Y%m%d-%H%M)
 
 # Render to CLAUDE.md

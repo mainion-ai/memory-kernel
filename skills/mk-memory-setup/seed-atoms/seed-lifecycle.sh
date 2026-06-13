@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# seed-lifecycle.sh — Seed the 8 lifecycle atoms (7 procedures + 1 constraint)
+# seed-lifecycle.sh — Seed the 11 lifecycle atoms (10 procedures + 1 constraint)
 #                     into a memory-kernel store.
 #
 # Bodies are sourced from the lifecycle/ directory next to this script.
@@ -47,6 +47,9 @@ SEEDS=(
   "06-a2a-handoff.md|procedure|a2a-handoff-procedure|session-loop lifecycle agent-setup"
   "07-diagnostics.md|procedure|diagnostics-procedure|session-loop lifecycle agent-setup"
   "08-what-not-to-do.md|constraint|session-loop-pitfalls|session-loop constraints agent-setup"
+  "09-verify-memory-claims.md|procedure|verify-memory-claims-procedure|session-loop lifecycle agent-setup"
+  "10-supersede-on-infra-change.md|procedure|supersede-on-infra-change-procedure|session-loop lifecycle agent-setup"
+  "11-repeated-sequence-becomes-proc.md|procedure|repeated-sequence-procedure|session-loop lifecycle agent-setup"
 )
 
 echo "Seeding ${#SEEDS[@]} lifecycle atoms into $MEMORY_DIR ..."
@@ -72,4 +75,4 @@ done
 echo
 echo "✓ Lifecycle seed complete. Verify with:"
 echo "    npx mk recall -d \"$MEMORY_DIR\" --types procedure,constraint --json | jq '[.atoms[] | select(.tags[]? == \"session-loop\")] | length'"
-echo "  Expected: 8 (7 procedures + 1 constraint)"
+echo "  Expected: 11 (10 procedures + 1 constraint)"

@@ -56,8 +56,8 @@ Optional env vars:
 | Tool | Maps to | Description |
 |---|---|---|
 | `mk_remember` | `createAtom()` | Store a typed atom (fact / decision / constraint / belief / open_question) |
-| `mk_recall` | `recall()` | Retrieve atoms — FTS5-ranked when `task` is set, typed-filtered when `types` is set |
-| `mk_reflect` | `reflect()` | Expire TTL'd atoms, dedup, auto-promote beliefs, detect conflicts, regenerate views |
+| `mk_recall` | `recall()` | Retrieve atoms — FTS5-ranked when `task` is set, typed-filtered when `types` is set; auto-extracted drafts excluded unless `include_drafts` is set |
+| `mk_reflect` | `reflect()` | Expire TTL'd atoms, dedup, auto-promote vetted drafts to active (tiered, status-only), detect conflicts, regenerate views |
 | `mk_gc` | `reflect()` | Alias for reflect (GC framing) |
 | `mk_merge` | `mergeEventLogs()` | Union-merge a remote memory directory with conflict detection |
 | `mk_list_conflicts` | `listAtoms()` | List active conflict atoms |

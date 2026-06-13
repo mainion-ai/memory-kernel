@@ -166,12 +166,13 @@ export const DEFAULT_TYPE_WEIGHTS: Record<AtomType, number> = {
   constraint:     1.5, // Always relevant, structural anchors
   decision:       1.3, // Architectural decisions
   procedure:      1.2, // Operational knowledge
+  fact:           1.1, // Grounding knowledge — up-weighted so it isn't buried (#283)
+  preference:     1.1, // Grounding knowledge — up-weighted so it isn't buried (#283)
   conflict:       1.1, // Active conflicts need attention
-  fact:           1.0, // Baseline
-  preference:     1.0, // Baseline
   open_question:  0.9, // Less urgent
-  belief:         0.8, // High volume, exploratory — slight discount
-  entity_summary: 0.8, // Reference material
+  belief:         0.6, // High volume, exploratory — STRONG discount (was 0.8: too weak,
+                       // a semantically-broad belief still buried grounding facts, see #283)
+  entity_summary: 0.6, // Reference material — same strong discount
 };
 
 /** Minimum confidence floor for the conf_factor multiplier (0.7 = 70% floor). */

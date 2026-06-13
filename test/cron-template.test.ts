@@ -79,9 +79,40 @@ describe('generateCronWrapper', () => {
     expect(out).not.toContain('$(hostname -s)');
   });
 
-  it('writes set -euo pipefail so failures abort the script', () => {
+  it('is fail-soft: set -uo pipefail (no bare -e) so one step cannot silently kill the sync (#303)', () => {
     const out = generateCronWrapper(baseOpts);
-    expect(out).toContain('set -euo pipefail');
+    expect(out).toContain('set -uo pipefail');
+    // The bare `set -e` foot-gun is gone — it aborted the whole nightly sync on a
+    // non-fatal grep exit-1 (the 6-day silent death). Steps are guarded instead.
+    expect(out).not.toContain('set -euo pipefail');
+    expect(out).not.toMatch(/^set -e\b/m);
+    expect(out).toContain('step()'); // the per-step non-fatal guard helper
+  });
+
+  it('self-adds PATH so cron can find mk (#303)', () => {
+    const out = generateCronWrapper(baseOpts);
+    expect(out).toContain('export PATH=');
+    expect(out).toContain('command -v node');
+    expect(out).toContain('$HOME/.local/bin');
+  });
+
+  it('reindexes WITH embeddings before render so new atoms get vectors (#303/#305)', () => {
+    const out = generateCronWrapper(baseOpts);
+    expect(out).toContain('mk reindex -d "$MEMORY_DIR" --embed');
+    const reindexIdx = out.indexOf('mk reindex ');
+    const renderIdx = out.indexOf('mk render ');
+    const reflectIdx = out.indexOf('mk reflect ');
+    expect(reflectIdx).toBeGreaterThan(0);
+    expect(reindexIdx).toBeGreaterThan(reflectIdx); // reflect → reindex → render
+    expect(renderIdx).toBeGreaterThan(reindexIdx);
+  });
+
+  it('runs a non-fatal mk doctor self-canary after sync (#303)', () => {
+    const out = generateCronWrapper(baseOpts);
+    expect(out).toContain('mk doctor -d "$MEMORY_DIR"');
+    expect(out).toMatch(/canary/i);
+    // The canary must come after the commit step (it verifies the post-sync state).
+    expect(out.indexOf('mk doctor ')).toBeGreaterThan(out.indexOf('git commit'));
   });
 
   it('exposes MK_* env vars so users can override paths without regenerating', () => {

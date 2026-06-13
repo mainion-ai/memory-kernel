@@ -189,14 +189,14 @@ SKILL_DIR="<SKILL_DIR>"
 bash "$SKILL_DIR/seed-atoms/seed-lifecycle.sh" "{MEMORY_DIR}"
 ```
 
-The script seeds 7 procedure atoms (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics) and 1 constraint atom (Session-Loop Pitfalls). The constraint type carries 1.5× recall weight and reserved token budget, so the hard rules surface even on tight renders.
+The script seeds 10 procedure atoms (Session Start, During Session, Session End, Every 5 Sessions, Maintenance Cadence, A2A Handoff, Diagnostics, Verify Memory Claims, Supersede On Infra Change, Repeated-Sequence→Procedure) and 1 constraint atom (Session-Loop Pitfalls). The constraint type carries 1.5× recall weight and reserved token budget, so the hard rules surface even on tight renders.
 
 **Verify:**
 
 ```bash
 npx mk recall -d "{MEMORY_DIR}" --types procedure,constraint --json \
   | jq '[.atoms[] | select(.tags[]? == "session-loop")] | length'
-# Expected: 8 (7 procedures + 1 constraint)
+# Expected: 11 (10 procedures + 1 constraint)
 ```
 
 Re-seed instructions live in [`seed-atoms/lifecycle/README.md`](seed-atoms/lifecycle/README.md).
@@ -338,7 +338,7 @@ Plus the NanoClaw-specific verification in [`references/nanoclaw.md`](references
   Cron:         Nightly at 23:00 — reflect → render → push
 ```
 
-> Health-check any time with `/mk-doctor`. The agent's full operating loop is already inside memory as 8 typed atoms: `mk recall --types procedure,constraint`.
+> Health-check any time with `/mk-doctor`. The agent's full operating loop is already inside memory as 11 typed atoms: `mk recall --types procedure,constraint`.
 
 ---
 
@@ -532,7 +532,7 @@ npx mk doctor -d {MEMORY_DIR}
   Consumption:  manual (mk render to <path> or mk-mcp over stdio)
 ```
 
-> Health-check any time with `/mk-doctor`. The agent's full operating loop is already inside memory as 8 typed atoms.
+> Health-check any time with `/mk-doctor`. The agent's full operating loop is already inside memory as 11 typed atoms.
 
 ---
 

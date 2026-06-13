@@ -63,6 +63,7 @@ If you prefer to set things up manually, follow the steps below.
 
 ```bash
 npm install -g memory-kernel
+mk --version   # confirm the installed binary; a stale `mk` on PATH silently breaks --embed/recall
 ```
 
 Or clone the repo:
@@ -114,10 +115,14 @@ mk reflect -d "$MEMORY_DIR" \
   --agent-id YOUR_AGENT_ID \
   --session-id "sync-$(date +%Y%m%d-%H%M)"
 
-# 2. Render to NanoClaw CLAUDE.md
+# 2. Reindex WITH embeddings so new atoms get vectors before render/recall.
+#    No-op (cheap) if no embedding key is configured.
+mk reindex -d "$MEMORY_DIR" --embed
+
+# 3. Render to NanoClaw CLAUDE.md
 mk render "$MEMORY_DIR" "$CLAUDE_MD"
 
-# 3. Commit & push memory repo (optional — skip if not using git)
+# 4. Commit & push memory repo (optional — skip if not using git)
 cd "$MEMORY_REPO"
 if [ -n "$(git status --porcelain)" ]; then
   git add -A
@@ -130,6 +135,8 @@ fi
 
 echo "[$(date -Iseconds)] Memory sync complete."
 ```
+
+> **Prefer the generated wrapper.** `mk init --cron` emits a hardened version of this script (#303): self-contained `PATH`, fail-soft guards so one step can't silently kill the whole sync, the `reindex --embed` step, and a `mk doctor` self-canary. The inline script above is illustrative; for an unattended nightly cron use the generated one.
 
 ```bash
 chmod +x scripts/memory-sync.sh
@@ -151,14 +158,22 @@ Add:
 This runs every night at 23:00:
 
 1. **Reflect** — deduplicates, promotes drafts, expires old atoms
-2. **Render** — generates fresh CLAUDE.md from current atoms
-3. **Push** — commits and pushes to git (if you use git)
+2. **Reindex `--embed`** — recomputes vectors so new atoms are semantically recallable
+3. **Render** — generates fresh CLAUDE.md from current atoms
+4. **Push** — commits and pushes to git (if you use git)
 
 ### 6. Verify the setup
 
 ```bash
+# Integration health — the one-shot deployment-seam check (binary version,
+# embedding-key-source, vectors==atoms, smoke-recall, sync-liveness)
+mk doctor -d ~/mk-memory
+
 # Check memory status
 mk status -d ~/mk-memory
+
+# Smoke recall — should return atoms (or recall_status no_match), never an error
+mk recall -d ~/mk-memory --task "smoke" --embed --json | head
 
 # Test render
 mk render ~/mk-memory /tmp/test-claude.md
@@ -174,7 +189,7 @@ bash scripts/memory-sync.sh
 crontab -l
 ```
 
-If `mk status` shows your atoms and `mk render` produces a valid CLAUDE.md, you're done. Next time NanoClaw starts a session, the agent will load its memory.
+If `mk doctor` is clean, `mk status` shows your atoms, and `mk render` produces a valid CLAUDE.md, you're done. Next time NanoClaw starts a session, the agent will load its memory. If `mk doctor` flags `embedding-key-source` (no key) or `embeddings-vectors-fresh` (0 vectors), set `EMBEDDING_API_KEY` and run `mk reindex -d ~/mk-memory --embed` before relying on `--embed` recall.
 
 Run `mk lint` periodically (weekly is enough) to catch contradictions, stale facts, orphaned atoms, and near-duplicates before they accumulate.
 

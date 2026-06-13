@@ -134,6 +134,41 @@ describe('searchFts()', () => {
     expect(results).not.toBeNull();
     expect(results).toEqual([]);
   });
+
+  it('apostrophe queries stay reachable, not fts_unavailable (issue #283 Bug A)', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'fact',
+      slug: 'taj-role',
+      body: "Taj's role in the mesh is coordinating peer review.",
+    });
+    reindex(testDir);
+
+    // The ASCII apostrophe is the FTS5 string-literal delimiter — an unbalanced
+    // one inside the MATCH query trips `fts5: syntax error`, which the catch
+    // turns into `null` (indistinguishable from "index absent"). Recall then
+    // reports recall_status: fts_unavailable. After sanitisation the query must
+    // reach the atom, not return null.
+    const results = searchFts(testDir, "what is Taj's role in the mesh");
+    expect(results).not.toBeNull();
+    expect(results!.length).toBeGreaterThan(0);
+    expect(results![0].atom_id).toContain('FACT-');
+  });
+
+  it('does not throw and is not null across apostrophe variants (issue #283)', () => {
+    createAtom({
+      ...base(testDir),
+      type: 'preference',
+      slug: 'user-pref',
+      body: "The user's preference is concise answers.",
+    });
+    reindex(testDir);
+
+    for (const q of ["user's preference", 'users’ preference', 'it‘s preference']) {
+      expect(() => searchFts(testDir, q)).not.toThrow();
+      expect(searchFts(testDir, q)).not.toBeNull();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
