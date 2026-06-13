@@ -1,6 +1,6 @@
 {
   "name": "memory-kernel",
-  "version": "1.32.0",
+  "version": "1.32.1",
   "description": "Model-agnostic, file-first memory kernel for AI agents",
   "type": "module",
   "main": "dist/index.js",
@@ -62,6 +62,7 @@
     "vitest": "^4.0.18"
   },
   "overrides": {
-    "qs": "^6.15.2"
+    "qs": "^6.15.2",
+    "esbuild": "^0.28.1"
   }
 }

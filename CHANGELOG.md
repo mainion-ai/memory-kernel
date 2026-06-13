@@ -27,6 +27,12 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.32.1] — 2026-06-13
+
+### Security
+
+- **`esbuild` override → 0.28.1** — pins transitive `esbuild` (via `tsx` and `vite`) to `^0.28.1` via `overrides` in `package.json`. Closes Dependabot alerts #39 (low: arbitrary file read on Windows dev server) and #40 (high: missing binary integrity verification in Deno module). Neither vulnerability is exploitable in this project's use (no Deno, no dev server in production), but the override is a zero-cost defensive fix. `npm audit` now reports 0 vulnerabilities. No library code, tests, or public API changed — PATCH only.
+
 ## [1.32.0] — 2026-06-13
 
 Round 1 of the epic #294 "operational correctness & self-diagnosis" pass: fix what was silently wrong on the live agents and make the integration self-diagnosing.
