@@ -170,7 +170,7 @@ mk reflect -d $DIR --json
 }
 ```
 
-Consolidation: deduplicates identical content, expires atoms past TTL, promotes vetted draft atoms to active (status-only, no type change — `open_question`s immediately; `fact`/`preference`/`decision` after 48h at confidence ≥ 0.7 with no active contradiction; `belief`/`procedure` held for review), detects contradictions. Idempotent — fast when nothing changed.
+Consolidation: deduplicates identical content, expires atoms past TTL, promotes vetted draft atoms to active (status-only, no type change — `open_question`s immediately; `fact`/`preference`/`decision` after 48h at confidence ≥ 0.7 with no active contradiction; `procedure` once confirmed executed via `mk execute` at confidence ≥ 0.7; `belief` held for review), detects contradictions. Idempotent — fast when nothing changed.
 
 ### mk gc
 
@@ -471,20 +471,20 @@ Optional flags:
 ### mk upgrade
 
 ```bash
-mk upgrade --to 1.33.0 -d $DIR --mk-bin /group/npm/bin/mk --cron-wrapper /etc/agent/sync.sh --json
+mk upgrade --to 1.33.0 -d $DIR --mk-bin /group/npm/node_modules/.bin/mk --cron-wrapper /etc/agent/sync.sh --json
 ```
 
 ```json
 {
   "pass": true,
   "to": "1.33.0",
-  "mk_bin": "/group/npm/bin/mk",
+  "mk_bin": "/group/npm/node_modules/.bin/mk",
   "dry_run": false,
   "steps": [
-    { "step": "resolve-binary", "ok": true, "detail": "agent binary: /group/npm/bin/mk" },
+    { "step": "resolve-binary", "ok": true, "detail": "agent binary: /group/npm/node_modules/.bin/mk" },
     { "step": "verify-runner", "ok": true, "detail": "runner is memory-kernel@1.33.0 (matches target)" },
-    { "step": "install", "ok": true, "detail": "installed memory-kernel@1.33.0 at /group/npm/bin/mk" },
-    { "step": "verify-agent-version", "ok": true, "detail": "/group/npm/bin/mk is mk 1.33.0" },
+    { "step": "install", "ok": true, "detail": "installed memory-kernel@1.33.0 at /group/npm/node_modules/.bin/mk" },
+    { "step": "verify-agent-version", "ok": true, "detail": "/group/npm/node_modules/.bin/mk is mk 1.33.0" },
     { "step": "seed", "ok": true, "detail": "created 0, updated 1, unchanged 10, deduped 0" },
     { "step": "cron", "ok": true, "detail": "regenerated cron wrapper /etc/agent/sync.sh" },
     { "step": "doctor-gate", "ok": true, "detail": "doctor: no errors (exit 0)" }
@@ -495,7 +495,7 @@ mk upgrade --to 1.33.0 -d $DIR --mk-bin /group/npm/bin/mk --cron-wrapper /etc/ag
 
 **Host-side** one-command agent upgrade (#331). Runs the whole sequence and prints one PASS/FAIL (exit 1 on FAIL so a host wrapper / CI can gate):
 1. resolve the agent's real binary (`--mk-bin`, else the `MK_BIN` env var the cron wrapper sets — never PATH);
-2. install `memory-kernel@<ver>` at that binary's npm prefix;
+2. install `memory-kernel@<ver>` where that binary actually lives — a **local** `npm install` in the owning package root when `MK_BIN` is a group-npm local dep (`<pkgroot>/node_modules/.bin/mk`, the nanoclaw fleet layout), or `npm install -g --prefix <prefix>` when it's a global `<prefix>/bin/mk` (#340);
 3. verify the binary now reports `<ver>`;
 4. idempotently re-seed lifecycle atoms (#329);
 5. regenerate the cron wrapper (when `--cron-wrapper` is given);
@@ -504,7 +504,7 @@ mk upgrade --to 1.33.0 -d $DIR --mk-bin /group/npm/bin/mk --cron-wrapper /etc/ag
 **The agent cannot upgrade its own in-container binary** — run `mk upgrade` on the **host**, and **from the target version**: the seed bodies, canonical slug set, and doctor gate all come from the `mk` running the command, so a runner whose version ≠ `--to` would seed and validate the *wrong* version's set (the v1.32.0 "re-seeded the old set, doctor green" incident). The `verify-runner` step **hard-fails** that mismatch with the exact command to re-run:
 
 ```bash
-npx memory-kernel@1.33.0 upgrade --to 1.33.0 -d /agent/kernel --mk-bin /group/npm/bin/mk
+npx memory-kernel@1.33.0 upgrade --to 1.33.0 -d /agent/kernel --mk-bin /group/npm/node_modules/.bin/mk
 ```
 
 `mk doctor` (#330) is then how the agent subsequently *knows* the upgrade took.

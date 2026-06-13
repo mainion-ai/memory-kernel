@@ -27,6 +27,18 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.33.1] — 2026-06-14
+
+Post-v1.33.0 bugfixes from the fleet deploy. No public API change — PATCH.
+
+### Fixed — `mk upgrade` now upgrades a group-npm local-dependency `MK_BIN` (#340)
+
+`mk upgrade`'s installer (shipped in #331) assumed the global layout (`MK_BIN = <prefix>/bin/mk` → `npm install -g --prefix <prefix>`). The nanoclaw fleet's `MK_BIN` is a **local dependency** (`<pkgroot>/node_modules/.bin/mk` symlinked into `node_modules/memory-kernel`); there the `-g --prefix <node_modules>` install wrote to `<node_modules>/lib/node_modules/…` and left the symlinked package — the binary the agent actually runs — untouched (caught by `verify-agent-version` → FAIL, never a false PASS, but it didn't upgrade). New pure `resolveInstallPlan(mkBin, version)` detects the layout: a `node_modules/.bin/mk` path → a **local** `npm install memory-kernel@<ver>` run from the owning package root (updates the dep the symlink resolves to); otherwise the global `-g --prefix` path (unchanged). +3 tests (`test/upgrade-installer.test.ts`), including a regression that replicates the group-npm `.bin/mk`-symlink layout with a fake npm and asserts the symlinked binary truly upgrades (red under the old installer).
+
+### Fixed — shell scripts run on macOS bash 3.2 (no more `mapfile` false failures) (#341)
+
+`scripts/privacy-scan.sh` and `scripts/docs-hygiene-check.sh` used the bash-4 builtin `mapfile`, which is absent on the macOS-default `/bin/bash` 3.2 → `mapfile: command not found` (exit 127) → 28 false test failures for Mac contributors (Linux CI on bash 4+ stayed green). Both now use a portable `while IFS= read -r x; do arr+=("$x"); done < <(...)` loop. Added `test/shell-portability.test.ts` — a static guard that fails if any `scripts/*.sh` reintroduces a bash-4-only builtin (`mapfile`/`readarray`/`declare -A`/case-conversion expansions); deterministic and CI-meaningful (the existing script tests pass on bash 4+ regardless). Verified clean under `/bin/bash` 3.2.
+
 ## [1.33.0] — 2026-06-13
 
 ### Added — procedure "executed-once" promote signal (#309)

@@ -71,14 +71,52 @@ export interface UpgradeResult {
 
 // --- default external effects (real; replaced by injectables in tests) -------
 
-function defaultInstaller(mkBin: string, version: string): void {
-  // <prefix>/bin/mk → prefix = dirname(dirname(mkBin)). Targeting npm at that
-  // prefix installs the binary exactly where MK_BIN points.
-  const prefix = path.dirname(path.dirname(mkBin));
-  execFileSync('npm', ['install', '-g', `memory-kernel@${version}`], {
+/** The `npm install` invocation that upgrades the package `mkBin` resolves to. */
+export interface InstallPlan {
+  args: string[];
+  /** Working directory for the install (set for the local-dep layout). */
+  cwd?: string;
+  /** Environment overrides (sets `npm_config_prefix` for the global layout). */
+  env?: NodeJS.ProcessEnv;
+  /** Which layout was detected — for diagnostics/tests. */
+  layout: 'local-dep' | 'global';
+}
+
+/**
+ * Decide how to upgrade the package `mkBin` resolves to, by its on-disk layout
+ * (#340). Two cases:
+ *
+ *   - **local-dep** — `MK_BIN = <pkgroot>/node_modules/.bin/mk` (the fleet's
+ *     group-npm layout). `.bin/mk` is a symlink into `<pkgroot>/node_modules/
+ *     memory-kernel`, so the upgrade must be a *local* `npm install` run from
+ *     `<pkgroot>` — that rewrites the very package the symlink resolves to.
+ *     A `-g --prefix` install here writes to `<node_modules>/lib/node_modules`
+ *     and leaves the symlinked package untouched (the original bug).
+ *   - **global** — `MK_BIN = <prefix>/bin/mk` (e.g. `/usr/local/bin/mk`).
+ *     `npm install -g` with `npm_config_prefix=<prefix>` lands the binary back
+ *     at `mkBin`.
+ *
+ * Pure: operates on the path string (does not resolve the symlink — `MK_BIN`
+ * *is* the symlink path) so it's deterministically unit-testable.
+ */
+export function resolveInstallPlan(mkBin: string, version: string): InstallPlan {
+  const spec = `memory-kernel@${version}`;
+  const parent = path.dirname(mkBin); // .../node_modules/.bin  OR  <prefix>/bin
+  if (path.basename(parent) === '.bin' && path.basename(path.dirname(parent)) === 'node_modules') {
+    const pkgRoot = path.dirname(path.dirname(parent)); // owner of node_modules/
+    return { args: ['install', spec], cwd: pkgRoot, layout: 'local-dep' };
+  }
+  const prefix = path.dirname(parent); // <prefix>/bin/mk → <prefix>
+  return { args: ['install', '-g', spec], env: { ...process.env, npm_config_prefix: prefix }, layout: 'global' };
+}
+
+export function defaultInstaller(mkBin: string, version: string): void {
+  const plan = resolveInstallPlan(mkBin, version);
+  execFileSync('npm', plan.args, {
     stdio: 'pipe',
     timeout: 180_000,
-    env: { ...process.env, npm_config_prefix: prefix },
+    cwd: plan.cwd,
+    env: plan.env ?? process.env,
   });
 }
 
