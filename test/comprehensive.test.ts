@@ -1887,14 +1887,14 @@ describe('Sprint 1 — ttl_days zero validation', () => {
 // ============================================================================
 
 describe('Sprint 1 — checkpoint error handling', () => {
-  it('checkpoint should return structured error when reflect fails', () => {
+  it('checkpoint should return structured error when reflect fails', async () => {
     initMemoryDir(testDir);
 
     // Write a corrupted atom file to cause reflect failure
     const corruptedPath = path.join(testDir, 'ENTITIES', 'corrupt.md');
     // This won't cause reflect to throw since listAtoms silently skips bad files
     // Instead, test with a missing directory scenario
-    const result = checkpoint({
+    const result = await checkpoint({
       ...base(testDir),
       skipReflect: false,
     });
@@ -1904,7 +1904,7 @@ describe('Sprint 1 — checkpoint error handling', () => {
     expect(result.markdown).toContain('Memory Kernel Checkpoint');
   });
 
-  it('checkpoint with skipReflect should still produce valid output', () => {
+  it('checkpoint with skipReflect should still produce valid output', async () => {
     initMemoryDir(testDir);
     createAtom({
       ...base(testDir),
@@ -1913,7 +1913,7 @@ describe('Sprint 1 — checkpoint error handling', () => {
       body: 'Test fact',
     });
 
-    const result = checkpoint({
+    const result = await checkpoint({
       ...base(testDir),
       skipReflect: true,
     });

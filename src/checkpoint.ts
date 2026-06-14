@@ -4,8 +4,8 @@
  */
 
 import { appendEvent } from './event-log.js';
-import { recallIsolated } from './isolation-recall.js';
-import { recall } from './recall.js';
+import { recallIsolatedWithEmbeddings } from './isolation-recall.js';
+import { recallWithEmbeddings } from './recall.js';
 import { reflect } from './reflect.js';
 import { readView } from './store.js';
 import type { ContextBundle } from './types.js';
@@ -35,8 +35,14 @@ export interface CheckpointResult {
  * Generate a checkpoint: reflect (optional), recall, and assemble a handoff document.
  * Wraps reflect/recall in try/catch for graceful degradation — a partial checkpoint
  * is better than no checkpoint at all.
+ *
+ * Async because recall now embeds the query when an embedding key is configured
+ * (#323) — `mk_context_bundle`/checkpoint is the documented primary session-start
+ * retrieval, so it must take the same semantic path as `mk recall --embed`. The
+ * embedding variants degrade to FTS silently when no key (or no task) is present,
+ * so the no-key path is unchanged.
  */
-export function checkpoint(opts: CheckpointOptions): CheckpointResult {
+export async function checkpoint(opts: CheckpointOptions): Promise<CheckpointResult> {
   let reflectError: string | undefined;
 
   // 1. Run reflect to consolidate state (unless skipped)
@@ -61,11 +67,13 @@ export function checkpoint(opts: CheckpointOptions): CheckpointResult {
     };
 
     if (opts.isolated && opts.sharedRecall !== false && opts.baseDir) {
-      // Isolation-aware: merge agent store + shared namespace (sync path, FTS5)
-      bundle = recallIsolated(opts.memoryDir, opts.baseDir, recallQuery);
+      // Isolation-aware: merge agent store + shared namespace. Embeds the query
+      // when a key is configured; degrades to FTS5 per-store otherwise.
+      bundle = await recallIsolatedWithEmbeddings(opts.memoryDir, opts.baseDir, recallQuery, { useEmbeddings: true });
     } else {
-      // Shared mode or isolated-without-shared: single-dir recall
-      bundle = recall(opts.memoryDir, recallQuery);
+      // Shared mode or isolated-without-shared: single-dir recall. Embeds the
+      // query when a key is configured; degrades to FTS5 otherwise.
+      bundle = await recallWithEmbeddings(opts.memoryDir, recallQuery);
     }
   } catch (err) {
     // If recall also fails, emit error event and return minimal checkpoint

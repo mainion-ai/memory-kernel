@@ -74,6 +74,22 @@ describe('mk init --cron (happy path)', () => {
     expect(content).toContain(`# mk:claude-md=${claudeMd}`);
   });
 
+  it('warns (non-fatal) when the baked memory-dir does not exist on this host (#347)', () => {
+    const missingDir = path.join(workDir, 'does-not-exist', 'kernel'); // not created
+    const { stderr, status } = mk([
+      'init', '--cron',
+      '--dir', missingDir,
+      '--claude-md', path.join(workDir, 'CLAUDE.md'),
+      '--output', outputScript,
+    ]);
+
+    expect(status).toBe(0); // non-fatal — wrapper is still generated
+    expect(stderr).toContain('does not exist on this host');
+    expect(stderr).toContain('container'); // host-vs-container hint
+    expect(fs.existsSync(outputScript)).toBe(true);
+    expect(fs.readFileSync(outputScript, 'utf-8')).toContain(`# mk:memory-dir=${missingDir}`);
+  });
+
   it('refuses to overwrite an existing file without --force or --update', () => {
     fs.writeFileSync(outputScript, '# pre-existing\n');
 

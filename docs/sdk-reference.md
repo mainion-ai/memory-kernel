@@ -969,3 +969,20 @@ const result: MigrateResult = migrate({
 // result.config_written — true
 // result.backup_path — path to timestamped backup (empty for fresh strategy)
 ```
+
+### `--json` output contracts as Zod schemas (v1.34.0+, #301)
+
+Every `mk --json` output has an exported Zod schema — validate/parse CLI output instead of guessing field names (the `seeds_used` mis-parse class):
+
+```typescript
+import { RecallOutputSchema, DoctorOutputSchema, RememberOutputSchema, EvalOutputSchema } from 'memory-kernel';
+
+const bundle = RecallOutputSchema.parse(JSON.parse(recallJsonStdout));
+// bundle.atoms, bundle.recall_status, bundle.token_estimate — typed + validated
+
+DoctorOutputSchema.parse(JSON.parse(doctorJsonStdout));   // healthy, issue_count, issues[], checks[], fixes?
+RememberOutputSchema.parse(JSON.parse(rememberJsonStdout)); // id, status, confidence, tags[], embedded, tag_warning
+EvalOutputSchema.parse(JSON.parse(evalJsonStdout));         // fixtures[], ok, exit_code
+```
+
+Schemas are `.passthrough()` (additive fields won't break parsing) and are test-enforced against real CLI invocations, so they can't drift from the actual output. Inferred types are exported too: `RecallOutput`, `DoctorOutput`, `RememberOutput`, `EvalOutput`.

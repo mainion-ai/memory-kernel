@@ -76,7 +76,9 @@ mk doctor -d $MEMORY_DIR || true    # non-fatal self-canary — logs 0-vectors /
 
 Order matters: reflect cleans/promotes, citations updates frequency counts for spreading activation, `reindex --embed` refreshes vectors, render produces fresh output, and the `mk doctor` canary verifies the sync actually landed.
 
-**Use `mk init --cron` for the production wrapper.** It generates a hardened script (#303) that encodes the field lessons: a self-contained `PATH`, **fail-soft** guards on every step (no bare `set -e` — one non-fatal failure can't silently kill the whole sync), the `reindex --embed` step, and the `mk doctor` self-canary. Don't hand-roll the bare commands above for an unattended cron.
+**Use `mk init --cron` for the production wrapper.** It generates a hardened script (#303) that encodes the field lessons: a self-contained `PATH` (incl. the agent's `MK_BIN`, #345), **fail-soft** guards on every step (no bare `set -e` — one non-fatal failure can't silently kill the whole sync), the `reindex --embed` step, and the `mk doctor` self-canary. Don't hand-roll the bare commands above for an unattended cron.
+
+> **Generate the wrapper where the timer will run — bake a path valid *there* (#347).** The wrapper runs wherever the cron/systemd timer fires (usually the **host**), not necessarily where you generated it. If you run `mk init --cron` inside a container but the timer fires on the host, the baked `# mk:memory-dir` (a container path) won't exist on the host and every `mk render -d "$MEMORY_DIR"` silently fails. `mk init --cron` **warns** if the memory-dir doesn't exist on the generating host, and `mk doctor`'s **`wrapper-memory-dir`** check flags any installed wrapper whose baked memory-dir doesn't resolve on the host it's installed on. Regenerate on the host with `--dir <host-store-path>` if flagged.
 
 ---
 
@@ -255,7 +257,7 @@ mk checkpoint -d $DIR --json
 }
 ```
 
-Full handoff bundle — reflect + recall + context in one call.
+Full handoff bundle — reflect + recall + context in one call. When a `--task` is given and an embedding key is configured (`EMBEDDING_PROVIDER` + `EMBEDDING_API_KEY`), the recall takes the **semantic** path like `mk recall --embed` (#323, v1.34.0+); without a key (or without a task) it degrades silently to FTS-only — same as before. The MCP `mk_context_bundle` tool shares this engine, so session-start/handoff recall is semantic whenever the server has a key + vectors.
 
 ### mk episode
 

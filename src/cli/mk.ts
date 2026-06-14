@@ -35,6 +35,7 @@ import {
   createAtom,
   embeddingStats,
 } from '../index.js';
+import { isValidTag, normalizeTags } from '../format.js';
 import { recall, recallWithEmbeddings } from '../recall.js';
 import { reflect } from '../reflect.js';
 import { checkpoint } from '../checkpoint.js';
@@ -235,6 +236,22 @@ function runInitCron(opts: {
 
   if (!memoryDir) exitWithError('--dir <memory-directory> is required with --cron');
   if (!claudeMd) exitWithError('--claude-md <path> is required with --cron');
+
+  // #347: the wrapper runs wherever the timer fires (often the HOST). A baked
+  // memory-dir that doesn't exist here is almost always the container-vs-host
+  // mistake that silently darkens the nightly. Warn (non-fatal — the store may
+  // legitimately be created later); `mk doctor`'s wrapper-memory-dir check is
+  // the durable runtime gate on the host where it's installed. Skip the warning
+  // when MK_MEMORY_DIR is set — the operator is deliberately baking a placeholder
+  // resolved via the runtime override (the wrapper bakes `${MK_MEMORY_DIR:-…}`).
+  if (!process.env.MK_MEMORY_DIR && !fs.existsSync(memoryDir)) {
+    console.error(
+      `⚠ memory-dir does not exist on this host: ${memoryDir}\n` +
+      `  The cron wrapper runs where the timer fires — if you generated this in a\n` +
+      `  container for a host timer, re-run with the HOST store path so the nightly\n` +
+      `  doesn't render to a missing directory (see #347).`,
+    );
+  }
 
   // Overwrite guard — refuse silently destroying an existing file unless the
   // user opts in via --force or is in --update mode (which by definition
@@ -536,7 +553,7 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .option('--no-reflect', 'Skip reflect before checkpoint')
   .option('--json', 'Output as JSON')
-  .action((opts: {
+  .action(async (opts: {
     dir: string; task?: string; maxTokens?: number;
     agentId: string; sessionId: string; reflect: boolean; json?: boolean;
   }) => {
@@ -545,7 +562,7 @@ program
       exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
     }
 
-    const result = checkpoint({
+    const result = await checkpoint({
       memoryDir,
       agent_id: opts.agentId,
       session_id: opts.sessionId,
@@ -909,6 +926,13 @@ program
       .replace(/^-|-$/g, '')
       .slice(0, 40)) || `atom-${Date.now()}`;
 
+    // #262: a quoted `--tags "foo bar"` arrives as one whitespace-containing
+    // token that breaks tag queries. Warn (not error — forgiving) and still write.
+    // Check the NORMALIZED tags so we agree with the `tag-format` doctor check
+    // (both view tags post-`normalizeTags`): a comma-list like "foo, bar" splits
+    // cleanly and must NOT warn, while a space-joined "foo bar" survives and does.
+    const badTags = normalizeTags(opts.tags ?? []).filter((t) => !isValidTag(t));
+
     const atom = createAtom({
       memoryDir,
       type: opts.type as any,
@@ -934,8 +958,15 @@ program
         embedding_warning: (!embedded && process.env.EMBEDDING_PROVIDER && process.env.EMBEDDING_PROVIDER !== 'none')
           ? 'Embedding failed — run "mk reindex --embed" to retry'
           : null,
+        tag_warning: badTags.length > 0
+          ? `tag(s) contain whitespace (stored as single tokens — quote-joined?): ${badTags.map((t) => `"${t}"`).join(', ')}`
+          : null,
       }, null, 2));
       return;
+    }
+
+    if (badTags.length > 0) {
+      console.warn(`⚠ tag(s) contain whitespace — stored as single tokens, which break tag queries (did you quote \`--tags "a b c"\` instead of \`--tags a b c\`?): ${badTags.map((t) => `"${t}"`).join(', ')}`);
     }
 
     console.log(`✓ Created: ${atom.frontmatter.id}`);

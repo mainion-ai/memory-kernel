@@ -25,10 +25,12 @@ import { storePermissionsCheck } from './checks/store-permissions.js';
 import { storeSchemaCheck } from './checks/store-schema.js';
 import { renderConfigCheck } from './checks/render-config.js';
 import { wrapperDriftCheck } from './checks/wrapper-drift.js';
+import { wrapperMemoryDirCheck } from './checks/wrapper-memory-dir.js';
 import { atomFrontmatterCheck } from './checks/atom-frontmatter.js';
 import { atomRelationsSectionCheck } from './checks/atom-relations-section.js';
 import { orphanProseRefsCheck } from './checks/orphan-prose-refs.js';
 import { seedSetFreshnessCheck } from './checks/seed-set-freshness.js';
+import { tagFormatCheck } from './checks/tag-format.js';
 import { integrationHealthChecks } from './checks/integration-health.js';
 
 /**
@@ -46,8 +48,10 @@ export const DEFAULT_CHECKS: readonly Check[] = [
   storePermissionsCheck,
   renderConfigCheck,
   seedSetFreshnessCheck,
+  tagFormatCheck,
   ...integrationHealthChecks,
   wrapperDriftCheck,
+  wrapperMemoryDirCheck,
 ];
 
 export interface RunDoctorResult {

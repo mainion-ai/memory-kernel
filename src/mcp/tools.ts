@@ -456,7 +456,7 @@ export async function handleGetContextBundle(
     const agentId = resolveAgentId(ctx, input.agent_id);
     const sessionId = resolveSessionId(ctx, input.session_id);
     const memDir = resolveMemoryDir(ctx, agentId);
-    const checkpointResult = checkpoint({
+    const checkpointResult = await checkpoint({
       memoryDir: memDir,
       agent_id: agentId,
       session_id: sessionId,

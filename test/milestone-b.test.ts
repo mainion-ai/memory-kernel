@@ -223,7 +223,7 @@ describe('Milestone B integration', () => {
     expect(result1.atoms.size).toBe(result2.atoms.size);
   });
 
-  it('checkpoint still works after V2 changes', () => {
+  it('checkpoint still works after V2 changes', async () => {
     createAtom({
       memoryDir,
       type: 'fact',
@@ -233,7 +233,7 @@ describe('Milestone B integration', () => {
       session_id: SESSION,
     });
 
-    const result = checkpoint({
+    const result = await checkpoint({
       memoryDir,
       agent_id: AGENT,
       session_id: SESSION,

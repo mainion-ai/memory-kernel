@@ -323,3 +323,16 @@ export {
   stripRelationsSection,
   generateGraphConfig,
 } from './obsidian.js';
+
+// Machine-verifiable Zod schemas for `mk --json` command outputs (#301).
+export {
+  AtomOutputSchema,
+  RecallOutputSchema,
+  DoctorCheckResultSchema,
+  DoctorOutputSchema,
+  RememberOutputSchema,
+  EvalQueryResultSchema,
+  EvalResultSchema,
+  EvalOutputSchema,
+} from './schemas.js';
+export type { RecallOutput, DoctorOutput, RememberOutput, EvalOutput } from './schemas.js';

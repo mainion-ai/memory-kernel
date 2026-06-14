@@ -16,6 +16,7 @@ const CATEGORY_LABELS: Record<LintFinding['category'], string> = {
   duplicate: 'Near-duplicates',
   confidence_drift: 'Confidence drift',
   ttl_warning: 'TTL warnings',
+  composition: 'Store composition',
 };
 
 const SEVERITY_ICONS: Record<LintFinding['severity'], string> = {
@@ -30,8 +31,9 @@ export function registerLintCommand(program: Command): void {
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--json', 'Output as JSON')
     .option('--stale-days <n>', 'Days before fact/decision is stale', '90')
+    .option('--strict', 'Exit non-zero (1) when any warning is found (default: always exit 0)')
     .option('--fix', 'Auto-fix issues (placeholder)')
-    .action((opts: { dir: string; json?: boolean; staleDays?: string; fix?: boolean }) => {
+    .action((opts: { dir: string; json?: boolean; staleDays?: string; strict?: boolean; fix?: boolean }) => {
       const memoryDir = resolveDir(opts.dir, program.opts().agent);
       if (!fs.existsSync(memoryDir)) {
         exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
@@ -51,9 +53,12 @@ export function registerLintCommand(program: Command): void {
       }
 
       const result = lintMemoryStore(memoryDir, { staleDays });
+      // --strict: surface warnings as a non-zero exit (default lint always exits 0).
+      const failStrict = !!opts.strict && result.summary.warnings > 0;
 
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
+        if (failStrict) process.exit(1);
         return;
       }
 
@@ -73,6 +78,7 @@ export function registerLintCommand(program: Command): void {
         'duplicate',
         'confidence_drift',
         'ttl_warning',
+        'composition',
       ];
 
       for (const cat of categories) {
@@ -89,5 +95,7 @@ export function registerLintCommand(program: Command): void {
       console.log(
         `Summary: ${result.summary.total} finding${result.summary.total === 1 ? '' : 's'} (${result.summary.warnings} warning${result.summary.warnings === 1 ? '' : 's'}, ${result.summary.info} info)`,
       );
+
+      if (failStrict) process.exit(1);
     });
 }

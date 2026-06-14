@@ -80,7 +80,7 @@ function registerMemoryKernelTools(api: FakeToolApi, memoryDir: string) {
     name: 'mk_context_bundle',
     async execute(_id, params) {
       const p = params as { task?: string; max_tokens?: number; skipReflect?: boolean };
-      const result = checkpoint({ memoryDir, agent_id: 'openclaw-agent', session_id: 'openclaw-session', task: p.task, max_tokens: p.max_tokens, skipReflect: p.skipReflect });
+      const result = await checkpoint({ memoryDir, agent_id: 'openclaw-agent', session_id: 'openclaw-session', task: p.task, max_tokens: p.max_tokens, skipReflect: p.skipReflect });
       return { ok: true, text: result.markdown, meta: result };
     },
   });

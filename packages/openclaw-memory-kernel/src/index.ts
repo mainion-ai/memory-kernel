@@ -831,7 +831,7 @@ const memoryKernelPlugin = {
           try {
             const p = params as Static<typeof ContextBundleParams>
             const mctx = getContext()
-            const result = checkpoint({
+            const result = await checkpoint({
               memoryDir: mctx.effectiveDir,
               agent_id: mctx.agentId,
               session_id: currentSessionId,
@@ -1002,7 +1002,7 @@ const memoryKernelPlugin = {
         setSession(event.sessionKey)
         const mctx = getContext(event.sessionKey)
         try {
-          const result = checkpoint({
+          const result = await checkpoint({
             memoryDir: mctx.effectiveDir,
             agent_id: mctx.agentId,
             session_id: event.sessionKey || 'unknown',

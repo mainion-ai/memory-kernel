@@ -43,6 +43,18 @@ export function normalizeTags(tags: string[]): string[] {
 }
 
 /**
+ * A well-formed tag is a single token with no whitespace (#262). Tags in the mk
+ * convention are hyphen-separated, never space-separated — a tag containing
+ * whitespace (e.g. `"AIRE peer-review N-version"`, from an LLM emitting a
+ * space-joined list as one YAML item, or `mk remember --tags "foo bar"` quoted)
+ * is one opaque token that breaks FTS tag queries and tag filtering. Shared by
+ * the `tag-format` doctor check and `mk remember`'s write-time warning.
+ */
+export function isValidTag(tag: string): boolean {
+  return tag.length > 0 && !/\s/.test(tag);
+}
+
+/**
  * Legacy Juggl typed-link frontmatter keys (no longer generated).
  * Stripped on parse for backward compatibility with atoms serialized
  * before Juggl support was removed.

@@ -14,7 +14,7 @@ import type { Atom } from './types.js';
 // --- Public types ---
 
 export interface LintFinding {
-  category: 'contradiction' | 'stale' | 'orphan' | 'duplicate' | 'confidence_drift' | 'ttl_warning';
+  category: 'contradiction' | 'stale' | 'orphan' | 'duplicate' | 'confidence_drift' | 'ttl_warning' | 'composition';
   severity: 'warning' | 'info';
   atom_ids: string[];
   message: string;
@@ -245,6 +245,59 @@ function findTtlWarnings(atoms: Atom[]): LintFinding[] {
   return findings;
 }
 
+/**
+ * Store-composition skew (#316). Composition is a retrieval-quality variable:
+ * a belief-dominated store buries facts in recall (Mai's 89%-belief store sat a
+ * loud belief in the top-3 of 8/11 golden queries). Two store-level warnings:
+ *   - belief monoculture: beliefs make up > 80% of active atoms.
+ *   - composition gap: a core knowledge type has zero active atoms.
+ * Warn-only — surfaced by `mk lint`, exit-affecting only under `--strict`.
+ */
+const BELIEF_SKEW_THRESHOLD = 0.8; // > 80% of active atoms
+const COMPOSITION_CORE_TYPES = ['fact', 'decision', 'procedure', 'preference'] as const;
+// Composition is only a meaningful recall-quality signal once a store has
+// accumulated real knowledge. Below this many active atoms (e.g. a freshly
+// `mk init`'d store, or a lifecycle-seed-only store of ~11 procedures), the
+// monoculture % and the "missing core type" gap are both expected and noisy,
+// so skip the check entirely — avoids false-flagging fresh/small stores (#316).
+const MIN_ACTIVE_FOR_COMPOSITION = 20;
+
+function findCompositionSkew(atoms: Atom[]): LintFinding[] {
+  const active = atoms.filter((a) => a.frontmatter.status === 'active');
+  if (active.length < MIN_ACTIVE_FOR_COMPOSITION) return []; // too small to assess (also guards divide-by-zero)
+
+  const counts: Record<string, number> = {};
+  for (const a of active) counts[a.frontmatter.type] = (counts[a.frontmatter.type] ?? 0) + 1;
+  const histogram = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([t, n]) => `${t}:${n}`)
+    .join(', ');
+
+  const findings: LintFinding[] = [];
+
+  const beliefShare = (counts['belief'] ?? 0) / active.length;
+  if (beliefShare > BELIEF_SKEW_THRESHOLD) {
+    findings.push({
+      category: 'composition',
+      severity: 'warning',
+      atom_ids: [],
+      message: `belief monoculture: ${(beliefShare * 100).toFixed(0)}% of ${active.length} active atoms are beliefs — a loud belief can dominate recall and bury facts; consolidate or prune low-value beliefs (histogram: ${histogram})`,
+    });
+  }
+
+  const missing = COMPOSITION_CORE_TYPES.filter((t) => !(counts[t] > 0));
+  if (missing.length > 0) {
+    findings.push({
+      category: 'composition',
+      severity: 'warning',
+      atom_ids: [],
+      message: `composition gap: no active atoms of type(s) ${missing.join(', ')} — a healthy agent store usually carries these (histogram: ${histogram})`,
+    });
+  }
+
+  return findings;
+}
+
 // --- Main entry point ---
 
 export function lintMemoryStore(memoryDir: string, options?: LintOptions): LintResult {
@@ -258,6 +311,7 @@ export function lintMemoryStore(memoryDir: string, options?: LintOptions): LintR
     ...findNearDuplicates(atoms, memoryDir),
     ...findConfidenceDrift(atoms),
     ...findTtlWarnings(atoms),
+    ...findCompositionSkew(atoms),
   ];
 
   const warnings = findings.filter((f) => f.severity === 'warning').length;

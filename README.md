@@ -23,10 +23,11 @@
 - **Deciding if it fits your project?** [When to choose Memory Kernel](docs/when-to-choose-memory-kernel.md)
 - **Importing existing notes?** [Migration guide](docs/migration.md)
 - **Connecting it to Claude, Cursor, or another AI assistant?** [OpenClaw MCP guide](docs/openclaw-mcp.md)
+- **Integrating against the CLI?** [Atom lifecycle](docs/lifecycle.md) (statuses, promotion, tags) · [Behavioral contracts](docs/contracts.md) (draft visibility, `--json` shapes, FTS rules) · [Troubleshooting](docs/troubleshooting.md)
 
 ### For agents — install skills
 
-If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end. Both are **host-agnostic** at their core and **host-aware** where it matters — they work for NanoClaw container agents, OpenClaw plugin-based agents, MCP clients (Claude Desktop, Cursor, Continue), or a generic native setup, branching to host-specific plumbing only where memory-kernel actually needs to adapt.
+If you are an AI agent (or setting one up), Memory Kernel ships two host-side skills under [`skills/`](skills/) that handle installation and diagnostics end-to-end. Both are **host-agnostic** at their core and **host-aware** where it matters — they work for NanoClaw (a container-per-message agent runtime) agents, OpenClaw (a plugin-based agent runtime) agents, MCP clients (Claude Desktop, Cursor, Continue), or a generic native setup, branching to host-specific plumbing only where memory-kernel actually needs to adapt.
 
 - **[`/mk-memory-setup`](skills/mk-memory-setup/README.md)** — interactive full setup. Detects (or asks) which host you're targeting, then runs the universal flow: install the CLI, initialize the memory directory, seed identity + preference atoms, seed the **11 lifecycle atoms** (the agent's operating manual as typed memory — see [`skills/mk-memory-setup/seed-atoms/lifecycle/`](skills/mk-memory-setup/seed-atoms/lifecycle/)), render or expose memory the way your host expects, and schedule nightly `mk reflect` + render. Host-specific plumbing (NanoClaw mounts, OpenClaw plugin + AGENTS.md/MEMORY.md doctrine, MCP server config) lives in [`skills/mk-memory-setup/references/`](skills/mk-memory-setup/references/).
 
@@ -252,7 +253,7 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 |---------|-------------|
 | `mk init [dir]` | Initialize memory directory |
 | `mk status -d <dir> [--json]` | Show atom counts, tag stats, index status |
-| `mk remember -d <dir> --type <type> "body" [--json]` | Create an atom |
+| `mk remember -d <dir> --type <type> "body" [--tags ...] [--json]` | Create an atom. Warns if a `--tags` value contains whitespace (a quoted `--tags "a b c"` is stored as one token that breaks tag queries — pass separate args `--tags a b c`) |
 | `mk recall -d <dir> [--task "text"] [--embed] [--types <types...>] [--paths <paths...>] [--max-tokens N] [--include-episodes] [--include-drafts] [--decay-weight N] [--decay-half-life N] [--no-graph] [--reservations\|--no-reservations] [--json]` | Load context; `--task` enables FTS-based re-ranking; `--embed` enables hybrid FTS + semantic re-ranking (requires embeddings built via `mk reindex --embed`). Auto-extracted draft atoms (session-end extract output) excluded by default; `--include-drafts` opts them in |
 | `mk reflect -d <dir> [--json]` | Consolidate: dedup, expire, promote, detect conflicts |
 | `mk checkpoint -d <dir> [--json]` | Generate checkpoint / handoff bundle |
@@ -265,8 +266,8 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using an LLM (Claude CLI or Ollama) |
 | `mk observe <path> -d <dir> [--mode conversation\|document] [--model <model>] [--dry-run] [--json]` | Append LLM observations to `observations.md`. `--mode document` reads a `KNOWLEDGE/` doc and extracts its decisions/conclusions (vs. what happened in a conversation); `mk reflect` then turns observations into atoms. See the [`/mk-memory-setup`](skills/mk-memory-setup/SKILL.md) KNOWLEDGE step |
 | `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active |
-| `mk lint -d <dir> [--json] [--stale-days N]` | Semantic health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings |
-| `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity, lifecycle seed-set freshness, and the agent (`MK_BIN`) binary version; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
+| `mk lint -d <dir> [--json] [--stale-days N] [--strict]` | Semantic/knowledge health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings, and **store-composition skew** (belief monoculture >80% of active atoms, or a missing core type — a recall-quality signal, #316). Always exits 0 unless `--strict` (then warnings exit 1) |
+| `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity, lifecycle seed-set freshness, tag format (whitespace tokens), cron wrapper memory-dir, and the agent (`MK_BIN`) binary version; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
 | `mk eval -d <dir> [--fixture <path>] [--top-k N] [--threshold N] [--no-embed] [--json]` | Run golden-query recall fixtures (`<dir>/eval/*.yaml` by default) with **pass/fail exit codes** (0 pass / 1 below threshold / 2 runner error) — for CI regression gates and post-sync canaries |
 | `mk episode --session-id <id> --summary "text" [--json]` | Write a session episode |
 | `mk episodes [--limit N] [--json]` | List recent episodes |
@@ -393,6 +394,8 @@ const bundle = recallIsolated('./memory', 'agent-alpha', { task: 'review decisio
 // Share an atom with all agents
 shareAtom('./memory', 'DECI-2026-04-16-MY-CALL-1234', 'agent-alpha', { agent_id: 'agent-alpha', session_id: 's1' });
 ```
+
+Every `mk --json` output also has an **exported Zod schema** — `import { RecallOutputSchema, DoctorOutputSchema, RememberOutputSchema, EvalOutputSchema } from 'memory-kernel'` and `parse()` CLI output instead of guessing field names (#301).
 
 Full API covers event sourcing, replay, episodes, multi-agent merge, encryption, import, conflict resolution, per-agent isolation, and more. **[SDK reference →](docs/sdk-reference.md)** | **[Isolation guide →](docs/isolation.md)**
 
@@ -618,6 +621,8 @@ All environment variables are optional. memory-kernel works fully without any of
 ---
 
 ## Troubleshooting
+
+See **[docs/troubleshooting.md](docs/troubleshooting.md)** for the deep-dive runbook on the fleet-deployment failure modes (node-gyp rebuild, cron `PATH`/`MK_BIN`, `claude login` expiry, `fts_unavailable`, key-set-but-0-vectors). Quick table:
 
 | Problem | Fix |
 |---------|-----|

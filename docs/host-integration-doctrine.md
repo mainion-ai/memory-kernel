@@ -86,7 +86,7 @@ Default order at session start and during work:
 
 Agents that reach for secondary/support tools first will drift the system back to file-first.
 
-> **Semantic recall requires an embedding key on the server — and only `mk_recall` uses it.** `mk_recall(task=...)` takes the embedding (semantic) path only when the `mk-mcp` server process has `EMBEDDING_PROVIDER` + `EMBEDDING_API_KEY` set *and* a `task` is supplied (mk reads `EMBEDDING_API_KEY` first, then the provider-matched `OPENAI_API_KEY` / `VOYAGE_API_KEY` fallback). Without a key — or without a `task` — recall silently degrades to FTS-only, so conceptual lookups miss. Note `mk_context_bundle` currently uses the **FTS-only** recall path (it does not embed the query even with a key), so for semantic mid-session lookups prefer `mk_recall(task=...)`. Set the key in the MCP server's launch env, then `mk reindex -d <dir> --embed` once to build vectors.
+> **Semantic recall requires an embedding key on the server.** Both `mk_context_bundle(task=...)` and `mk_recall(task=...)` take the embedding (semantic) path when the `mk-mcp` server process has `EMBEDDING_PROVIDER` + `EMBEDDING_API_KEY` set *and* a `task` is supplied (mk reads `EMBEDDING_API_KEY` first, then the provider-matched `OPENAI_API_KEY` / `VOYAGE_API_KEY` fallback). Without a key — or without a `task` — recall silently degrades to FTS-only, so conceptual lookups miss. (As of v1.34.0, `mk_context_bundle` / `checkpoint()` embeds the query like `mk_recall`; #323 — earlier versions were FTS-only on the bundle path.) Set the key in the MCP server's launch env, then `mk reindex -d <dir> --embed` once to build vectors.
 
 ## Verify the integration (deployment-seam check)
 
