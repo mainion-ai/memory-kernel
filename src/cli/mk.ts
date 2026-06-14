@@ -195,6 +195,7 @@ function runInitCron(opts: {
   let memoryRepo: string | undefined;
   let maxTokens: number | undefined;
   let agentId: string | undefined;
+  let mkBin: string | undefined;
 
   if (opts.update) {
     if (!fs.existsSync(outputPath)) {
@@ -212,7 +213,14 @@ function runInitCron(opts: {
     memoryRepo = header.memoryRepo;
     maxTokens = header.maxTokens;
     agentId = header.agentId ?? undefined;
+    mkBin = header.mkBin ?? undefined; // preserve the baked agent binary on --update
   }
+
+  // Bake the agent's own mk binary (#345). The operator runs `mk init --cron`
+  // in the agent's environment, where MK_BIN points at the binary the agent
+  // actually uses; a fresh MK_BIN in the env refreshes a stale baked value,
+  // otherwise the --update-preserved header value stands.
+  if (process.env.MK_BIN) mkBin = process.env.MK_BIN;
 
   // CLI flags override anything pulled from the header (above).
   if (opts.dir) memoryDir = path.resolve(opts.dir);
@@ -243,6 +251,7 @@ function runInitCron(opts: {
     memoryRepo,
     maxTokens,
     agentId,
+    mkBin,
     kernelVersion: pkg.version,
     generatedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
   });

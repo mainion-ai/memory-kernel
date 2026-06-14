@@ -7,6 +7,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
 
 import {
   generateCronWrapper,
@@ -94,6 +98,74 @@ describe('generateCronWrapper', () => {
     expect(out).toContain('export PATH=');
     expect(out).toContain('command -v node');
     expect(out).toContain('$HOME/.local/bin');
+  });
+
+  it('bakes MK_BIN as a runtime-overridable default and prepends its dir to PATH (#345)', () => {
+    const out = generateCronWrapper({ ...baseOpts, mkBin: '/grp/npm/node_modules/.bin/mk' });
+    // Baked default (so a clean cron env still resolves), runtime-overridable.
+    expect(out).toContain('MK_BIN="${MK_BIN:-/grp/npm/node_modules/.bin/mk}"');
+    expect(out).toContain('[ -n "$MK_BIN" ] && export PATH="$(dirname "$MK_BIN"):$PATH"');
+    // Round-trips through the machine header so `--update` preserves it.
+    expect(out).toContain('# mk:mk-bin=/grp/npm/node_modules/.bin/mk');
+    expect(parseGeneratedHeader(out)?.mkBin).toBe('/grp/npm/node_modules/.bin/mk');
+    // The MK_BIN prepend must come AFTER the node-dir/local-bin fallback so it wins.
+    const lines = out.split('\n');
+    const fallbackIdx = lines.findIndex((l) => l.includes('command -v node') && l.startsWith('export PATH='));
+    const mkbinIdx = lines.findIndex((l) => l.startsWith('[ -n "$MK_BIN" ] && export PATH='));
+    expect(fallbackIdx).toBeGreaterThanOrEqual(0);
+    expect(mkbinIdx).toBeGreaterThan(fallbackIdx);
+  });
+
+  it('omits the mk-bin baking when no MK_BIN is known (no regression, inert line)', () => {
+    const out = generateCronWrapper(baseOpts); // no mkBin
+    expect(out).not.toContain('# mk:mk-bin=');
+    expect(out).toContain('MK_BIN="${MK_BIN:-}"'); // empty default → inert unless runtime MK_BIN set
+    expect(parseGeneratedHeader(out)?.mkBin).toBeNull();
+  });
+
+  // Run the generated PATH-setup block under a stripped PATH and resolve bare `mk`.
+  function resolveMkUnderStrippedPath(out: string, root: string, runtimeMkBin?: string): string {
+    const lines = out.split('\n');
+    const start = lines.findIndex((l) => l.includes('command -v node') && l.startsWith('export PATH='));
+    const end = lines.findIndex((l) => l.startsWith('[ -n "$MK_BIN" ] && export PATH='));
+    const block = lines.slice(start, end + 1).join('\n');
+    const env: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin', HOME: root };
+    if (runtimeMkBin !== undefined) env.MK_BIN = runtimeMkBin;
+    return execFileSync('bash', ['-c', `set -uo pipefail\n${block}\ncommand -v mk`], { encoding: 'utf8', env }).trim();
+  }
+
+  function fakeGroupNpmMk(): { root: string; mkBin: string } {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-cron-mkbin-'));
+    const binDir = path.join(root, 'npm', 'node_modules', '.bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const mkBin = path.join(binDir, 'mk');
+    fs.writeFileSync(mkBin, '#!/usr/bin/env bash\necho fake-mk-ok\n');
+    fs.chmodSync(mkBin, 0o755);
+    return { root, mkBin };
+  }
+
+  it('group-npm layout: BAKED MK_BIN finds mk under a stripped PATH with NO runtime MK_BIN (#345 — the real cron case)', () => {
+    const { root, mkBin } = fakeGroupNpmMk();
+    try {
+      // Wrapper generated in the agent env (MK_BIN baked); cron then runs it with
+      // a clean env that does NOT export MK_BIN. The baked value must still resolve.
+      const out = generateCronWrapper({ ...baseOpts, mkBin });
+      const resolved = resolveMkUnderStrippedPath(out, root /* no runtime MK_BIN */);
+      expect(resolved).toBe(mkBin);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('group-npm layout: a runtime MK_BIN overrides the baked default (#345)', () => {
+    const { root, mkBin } = fakeGroupNpmMk();
+    try {
+      const out = generateCronWrapper({ ...baseOpts, mkBin: '/stale/old/.bin/mk' });
+      const resolved = resolveMkUnderStrippedPath(out, root, mkBin); // runtime MK_BIN wins
+      expect(resolved).toBe(mkBin);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('reindexes WITH embeddings before render so new atoms get vectors (#303/#305)', () => {

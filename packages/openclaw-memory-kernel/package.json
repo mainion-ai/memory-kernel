@@ -19,7 +19,7 @@
     "INSTALL.md"
   ],
   "dependencies": {
-    "memory-kernel": "^1.33.1"
+    "memory-kernel": "^1.33.2"
   },
   "peerDependencies": {
     "openclaw": ">=2026.3.7",

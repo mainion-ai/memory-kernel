@@ -27,6 +27,13 @@ export interface CronWrapperOptions {
    * script uses `$(hostname -s)` so the same script works across hosts.
    */
   agentId?: string;
+  /**
+   * Absolute path to the agent's `mk` binary (the `MK_BIN` the agent runs —
+   * e.g. a group-npm `…/node_modules/.bin/mk`). Baked into the wrapper as a
+   * runtime-overridable default so a clean cron/systemd timer env (which won't
+   * export MK_BIN) can still find mk (#345). Omit when unknown.
+   */
+  mkBin?: string;
   /** Kernel version string for the header, e.g. `1.19.3`. */
   kernelVersion: string;
   /**
@@ -50,6 +57,7 @@ interface MachineHeader {
   memoryRepo: string;
   maxTokens: number;
   agentId: string | null; // null means "use $(hostname -s) at run time"
+  mkBin: string | null; // null means "rely on PATH / runtime MK_BIN only"
 }
 
 function resolveDefaults(opts: CronWrapperOptions): MachineHeader {
@@ -61,6 +69,7 @@ function resolveDefaults(opts: CronWrapperOptions): MachineHeader {
     memoryRepo: opts.memoryRepo ?? path.dirname(opts.memoryDir),
     maxTokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
     agentId: opts.agentId ?? null,
+    mkBin: opts.mkBin ?? null,
   };
 }
 
@@ -87,6 +96,9 @@ export function generateCronWrapper(opts: CronWrapperOptions): string {
     `${HEADER_PREFIX}max-tokens=${h.maxTokens}`,
     `${HEADER_PREFIX}agent-id=${h.agentId ?? '$(hostname -s)'}`,
   ];
+  // Only emit the mk-bin header when known, so `--update` round-trips it but a
+  // wrapper generated without it stays clean (no empty `# mk:mk-bin=` line).
+  if (h.mkBin) headerLines.push(`${HEADER_PREFIX}mk-bin=${h.mkBin}`);
 
   const body = [
     '',
@@ -96,10 +108,18 @@ export function generateCronWrapper(opts: CronWrapperOptions): string {
     '# left a fleet dark for 6 days (#303). `-u` and pipefail stay on.',
     'set -uo pipefail',
     '',
-    "# Make mk resolvable under cron's minimal PATH. mk installs alongside node,",
-    '# and `npm i -g`/`--user` installs land in ~/.local/bin — prepend both so the',
-    '# wrapper finds `mk` even when cron strips the interactive PATH (#303).',
+    "# Make mk resolvable under cron's minimal PATH. Fallbacks first: mk installs",
+    '# alongside node, and `npm i -g`/`--user` installs land in ~/.local/bin.',
     'export PATH="$(dirname "$(command -v node 2>/dev/null || echo /usr/bin/node)"):$HOME/.local/bin:$PATH"',
+    '# Prefer the agent\'s OWN binary. MK_BIN — the same var `mk upgrade` resolves —',
+    '# is baked from the env at `mk init --cron` time (a clean cron/systemd timer',
+    '# env will NOT export it) and stays overridable at runtime. Its dir is',
+    '# prepended to the FRONT of PATH so the wrapper finds `mk` even when it is only',
+    '# a group-npm local dep (…/node_modules/.bin/mk, in neither node-dir nor',
+    '# ~/.local/bin) and cron has stripped the interactive PATH (#345). Inert when',
+    '# MK_BIN is neither baked nor exported.',
+    `MK_BIN="${'$'}{MK_BIN:-${h.mkBin ?? ''}}"`,
+    '[ -n "$MK_BIN" ] && export PATH="$(dirname "$MK_BIN"):$PATH"',
     '',
     '# Paths — embedded by mk init --cron. Override at runtime by exporting',
     '# the matching MK_* env var (useful for testing without regenerating).',
@@ -233,6 +253,7 @@ export function parseGeneratedHeader(content: string): MachineHeader | null {
     memoryRepo: found['memory-repo'] ?? path.dirname(found['memory-dir']),
     maxTokens: Number.isInteger(maxTokens) && maxTokens > 0 ? maxTokens : DEFAULT_MAX_TOKENS,
     agentId,
+    mkBin: found['mk-bin'] ?? null,
   };
 }
 

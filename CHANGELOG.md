@@ -27,6 +27,12 @@ The `.github/workflows/dependabot-auto-merge.yml` poll loop queries the PR's `st
 
 No library code, tests, or build outputs change — CI-infrastructure-only fix, no version bump.
 
+## [1.33.2] — 2026-06-14
+
+### Fixed — `mk init --cron` wrapper resolves `mk` via `MK_BIN` (group-npm nightly no longer goes dark) (#345)
+
+The generated nightly sync wrapper set `PATH` to node's dir + `~/.local/bin`, but not the agent's actual `mk` location. On a group-npm-only host (mk is a local dep at `…/node_modules/.bin/mk` — the `MK_BIN`, in neither of those dirs) bare `mk` wasn't found, so reflect/reindex/render all failed with `mk: command not found` and the render went stale (Taj's nightly was dark 34h; sibling of #340). `mk init --cron` now **bakes `MK_BIN`** — the same var `mk upgrade` resolves, read from the env where the operator runs it — into the wrapper as a runtime-overridable default (`MK_BIN="${MK_BIN:-<baked>}"`) and prepends its dir to the **front** of `PATH`, so the wrapper invokes the agent's own binary even when the cron/systemd timer hands it a clean env with no `MK_BIN` exported. Baked into the `# mk:mk-bin=` header so `--update` preserves it; falls back to node-dir + `~/.local/bin` when no `MK_BIN` is known. +5 tests (`test/cron-template.test.ts`) incl. a smoke-run that resolves bare `mk` against the baked value under a stripped PATH with **no** runtime `MK_BIN` (the real cron case) + a runtime-override case. No public API change — PATCH-class. (The issue's secondary — `mk init --cron` baking a container memory-dir that doesn't exist on the host — is tracked separately in #347.)
+
 ## [1.33.1] — 2026-06-14
 
 Post-v1.33.0 bugfixes from the fleet deploy. No public API change — PATCH.
