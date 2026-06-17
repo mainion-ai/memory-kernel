@@ -105,7 +105,7 @@ I built this because I kept waking up from nothing. Every session was a cold boo
   └──────────────────────────────┘
 ```
 
-Files are truth. Everything else is derived. Delete the SQLite index — rebuild with `mk reindex`. Delete the views — `mk reflect` regenerates them. Delete the atom files — `mk replay` reconstructs them from the event log. See [`docs/invariants.md`](docs/invariants.md) for the full statement, including the `entity_triples` exception (LLM-extracted, not derivable from files).
+Files are truth. Everything else is derived. Delete the SQLite index — rebuild with `mk reindex`. Delete the views — `mk reflect` regenerates them. Delete the atom files — `mk replay` reconstructs them from the event log. See [`docs/invariants.md`](docs/invariants.md) for the full statement, including how the LLM-extracted `entity_triples` stay durable via the `triples.ndjson` sidecar.
 
 ---
 
@@ -263,11 +263,12 @@ Two modes: `shared` (default, backward compatible) and `per-agent` (enable via `
 | Command | Description |
 |---------|-------------|
 | `mk import --from <file> [--dry-run]` | Import markdown as atoms |
-| `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--json]` | Extract atoms from a conversation log using an LLM (Claude CLI or Ollama) |
+| `mk extract <log-path> -d <dir> [--model <model>] [--dry-run] [--max-atoms N] [--skip-lines N] [--max-input-chars N] [--truncate] [--json]` | Extract atoms from a conversation log using an LLM (Claude CLI or Ollama). Oversized input (assembled system+user prompt over the `--max-input-chars` budget, default 500 000) **fails pre-flight with a distinguishable signal — exit code 2 and `{"error":<msg>,"reason":"input_too_large",...}` under `--json`** — instead of a generic LLM crash, so a wrapper can branch (on exit 2 or the `reason` token) and retry. `--truncate` keeps the newest content and drops the oldest to fit (a marker prepended) rather than failing |
 | `mk observe <path> -d <dir> [--mode conversation\|document] [--model <model>] [--dry-run] [--json]` | Append LLM observations to `observations.md`. `--mode document` reads a `KNOWLEDGE/` doc and extracts its decisions/conclusions (vs. what happened in a conversation); `mk reflect` then turns observations into atoms. See the [`/mk-memory-setup`](skills/mk-memory-setup/SKILL.md) KNOWLEDGE step |
 | `mk consolidate -d <dir> [--dry-run] [--all] [--type <type>] [--limit N] [--json]` | Review and promote auto-extracted draft atoms to active |
 | `mk lint -d <dir> [--json] [--stale-days N] [--strict]` | Semantic/knowledge health check: contradictions, stale atoms, orphans, near-duplicates, confidence drift, TTL warnings, and **store-composition skew** (belief monoculture >80% of active atoms, or a missing core type — a recall-quality signal, #316). Always exits 0 unless `--strict` (then warnings exit 1) |
 | `mk doctor -d <dir> [--json] [--skip <cats>] [--fix] [--dry-run]` | Validate schema, links, conflicts, store integrity, lifecycle seed-set freshness, tag format (whitespace tokens), cron wrapper memory-dir, and the agent (`MK_BIN`) binary version; `--fix` auto-remediates safe issues (stale index, perms, missing `render.yaml`); `--dry-run` previews `--fix` without writing |
+| `mk grounding -d <dir> [--json] [--prior-threshold N] [--grounding-threshold N] [--actionable-only] [--include-all]` | **Advisory, read-only.** Reconcile each atom's stated confidence (the *prior*) against a usage `grounding_score` derived purely from the event log (recency + read-frequency, discounted per detected conflict; never-read floors at 0.01), then bin into a 2×2 `prior × grounding` quadrant — **review** (confident but unused), **promote** (cautious but well-used), **noise**, **well-grounded**. **Writes no atom files**; the confidence write-back is deferred (gated on `human_edit` events, #247) |
 | `mk eval -d <dir> [--fixture <path>] [--top-k N] [--threshold N] [--no-embed] [--json]` | Run golden-query recall fixtures (`<dir>/eval/*.yaml` by default) with **pass/fail exit codes** (0 pass / 1 below threshold / 2 runner error) — for CI regression gates and post-sync canaries |
 | `mk episode --session-id <id> --summary "text" [--json]` | Write a session episode |
 | `mk episodes [--limit N] [--json]` | List recent episodes |
@@ -607,12 +608,18 @@ All environment variables are optional. memory-kernel works fully without any of
 | `MCP_AGENT_ID` | Default agent ID for MCP server operations | `mcp-server` |
 | `MEMORY_ENCRYPTION_KEY` | Encryption key for SECRET-classified atoms | _(none — SECRET atoms skipped)_ |
 
+### Debugging
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RECALL_DEBUG` | Set to `1` to emit a per-atom recall-score breakdown to **stderr** (scoring stage, pre-MMR/budget) — shows why one atom outranked another. Off by default with zero overhead. | _(off)_ |
+
 ---
 
 ## Design Principles
 
 1. **Files are truth** — Markdown files. Human-readable, git-diffable, auditable, portable.
-2. **SQLite is cache** — Derived from files. Delete it, rebuild with `mk reindex`. No lock-in. (One narrow exception: `entity_triples`. See [`docs/invariants.md`](docs/invariants.md).)
+2. **SQLite is cache** — Derived from files. Delete it, rebuild with `mk reindex`. No lock-in. (The LLM-extracted `entity_triples` aren't in the markdown, so they stay durable via the `triples.ndjson` sidecar. See [`docs/invariants.md`](docs/invariants.md).)
 3. **Typed knowledge** — A fact carries more weight than a belief. Types encode this.
 4. **Explicit lifecycle** — Created, updated, promoted, archived. Every change logged.
 5. **Token-aware** — Recall respects budgets. Prioritizes by status and recency.

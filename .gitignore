@@ -4,6 +4,9 @@
 # Personal session scratchpad (never commit)
 .remember/
 
+# Local-only working notes (e.g. ralph-loop prompt drafts)
+*.local.md
+
 # Node modules
 node_modules/
 dist/
@@ -50,3 +53,6 @@ memory-kernel-*.tgz
 # Once #152 ships and the subpackage gets its own canonical lock, this
 # entry can be removed.
 packages/openclaw-memory-kernel/package-lock.json
+
+# Coverage output (vitest --coverage)
+coverage/

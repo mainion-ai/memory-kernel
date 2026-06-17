@@ -1,16 +1,17 @@
 /**
- * Shared CLI helper for looking up an atom's file path by atom ID.
+ * Engine helper for looking up an atom's file path by atom ID.
  *
- * Extracted from `relate.ts` and `supersede.ts` which had byte-identical
- * copies of the same logic (issue #70).
+ * Index-first with a file-scan fallback. Lives in the engine layer (not
+ * `src/cli/`) so engine modules — e.g. `supersede.ts` — can use it without a
+ * layering inversion (#359). The CLI commands (`relate`, `supersede`,
+ * `execute`) import it from here.
+ *
+ * Originally extracted from `relate.ts`/`supersede.ts` which had byte-identical
+ * copies of the same logic (#70).
  */
 
-import {
-  listAtomFiles,
-  readAtom,
-  indexExists,
-  openIndex,
-} from '../index.js';
+import { listAtomFiles, readAtom } from './store.js';
+import { indexExists, openIndex } from './index-db.js';
 
 /**
  * Look up the on-disk file for an atom by ID. Index-first, with a

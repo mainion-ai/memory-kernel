@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { initMemoryDir, createAtom, listAtoms, closeAllIndexes, markExecuted } from '../src/index.js';
+import { initMemoryDir, createAtom, listAtoms, closeAllIndexes } from '../src/index.js';
+import { markExecuted } from '../src/execute.js';
 import { readEvents } from '../src/event-log.js';
 
 let testDir: string;

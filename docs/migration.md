@@ -262,4 +262,4 @@ mk reindex -d /path/to/memory   # Rebuild index from files
 mk reflect -d /path/to/memory   # Re-run lifecycle
 ```
 
-Files are always the source of truth. The index is derived and rebuildable. See [`invariants.md`](invariants.md) for the full statement, including the `entity_triples` exception that is preserved via temp-table snapshot inside `reindex` (and discarded permanently if `.memory-index.db` is removed outside of `mk reindex`).
+Files are always the source of truth. The index is derived and rebuildable. See [`invariants.md`](invariants.md) for the full statement, including how the LLM-extracted `entity_triples` (not stored in the atom markdown) stay durable via the `triples.ndjson` sidecar and are rebuilt by `mk reindex` even if `.memory-index.db` is deleted.

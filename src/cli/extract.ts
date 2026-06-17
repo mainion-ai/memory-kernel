@@ -12,7 +12,7 @@ import path from 'path';
 import type { Command } from 'commander';
 import { resolveDir } from './resolve-dir.js';
 import { exitWithError } from './cli-util.js';
-import { extractFromLog } from '../extract.js';
+import { extractFromLog, ExtractInputTooLargeError } from '../extract.js';
 import type { ExtractedAtomResult } from '../types.js';
 
 const STATUS_ICONS: Record<ExtractedAtomResult['status'] | 'skipped', string> = {
@@ -41,6 +41,8 @@ export function registerExtractCommand(program: Command): void {
     .option('--no-conflict-detect', 'Disable Tier-1+Tier-2 semantic conflict detection during ingestion')
     .option('--conflict-confirm-model <model>', 'LLM model used for Tier-2 conflict confirmation (default: same as --model)')
     .option('--preference-pass', 'Run a dedicated second LLM pass focused exclusively on preference extraction, enforcing specific vocabulary preservation')
+    .option('--max-input-chars <n>', 'Max characters for the assembled prompt (system + user); over-budget input fails (exit 2) unless --truncate')
+    .option('--truncate', 'Truncate oversized input to fit the size budget instead of failing (oldest/head content dropped, newest kept, a marker prepended)')
     .action(async (logPath: string, opts: {
       dir: string;
       agentId?: string;
@@ -53,6 +55,8 @@ export function registerExtractCommand(program: Command): void {
       conflictDetect?: boolean;
       conflictConfirmModel?: string;
       preferencePass?: boolean;
+      maxInputChars?: string;
+      truncate?: boolean;
     }) => {
       const resolvedLog = path.resolve(logPath);
       if (!fs.existsSync(resolvedLog)) {
@@ -74,6 +78,15 @@ export function registerExtractCommand(program: Command): void {
         exitWithError('--skip-lines must be a non-negative integer', opts.json);
       }
 
+      let maxInputChars: number | undefined;
+      if (opts.maxInputChars !== undefined) {
+        const parsed = Number(opts.maxInputChars);
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          exitWithError('--max-input-chars must be a positive integer', opts.json);
+        }
+        maxInputChars = parsed;
+      }
+
       try {
         const result = await extractFromLog({
           logPath: resolvedLog,
@@ -87,6 +100,8 @@ export function registerExtractCommand(program: Command): void {
           conflictDetect: opts.conflictDetect,
           conflictConfirmModel: opts.conflictConfirmModel,
           preferencePass: opts.preferencePass,
+          maxInputChars,
+          truncate: opts.truncate,
         });
 
         if (opts.json) {
@@ -96,6 +111,13 @@ export function registerExtractCommand(program: Command): void {
 
         // Plain text output
         const logName = path.basename(resolvedLog);
+
+        if (result.truncation) {
+          const t = result.truncation;
+          console.log(
+            `⚠ input truncated: sent ${t.sent_chars} of ${t.original_chars} chars (${t.omitted_chars} omitted from the beginning)`,
+          );
+        }
 
         if (result.atoms.length === 0 && result.skipped === 0) {
           console.log(`Nothing extracted from ${logName}`);
@@ -141,6 +163,29 @@ export function registerExtractCommand(program: Command): void {
           console.log('\nRun without --dry-run to write atoms.');
         }
       } catch (err) {
+        // Distinguishable signal for oversized input: exit code 2 + a structured
+        // JSON payload, so a cron wrapper can branch on it (retry with --truncate
+        // / --skip-lines) instead of treating it as a generic crash.
+        if (err instanceof ExtractInputTooLargeError) {
+          if (opts.json) {
+            console.log(
+              JSON.stringify(
+                {
+                  error: err.message,
+                  reason: 'input_too_large',
+                  exit_code: 2,
+                  input_chars: err.inputChars,
+                  limit: err.limit,
+                },
+                null,
+                2,
+              ),
+            );
+          } else {
+            console.error(`✗ ${err.message}`);
+          }
+          process.exit(2);
+        }
         const msg = err instanceof Error ? err.message : String(err);
         exitWithError(msg, opts.json);
       }

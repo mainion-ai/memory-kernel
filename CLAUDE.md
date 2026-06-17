@@ -38,7 +38,7 @@ The `src/mcp/server.ts` MCP-server `version` is intentionally independent — do
 - Error handling: use `exitWithError(message, opts.json)` helper from `src/cli/cli-util.ts`.
 - Relation types: `extends`, `contradicts`, `supports`, `caused_by`, `supersedes`, `applied_to`, `related`.
 - Wander has typed edge weights with presets: `constitution`, `tension`, `narrative`.
-- Files are the source of truth; the SQLite index is a derived cache. See [`docs/invariants.md`](docs/invariants.md) for the full statement (including the `entity_triples` exception).
+- Files are the source of truth; the SQLite index is a derived cache. See [`docs/invariants.md`](docs/invariants.md) for the full statement (including how the LLM-extracted `entity_triples` stay durable via the `triples.ndjson` sidecar).
 
 ## Per-agent isolation
 

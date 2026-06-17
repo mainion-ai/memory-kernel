@@ -18,7 +18,7 @@ import { normalizeTimestamp } from '../format.js';
 import { RELATION_TYPES } from '../types.js';
 import type { Relation } from '../types.js';
 import { exitWithError } from './cli-util.js';
-import { findAtomFile } from './atom-lookup.js';
+import { findAtomFile } from '../atom-lookup.js';
 
 /**
  * Register `mk relate <source-id> <relation-type> <target-id>` command.

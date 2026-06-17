@@ -180,8 +180,11 @@ describe('tagDistance — BFS frontier cap (#102)', () => {
   it(
     'warning fires at most once per tagDistance call (no per-step spam)',
     // Hub built via bulkHubAtoms (direct writes + one reindex), so setup stays
-    // sub-second under parallel-worker contention (#319). 15s is ample.
-    { timeout: 15000 },
+    // sub-second under parallel-worker contention (#319). 15s is ample for a
+    // normal run; raised to 30s so the 1200-atom hub build + reindex + wander
+    // also clears the bar under v8 coverage instrumentation (`test:coverage`,
+    // #390), which adds significant per-call overhead.
+    { timeout: 30000 },
     () => {
       // Build a hub of 1200 atoms so multiple BFS steps would each exceed
       // the cap if the warning were per-step rather than per-call. We

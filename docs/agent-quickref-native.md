@@ -132,7 +132,7 @@ mk migrate-relations -d ~/mk-memory --apply   # optional: backfill relation edge
 
 ### Upgrading from v1.1.x
 
-The first `mk reindex` after upgrading silently migrates the index schema (v3 → v4). This is safe — the index is a derived cache rebuilt from files (see [`invariants.md`](invariants.md) for the full statement plus the `entity_triples` exception preserved across `reindex`). To add embeddings after upgrade:
+The first `mk reindex` after upgrading silently migrates the index schema (v3 → v4). This is safe — the index is a derived cache rebuilt from files (see [`invariants.md`](invariants.md) for the full statement plus how the LLM-extracted `entity_triples` stay durable via the `triples.ndjson` sidecar across `reindex`). To add embeddings after upgrade:
 
 ```bash
 mk reindex -d ~/mk-memory              # rebuild index (schema v4)

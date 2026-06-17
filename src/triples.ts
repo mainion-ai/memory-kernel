@@ -11,6 +11,7 @@
 
 import { openIndex } from './index-db.js';
 import { normalizeTimestamp } from './format.js';
+import { appendTriplesSidecar } from './triples-sidecar.js';
 import type { EntityTriple, TripleInput } from './types.js';
 
 function normalize(s: string): string {
@@ -45,20 +46,29 @@ export function insertTriples(
     `INSERT INTO entity_triples (atom_id, subject, predicate, object, confidence, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
+  // Collect the rows actually written so the durable sidecar (#370) mirrors the
+  // table exactly — same normalization, same created_at, same skip rules.
+  const written: EntityTriple[] = [];
   const tx = db.transaction((rows: readonly TripleInput[]) => {
     for (const t of rows) {
       if (!t.subject || !t.predicate || !t.object) continue;
-      stmt.run(
-        atomId,
-        normalize(t.subject),
-        normalize(t.predicate),
-        normalize(t.object),
-        t.confidence ?? 1.0,
-        now,
-      );
+      const row: EntityTriple = {
+        atom_id: atomId,
+        subject: normalize(t.subject),
+        predicate: normalize(t.predicate),
+        object: normalize(t.object),
+        confidence: t.confidence ?? 1.0,
+        created_at: now,
+      };
+      stmt.run(row.atom_id, row.subject, row.predicate, row.object, row.confidence, row.created_at);
+      written.push(row);
     }
   });
   tx(triples);
+  // Append after the DB commit so the sidecar never records triples that failed
+  // to insert. If this append fails, the next reindex reconciles the sidecar
+  // from the table anyway.
+  appendTriplesSidecar(memoryDir, written);
 }
 
 /**

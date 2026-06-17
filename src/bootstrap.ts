@@ -71,7 +71,10 @@ export function bootstrapEvents(opts: {
     }
     const allEvents = [...importEvents, ...existingEvents];
     const ndjson = allEvents.map((e) => JSON.stringify(e)).join('\n') + '\n';
-    writeFileAtomic(logPath, ndjson);
+    // Owner-only (#138): the event log carries atom snapshots/evidence from
+    // possibly-SECRET atoms. writeFileAtomic without a mode lands at the umask
+    // default (0o644) — must mirror appendEvent's 0o600 (#389).
+    writeFileAtomic(logPath, ndjson, 0o600);
 
     return {
       imported: importEvents.length,

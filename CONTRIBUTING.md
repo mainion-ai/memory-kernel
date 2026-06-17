@@ -43,9 +43,21 @@ npm run build
 # Unit tests (vitest)
 npm test
 
+# Coverage report (v8) — report-only, also runs in CI without gating
+npm run test:coverage
+
 # Benchmark suite
 npm run bench
 ```
+
+> **Coverage caveat:** `test:coverage` (config `vitest.coverage.config.ts`)
+> excludes the subprocess CLI e2e tests — they spawn `node dist/cli/mk.js`, so the
+> child process is not instrumented by the parent's in-process v8 coverage and
+> contributes none. As a result `src/cli/**` **under-reports** (the command
+> handlers run only in the child), and `src/mcp/server.ts`'s stdio-transport
+> bootstrap under-reports (no in-process transport test yet — see #391; the
+> tool/resource registration *is* instrumented via the in-process MCP tests).
+> Read the figures as engine/in-process coverage, not whole-program.
 
 ---
 
@@ -78,7 +90,7 @@ npm run bench
 
 - TypeScript strict mode — no `any`, no implicit returns.
 - Prefer small, composable, testable functions over classes.
-- **Files are the source of truth** — memory lives on disk; the SQLite index is a derived cache. See [`docs/invariants.md`](docs/invariants.md) for the full statement, including the `entity_triples` exception. Keep I/O explicit.
+- **Files are the source of truth** — memory lives on disk; the SQLite index is a derived cache. See [`docs/invariants.md`](docs/invariants.md) for the full statement, including how the LLM-extracted `entity_triples` stay durable via the `triples.ndjson` sidecar. Keep I/O explicit.
 - Do not add comments that restate what the code does; prefer self-explanatory names.
 - Run `npm run lint:all` before pushing (`tsc --noEmit`).
 

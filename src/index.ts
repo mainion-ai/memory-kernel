@@ -151,8 +151,8 @@ export {
 export type { LifecycleSeedEntry, SeedResult, SeedSlugResult, SeedAction, SeedLifecycleOptions } from './seed.js';
 export { runUpgrade } from './upgrade.js';
 export type { UpgradeOptions, UpgradeResult, UpgradeStep } from './upgrade.js';
-export { markExecuted } from './cli/execute.js';
-export type { ExecuteOptions, ExecuteResult } from './cli/execute.js';
+export { markExecuted } from './execute.js';
+export type { ExecuteOptions, ExecuteResult } from './execute.js';
 export type {
   RetainOptions,
   ResolveConflictOptions,
@@ -274,6 +274,29 @@ export type {
 export { lintMemoryStore } from './lint.js';
 export type { LintFinding, LintOptions, LintResult } from './lint.js';
 
+// Grounding (confidence-vs-usage reconciliation — advisory/read-only, #245)
+export {
+  computeGrounding,
+  classifyQuadrant,
+  DEFAULT_HALF_LIVES,
+  DEFAULT_HALF_LIFE,
+  DEFAULT_ACCESS_HALF_SATURATION,
+  DEFAULT_CONFLICT_DECAY,
+  DEFAULT_PRIOR_THRESHOLD,
+  DEFAULT_GROUNDING_THRESHOLD,
+  DEFAULT_PROMOTE_MIN_SESSIONS,
+  DEFAULT_NOISE_SESSIONS,
+} from './grounding.js';
+export type {
+  GroundingQuadrant,
+  GroundingOptions,
+  GroundingInputs,
+  GroundingReport,
+  GroundingResult,
+  ClassifyContext,
+  QuadrantVerdict,
+} from './grounding.js';
+
 // Eval — golden-query recall runner (#300)
 export { loadFixtures, runFixture, runEval, resolveEmbed, exitCodeForEval, EvalError, DEFAULT_TOP_K, DEFAULT_THRESHOLD } from './eval.js';
 export type { EvalQuery, EvalFixture, EvalQueryResult, EvalResult, EmbedMode, RunEvalOptions } from './eval.js';
@@ -283,7 +306,13 @@ export { migrate } from './migrate.js';
 export type { MigrateStrategy, MigrateOptions, MigrateResult } from './migrate.js';
 
 // Extract (automatic atom extraction from conversation logs)
-export { extractFromLog } from './extract.js';
+export {
+  extractFromLog,
+  planExtractInput,
+  ExtractInputTooLargeError,
+  DEFAULT_MAX_INPUT_CHARS,
+} from './extract.js';
+export type { ExtractInputPlan } from './extract.js';
 export type { ExtractOptions, ExtractResult, ExtractedAtomResult, CandidateAtom } from './types.js';
 
 // LLM abstraction — runtime helpers (callLLM, resolveProvider) became internal

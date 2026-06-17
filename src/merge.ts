@@ -107,7 +107,9 @@ export function mergeEventLogs(opts: MergeOptions): MergeResult {
     return tCmp !== 0 ? tCmp : a.event_id.localeCompare(b.event_id);
   });
   const ndjson = mergedEvents.map((e) => JSON.stringify(e)).join('\n') + '\n';
-  writeFileAtomic(logPath, ndjson);
+  // Owner-only (#138/#389): mirror appendEvent's 0o600 — a bare writeFileAtomic
+  // lands at the umask default (0o644), exposing SECRET-derived event content.
+  writeFileAtomic(logPath, ndjson, 0o600);
 
   // Replay merged events → canonical atom state
   const evidenceDir = path.join(localDir, 'EVIDENCE');

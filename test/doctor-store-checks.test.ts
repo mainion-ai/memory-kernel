@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { initMemoryDir, createAtom, closeAllIndexes, openIndex, reindex } from '../src/index.js';
+import { initMemoryDir, createAtom, closeAllIndexes, openIndex, reindex, bootstrapEvents } from '../src/index.js';
 import { initIsolatedBase, initAgentStore } from '../src/isolation.js';
 import { storeSchemaCheck } from '../src/doctor/checks/store-schema.js';
 import { storePermissionsCheck } from '../src/doctor/checks/store-permissions.js';
@@ -78,6 +78,55 @@ describe('storePermissionsCheck', () => {
     const result = storePermissionsCheck.run(ctx()) as Awaited<ReturnType<typeof storePermissionsCheck.run>>;
     expect(result.ok).toBe(false);
     expect(result.issues.join('\n')).toContain('.memory-index.db has mode 644');
+  });
+
+  // #389 — the NDJSON sidecars hold SECRET-derived content and are written 0o600;
+  // the audit must catch a drifted mode on them too.
+  it('flags a permissive events.ndjson sidecar', () => {
+    if (process.platform === 'win32') return;
+    initMemoryDir(testDir);
+    reindex(testDir);
+    closeAllIndexes();
+    const eventsPath = path.join(testDir, 'events.ndjson');
+    fs.writeFileSync(eventsPath, '{"action":"x"}\n');
+    fs.chmodSync(eventsPath, 0o644);
+
+    const result = storePermissionsCheck.run(ctx()) as Awaited<ReturnType<typeof storePermissionsCheck.run>>;
+    expect(result.ok).toBe(false);
+    expect(result.issues.join('\n')).toContain('events.ndjson has mode 644');
+  });
+
+  it('flags a permissive triples.ndjson sidecar', () => {
+    if (process.platform === 'win32') return;
+    initMemoryDir(testDir);
+    reindex(testDir);
+    closeAllIndexes();
+    const triplesPath = path.join(testDir, 'triples.ndjson');
+    fs.writeFileSync(triplesPath, '{"atom_id":"A","subject":"s","predicate":"p","object":"o"}\n');
+    fs.chmodSync(triplesPath, 0o600); // start clean
+    let result = storePermissionsCheck.run(ctx()) as Awaited<ReturnType<typeof storePermissionsCheck.run>>;
+    expect(result.ok).toBe(true); // a 0o600 sidecar must not be flagged
+
+    fs.chmodSync(triplesPath, 0o640);
+    result = storePermissionsCheck.run(ctx()) as Awaited<ReturnType<typeof storePermissionsCheck.run>>;
+    expect(result.ok).toBe(false);
+    expect(result.issues.join('\n')).toContain('triples.ndjson has mode 640');
+  });
+
+  // #389 regression: bootstrapEvents rewrites events.ndjson via writeFileAtomic.
+  // Without an explicit 0o600 it landed at the umask default (0o644) and the
+  // sidecar check would false-positive a healthy post-bootstrap store. Exercise
+  // the real write path, not a hand-set mode.
+  it('keeps events.ndjson 0o600 after bootstrapEvents (no false positive)', () => {
+    if (process.platform === 'win32') return;
+    initMemoryDir(testDir);
+    createAtom({ memoryDir: testDir, agent_id: 'a', session_id: 's', type: 'fact', slug: 'paris', body: 'Capital is Paris.' });
+    closeAllIndexes();
+    bootstrapEvents({ memoryDir: testDir, agent_id: 'a', session_id: 's' });
+
+    expect(fs.statSync(path.join(testDir, 'events.ndjson')).mode & 0o777).toBe(0o600);
+    const result = storePermissionsCheck.run(ctx()) as Awaited<ReturnType<typeof storePermissionsCheck.run>>;
+    expect(result.ok).toBe(true);
   });
 });
 

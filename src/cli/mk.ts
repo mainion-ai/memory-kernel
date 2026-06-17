@@ -55,6 +55,7 @@ import { registerRelinkCommand } from './relink.js';
 import { registerCitationsCommand } from './citations.js';
 import { registerEnrichRelationsCommand } from './enrich-relations.js';
 import { registerLintCommand } from './lint.js';
+import { registerGroundingCommand } from './grounding.js';
 import { registerEvalCommand } from './eval.js';
 import { registerExtractCommand } from './extract.js';
 import { registerConsolidateCommand } from './consolidate.js';
@@ -106,6 +107,30 @@ function resolveDir(dir: string, agent?: string): string {
 /** Get the --agent value from the root program options. */
 function getAgent(): string | undefined {
   return program.opts().agent;
+}
+
+/**
+ * Resolve the effective memory directory for a command, applying `--agent`
+ * isolation. Centralizes the `resolveDir(opts.dir, getAgent())` boilerplate
+ * that every command handler opened with (#360). `--dir` is a per-command
+ * option with a `./memory` default, so `opts.dir` is always a string.
+ */
+function resolveContextDir(opts: { dir: string }): string {
+  return resolveDir(opts.dir, getAgent());
+}
+
+/**
+ * Exit with the standard "Memory directory not found" error when `dir` is
+ * absent — centralizes the existence-check boilerplate that opened most command
+ * handlers (#369). `hint` (default true) controls the `Run "mk init" first.`
+ * suffix so each call site keeps its exact message. Does nothing when `dir`
+ * exists; otherwise `exitWithError` terminates the process (exit 1). The
+ * `mk doctor` handler is intentionally NOT routed through this — it exits 2 with
+ * its own JSON/console output.
+ */
+function requireExistingDir(dir: string, json?: boolean, { hint = true }: { hint?: boolean } = {}): void {
+  if (fs.existsSync(dir)) return;
+  exitWithError(`Memory directory not found: ${dir}${hint ? '\n  Run "mk init" first.' : ''}`, json);
 }
 
 // --- mk init ---
@@ -381,10 +406,8 @@ program
       return;
     }
 
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
 
     const atoms = listAtoms(memoryDir);
     const eventCount = countEvents(memoryDir);
@@ -484,10 +507,8 @@ program
     embed?: boolean;
     json?: boolean;
   }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
     // Determine no_reservations:
     //   --no-reservations → force off (no_reservations = true)
     //   --reservations    → force on  (no_reservations = false, overrides task auto-disable)
@@ -557,10 +578,8 @@ program
     dir: string; task?: string; maxTokens?: number;
     agentId: string; sessionId: string; reflect: boolean; json?: boolean;
   }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json, { hint: false });
 
     const result = await checkpoint({
       memoryDir,
@@ -603,10 +622,8 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
     const result = reflect({
       memoryDir,
       agent_id: opts.agentId,
@@ -636,10 +653,8 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-session')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
     // GC is just reflect with focus on expiry
     const result = reflect({
       memoryDir,
@@ -689,7 +704,7 @@ program
       fix?: boolean;
       dryRun?: boolean;
     }) => {
-      const memoryDir = resolveDir(opts.dir, getAgent());
+      const memoryDir = resolveContextDir(opts);
       if (!fs.existsSync(memoryDir)) {
         // Hard error: cannot run any check. Exit code 2 per #140 spec.
         const msg = `Memory directory not found: ${memoryDir}\n  Run "mk init" first.`;
@@ -833,10 +848,8 @@ program
   .option('--embed', 'Also (re)compute embeddings for all atoms')
   .option('--json', 'Output results as JSON')
   .action(async (opts: { dir: string; embed?: boolean; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json, { hint: false });
 
     if (!opts.json) {
       console.log(`Rebuilding index for ${memoryDir}...`);
@@ -914,10 +927,8 @@ program
     slug?: string; tags?: string[];
     agentId: string; sessionId: string; json?: boolean;
   }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json, { hint: false });
 
     // Generate slug from body if not provided; fall back to timestamp if body yields empty string
     const slug = (opts.slug ?? body
@@ -990,10 +1001,8 @@ program
   .option('--session-id <id>', 'Session ID', 'cli-bootstrap')
   .option('--json', 'Output results as JSON')
   .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json, { hint: false });
 
     const result = bootstrapEvents({
       memoryDir,
@@ -1024,10 +1033,8 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
 
     try {
       const result = compactLog(memoryDir);
@@ -1063,7 +1070,7 @@ program
   .option('--dry-run', 'Preview changes without writing anything')
   .option('--json', 'Output results as JSON')
   .action((opts: { from: string; dir: string; agentId: string; sessionId: string; dryRun?: boolean; json?: boolean }) => {
-    const localDir = resolveDir(opts.dir, getAgent());
+    const localDir = resolveContextDir(opts);
     const remoteDir = path.resolve(opts.from);
 
     if (!fs.existsSync(localDir)) {
@@ -1166,10 +1173,8 @@ program
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; sessionId: string; summary: string; tags?: string[]; agentId: string; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
 
     const id = writeEpisode(
       memoryDir,
@@ -1196,10 +1201,8 @@ program
   .option('--limit <n>', 'Max episodes to show', parseInt)
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; limit?: number; json?: boolean }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
 
     const episodes = listEpisodes(memoryDir, { limit: opts.limit });
 
@@ -1246,7 +1249,7 @@ program
     json?: boolean;
   }) => {
     const filePath = path.resolve(opts.from);
-    const memoryDir = resolveDir(opts.dir, getAgent());
+    const memoryDir = resolveContextDir(opts);
 
     if (!fs.existsSync(filePath)) {
       exitWithError(`Source file not found: ${filePath}`, opts.json);
@@ -1278,9 +1281,7 @@ program
       return;
     }
 
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    requireExistingDir(memoryDir, opts.json);
 
     try {
       const result = importFromFile({
@@ -1352,9 +1353,7 @@ program
     const resolvedDir = resolveDir(memoryDir, getAgent());
     const resolvedOutput = path.resolve(outputPath);
 
-    if (!fs.existsSync(resolvedDir)) {
-      exitWithError(`Memory directory not found: ${resolvedDir}\n  Run "mk init" first.`, opts.json);
-    }
+    requireExistingDir(resolvedDir, opts.json);
 
     const maxTokens = parseInt(opts.maxTokens, 10);
     if (isNaN(maxTokens) || maxTokens <= 0) {
@@ -1429,10 +1428,8 @@ program
     diverseSeeds?: boolean;
     json?: boolean;
   }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
 
     const useFiles = !indexExists(memoryDir);
     if (useFiles && !opts.json) {
@@ -1521,10 +1518,8 @@ program
   .option('--trajectory', 'Include daily closure trajectory')
   .option('--trajectory-days <n>', 'Limit trajectory to last N days', parseInt)
   .action((opts: { dir: string; json?: boolean; trajectory?: boolean; trajectoryDays?: number }) => {
-    const memoryDir = resolveDir(opts.dir, getAgent());
-    if (!fs.existsSync(memoryDir)) {
-      exitWithError(`Memory directory not found: ${memoryDir}\n  Run "mk init" first.`, opts.json);
-    }
+    const memoryDir = resolveContextDir(opts);
+    requireExistingDir(memoryDir, opts.json);
 
     const result = closure(memoryDir, {
       trajectory: opts.trajectory,
@@ -1608,9 +1603,7 @@ program
   .option('--json', 'Output as JSON')
   .action((atomId: string, opts: { from: string; dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const baseDir = path.resolve(opts.dir);
-    if (!fs.existsSync(baseDir)) {
-      exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
-    }
+    requireExistingDir(baseDir, opts.json, { hint: false });
     if (!isIsolated(baseDir)) {
       exitWithError('share requires per-agent isolation mode (set isolation: per-agent in config.yaml)', opts.json);
     }
@@ -1645,9 +1638,7 @@ program
   .option('--json', 'Output as JSON')
   .action((atomId: string, opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
     const baseDir = path.resolve(opts.dir);
-    if (!fs.existsSync(baseDir)) {
-      exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
-    }
+    requireExistingDir(baseDir, opts.json, { hint: false });
     if (!isIsolated(baseDir)) {
       exitWithError('unshare requires per-agent isolation mode (set isolation: per-agent in config.yaml)', opts.json);
     }
@@ -1679,9 +1670,7 @@ program
   .option('--json', 'Output as JSON')
   .action((opts: { dir: string; strategy: string; assignUntagged: string; json?: boolean }) => {
     const baseDir = path.resolve(opts.dir);
-    if (!fs.existsSync(baseDir)) {
-      exitWithError(`Memory directory not found: ${baseDir}`, opts.json);
-    }
+    requireExistingDir(baseDir, opts.json, { hint: false });
 
     const strategy = opts.strategy as 'fresh' | 'partition' | 'clone-to-shared';
     if (!['fresh', 'partition', 'clone-to-shared'].includes(strategy)) {
@@ -1724,6 +1713,7 @@ registerRelinkCommand(program);
 registerCitationsCommand(program);
 registerEnrichRelationsCommand(program);
 registerLintCommand(program);
+registerGroundingCommand(program);
 registerEvalCommand(program);
 registerExtractCommand(program);
 registerConsolidateCommand(program);

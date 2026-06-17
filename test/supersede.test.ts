@@ -1,5 +1,6 @@
 /**
- * Tests for `mk supersede` (src/cli/supersede.ts).
+ * Tests for `supersedeAtoms()` (src/supersede.ts — engine), surfaced via the
+ * `mk supersede` CLI command (src/cli/supersede.ts).
  *
  * Covers the pure `supersedeAtoms()` entry point: happy path, idempotency,
  * partial-state recovery, V2 event format, path-traversal guard, and dry-run.
@@ -22,7 +23,7 @@ import {
   indexExists,
 } from '../src/index.js';
 import { isEncrypted } from '../src/crypto.js';
-import { supersedeAtoms } from '../src/cli/supersede.js';
+import { supersedeAtoms } from '../src/supersede.js';
 
 const TEST_ENC_KEY = 'c0ffee00'.repeat(8);
 

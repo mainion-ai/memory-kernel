@@ -175,6 +175,25 @@ describe.skipIf(process.platform === 'win32')('storePermissionsCheck.fix', () =>
     const mode = fs.statSync(dbPath).mode & 0o777;
     expect(mode).toBe(0o644);
   });
+
+  // #389 — fix must repair a drifted NDJSON sidecar (triples.ndjson) too.
+  it('chmods a permissive triples.ndjson sidecar back to 0o600', async () => {
+    initMemoryDir(testDir);
+    reindex(testDir);
+    closeAllIndexes();
+    const triplesPath = path.join(testDir, 'triples.ndjson');
+    fs.writeFileSync(triplesPath, '{"atom_id":"A","subject":"s","predicate":"p","object":"o"}\n');
+    fs.chmodSync(triplesPath, 0o644);
+
+    const before = await asResult(storePermissionsCheck.run(ctx()));
+    expect(before.ok).toBe(false);
+    expect(before.issues.join('\n')).toContain('triples.ndjson');
+
+    const outcome = await storePermissionsCheck.fix!(ctx(), before, { dryRun: false });
+    expect(outcome.applied.join('\n')).toContain('triples.ndjson');
+
+    expect(fs.statSync(triplesPath).mode & 0o777).toBe(0o600);
+  });
 });
 
 describe('renderConfigCheck.fix', () => {

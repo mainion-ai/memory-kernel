@@ -18,7 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createAtom } from './retain.js';
 import { listAtoms } from './store.js';
-import { supersedeAtoms } from './cli/supersede.js';
+import { supersedeAtoms } from './supersede.js';
 import type { Atom, AtomType } from './types.js';
 
 /** One canonical seed atom: a body file, its type, stable slug, and tags. */

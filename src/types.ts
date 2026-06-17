@@ -430,6 +430,10 @@ export interface ExtractOptions {
   conflictConfirmModel?: string;
   /** When true, run a dedicated second LLM pass focused exclusively on preference extraction, using a prompt that enforces specific vocabulary preservation. Preferences found only in this pass are merged into the result. */
   preferencePass?: boolean;
+  /** Max characters for the assembled prompt (system + user). Defaults to DEFAULT_MAX_INPUT_CHARS. Over-budget input fails pre-flight with ExtractInputTooLargeError unless `truncate` is set. */
+  maxInputChars?: number;
+  /** When true, an over-budget input is head-truncated (oldest content dropped, a visible marker appended) instead of throwing. Reported in ExtractResult.truncation. */
+  truncate?: boolean;
 }
 
 /** Result returned by extractFromLog. */
@@ -440,6 +444,8 @@ export interface ExtractResult {
   /** Total auto-supersede actions across all atoms (action === 'superseded'). */
   conflicts: number;
   atoms: ExtractedAtomResult[];
+  /** Present only when the input was head-truncated to fit the size budget (`truncate`). */
+  truncation?: { original_chars: number; sent_chars: number; omitted_chars: number };
 }
 
 // --- Consolidate types ---

@@ -9,7 +9,7 @@
 
 import { callLLM } from './llm.js';
 import { findCandidateConflicts } from './triples.js';
-import { supersedeAtoms } from './cli/supersede.js';
+import { supersedeAtoms } from './supersede.js';
 import { openIndex } from './index-db.js';
 
 const CONFIRM_SYSTEM_PROMPT = `You are a fact-conflict classifier. Given two factual statements about the world, decide whether they DIRECTLY CONTRADICT each other (i.e. cannot both be true at the same time about the same subject).

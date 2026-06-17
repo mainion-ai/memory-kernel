@@ -78,3 +78,38 @@ mk reindex -d <dir> --embed                   # build vectors
 ```
 
 **Verify:** `mk doctor -d <dir>` — the `embedding-key-source` check names exactly which var resolved, and `embeddings-vectors-fresh` shows vectors > 0.
+
+---
+
+## 6. `mk extract` crashes on a large transcript (`input_too_large`)
+
+**Symptom:** `mk extract <log>` on a big conversation log fails. Pre-v1.35.0 this looked like a generic `claude -p exited with code 1` (or an Ollama error) and silently stopped session-end atom creation — a multi-MB transcript stalled fleet extraction for ~2 days with no distinguishable signal. From v1.35.0 the failure is explicit: a non-zero exit **code 2** and, under `--json`, `{"error":<human message>,"reason":"input_too_large","exit_code":2,"input_chars":…,"limit":…}`.
+
+**Cause:** the assembled prompt (extraction system prompt + the full log) exceeds the model's usable context. extract now pre-flights the assembled size against `--max-input-chars` (default 500 000) **before** spawning the LLM, so an over-budget input fails fast and recognizably instead of as an opaque downstream crash.
+
+**Fix — pick one:**
+```bash
+# Skip already-extracted preamble (e.g. the CLAUDE.md prefix injected at session start):
+mk extract <log> -d <dir> --skip-lines 200
+
+# Keep the newest content and drop the oldest to fit the budget instead of failing (a marker is prepended):
+mk extract <log> -d <dir> --truncate
+
+# Raise the budget if your model genuinely has the context for it:
+mk extract <log> -d <dir> --max-input-chars 1000000
+```
+A cron/host wrapper should branch on **exit code 2** (or the `--json` `reason: "input_too_large"` token) and retry with `--truncate`/`--skip-lines`, rather than treating it as a generic failure.
+
+**Verify:** the retry exits 0; with `--truncate`, the plain output prints `⚠ input truncated: sent … of … chars (… omitted from the beginning)` and `--json` carries a `truncation: { original_chars, sent_chars, omitted_chars }` field. See [contracts.md](contracts.md) for the `--json` shapes.
+
+---
+
+## 7. Recall returned a surprising ranking — why did atom X outrank atom Y?
+
+**Symptom:** `mk recall`/`mk render` surfaced (or omitted) an atom and you can't tell why from the output alone.
+
+**Fix:** set **`RECALL_DEBUG=1`** to emit a per-atom score breakdown to **stderr** (the scoring stage, before MMR/budget trimming), sorted by final score:
+```bash
+RECALL_DEBUG=1 mk recall --task "<your task>" -d <dir>
+```
+The task path prints each atom's `fts`/`specificity`/`length`/`coverage`/`semantic`/`recency`/`type_weight`/`conf_factor`/`graph_boost`/`final`; the no-task constitution path prints `status`/`status_priority`/`recency`/`updated_at`. It's a diagnostic only — **off by default with zero overhead**, stderr-only (not part of the `--json` payload), so it never affects piped output.

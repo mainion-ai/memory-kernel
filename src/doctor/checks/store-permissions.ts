@@ -1,10 +1,14 @@
 /**
  * store-permissions check — verifies that SECRET-bearing files in the memory
  * store have owner-only (0o600) permissions, matching the policy enforced by
- * crypto + index-db at write time (#138).
+ * crypto + index-db at write time (#138). Covers `.memory-index.db`, SECRET atom
+ * files, and the NDJSON sidecars `events.ndjson` (#138) and `triples.ndjson`
+ * (#370/#380) — the sidecars are written `0o600` because they carry content
+ * derived from possibly-SECRET atoms (event snapshots/evidence; entity triples).
  *
  * Why: a manual `chmod` or a restore-from-backup that loses file modes would
- * leave SECRET atoms world-readable without any other code path catching it.
+ * leave SECRET-derived content world-readable without any other code path
+ * catching it.
  *
  * Skipped on Windows: chmod is a no-op there and mode bits are meaningless,
  * so the check would produce noise.
@@ -17,6 +21,11 @@ import type { Check, CheckResult, DoctorContext, FixOpts, FixOutcome } from '../
 
 const SECRET_MODE = 0o600;
 const MODE_MASK = 0o777;
+
+// NDJSON sidecars written owner-only because they hold content derived from
+// possibly-SECRET atoms: events.ndjson carries atom snapshots/evidence (#138);
+// triples.ndjson is the durable entity-triple store (#370/#380).
+const NDJSON_SIDECARS = ['events.ndjson', 'triples.ndjson'];
 
 interface PermissionViolation {
   /** Absolute path that needs chmod. */
@@ -34,6 +43,14 @@ function probe(memoryDir: string): PermissionViolation[] {
   if (fs.existsSync(indexDbPath)) {
     const mode = fs.statSync(indexDbPath).mode & MODE_MASK;
     if (mode !== SECRET_MODE) violations.push({ path: indexDbPath, currentMode: mode });
+  }
+
+  // NDJSON sidecars (#389) — same owner-only policy as the index/atoms.
+  for (const name of NDJSON_SIDECARS) {
+    const sidecarPath = path.join(memoryDir, name);
+    if (!fs.existsSync(sidecarPath)) continue;
+    const mode = fs.statSync(sidecarPath).mode & MODE_MASK;
+    if (mode !== SECRET_MODE) violations.push({ path: sidecarPath, currentMode: mode });
   }
 
   const atoms = listAtoms(memoryDir);

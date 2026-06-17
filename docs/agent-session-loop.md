@@ -183,7 +183,7 @@ mk observe KNOWLEDGE/<doc>.md --mode document -d {dir}
 mk reflect -d {dir}    # turn the observations into atoms
 ```
 
-`KNOWLEDGE/draft/` is never observed (scratch space). The full convention is seeded as a standing preference atom during `/mk-memory-setup` (Step 6c) and documented in `KNOWLEDGE/README.md`. (Nightly auto-observe of `KNOWLEDGE/` is a planned `mk init --cron` follow-up.)
+`KNOWLEDGE/draft/` is never observed (scratch space). The full convention is seeded as a standing preference atom during `/mk-memory-setup` (Step 6c) and documented in `KNOWLEDGE/README.md`. Nightly auto-observe of `KNOWLEDGE/` is built into the `mk init --cron` wrapper (a "Step 0" that observes changed docs since the last run, skipping `KNOWLEDGE/draft/`, idempotent via a `.knowledge-manifest`) — so docs dropped there become atoms on the nightly cycle without the manual `observe`/`reflect` above.
 
 ---
 

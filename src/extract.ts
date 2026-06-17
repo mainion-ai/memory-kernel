@@ -121,6 +121,120 @@ export function buildExtractPrompt(logContent: string): string {
 }
 
 /**
+ * Default ceiling on the assembled extraction prompt (system + user), in
+ * characters. ~500K chars keeps the request comfortably inside current model
+ * context windows while still admitting very long single-session transcripts.
+ * Override per-call with `--max-input-chars`.
+ */
+export const DEFAULT_MAX_INPUT_CHARS = 500_000;
+
+/**
+ * Thrown pre-flight when an extraction input exceeds the size budget and the
+ * caller has not opted into truncation. Carries the measured size and limit so
+ * callers (CLI) can surface a distinguishable signal instead of a generic
+ * `claude -p exited with code 1` — the failure mode that silently halted fleet
+ * atom creation on a multi-megabyte transcript.
+ */
+export class ExtractInputTooLargeError extends Error {
+  readonly code = 'INPUT_TOO_LARGE' as const;
+  readonly inputChars: number;
+  readonly limit: number;
+  constructor(inputChars: number, limit: number) {
+    super(
+      `Extraction input too large: assembled prompt is ${inputChars} characters, exceeding the ${limit}-character limit. ` +
+        `Pass --skip-lines <n> to skip already-extracted preamble, --truncate to send the most-recent slice, ` +
+        `--max-input-chars <n> to raise the limit, or reduce the input.`,
+    );
+    this.name = 'ExtractInputTooLargeError';
+    this.inputChars = inputChars;
+    this.limit = limit;
+  }
+}
+
+/** Visible in-band marker prepended to a truncated document so the model knows the older content was dropped. */
+function truncationMarker(omitted: number): string {
+  return `[... extract: input truncated to fit the model context — ${omitted} characters omitted from the beginning of the transcript ...]\n\n`;
+}
+
+/**
+ * Nudge a slice offset off a UTF-16 surrogate seam. If `cut` lands on a low
+ * surrogate (the trailing half of an astral-plane code unit), advancing by one
+ * keeps the kept slice from beginning with a lone, mojibake-rendering half-pair.
+ * Clamped to `[0, s.length]`.
+ */
+function surrogateSafeCut(s: string, cut: number): number {
+  if (cut <= 0) return 0;
+  if (cut >= s.length) return s.length;
+  const code = s.charCodeAt(cut);
+  return code >= 0xdc00 && code <= 0xdfff ? cut + 1 : cut;
+}
+
+export interface ExtractInputPlan {
+  userPrompt: string;
+  truncation?: { original_chars: number; sent_chars: number; omitted_chars: number };
+}
+
+/**
+ * Decide what to send to the LLM for a given log body, enforcing a size budget.
+ *
+ * Pure and LLM-free, so the size policy is unit-testable without mocking a
+ * model. Computes the assembled prompt size (`systemPromptChars` +
+ * `buildExtractPrompt(content).length`) and:
+ *  - returns the prompt unchanged when it fits;
+ *  - throws `ExtractInputTooLargeError` when it overflows and `truncate` is off;
+ *  - when `truncate` is on, keeps the NEWEST (tail) content and drops the oldest
+ *    (head), prepends a visible marker, and reports the omission — shrinking the
+ *    kept slice until the assembled prompt fits. Keeping the tail is the right
+ *    default for session-end extraction (the most recent turns carry the
+ *    decisions worth atomizing) and composes with `--skip-lines`, which already
+ *    trims the head preamble. If even an empty body cannot fit (the system
+ *    prompt alone overflows the budget), it still throws rather than send a
+ *    degenerate request.
+ *
+ * Scope note: this bounds what reaches the LLM, measured on `logContent` that
+ * the caller has *already read into memory* — it is not a guard against reading
+ * a huge file in the first place (see #361 for byte-level / streaming intake).
+ */
+export function planExtractInput(
+  logContent: string,
+  systemPromptChars: number,
+  opts: { maxInputChars?: number; truncate?: boolean } = {},
+): ExtractInputPlan {
+  const maxInputChars = opts.maxInputChars ?? DEFAULT_MAX_INPUT_CHARS;
+  const truncate = opts.truncate ?? false;
+
+  const fullPrompt = buildExtractPrompt(logContent);
+  if (systemPromptChars + fullPrompt.length <= maxInputChars) {
+    return { userPrompt: fullPrompt };
+  }
+  if (!truncate) {
+    throw new ExtractInputTooLargeError(systemPromptChars + fullPrompt.length, maxInputChars);
+  }
+
+  const originalChars = logContent.length;
+  let cut = 0; // leading chars to drop; grows until the kept tail fits.
+  // Loop converges: each non-fitting iteration raises `cut` by at least 1024.
+  for (;;) {
+    const safeCut = surrogateSafeCut(logContent, Math.min(cut, originalChars));
+    const omitted = safeCut;
+    const kept = logContent.slice(safeCut);
+    const candidatePrompt = buildExtractPrompt(truncationMarker(omitted) + kept);
+    const assembled = systemPromptChars + candidatePrompt.length;
+    if (assembled <= maxInputChars) {
+      return {
+        userPrompt: candidatePrompt,
+        truncation: { original_chars: originalChars, sent_chars: kept.length, omitted_chars: omitted },
+      };
+    }
+    if (safeCut >= originalChars) {
+      // Even an empty body overflows — the system prompt + marker + boilerplate alone is too big.
+      throw new ExtractInputTooLargeError(assembled, maxInputChars);
+    }
+    cut = safeCut + Math.max(1024, assembled - maxInputChars);
+  }
+}
+
+/**
  * Parse LLM response — strips code fences, returns array of CandidateAtom.
  */
 function parseLLMResponse(raw: string): CandidateAtom[] {
@@ -206,6 +320,8 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
     maxAtoms = DEFAULT_MAX_ATOMS,
     skipLines = 0,
     preferencePass = false,
+    maxInputChars,
+    truncate = false,
   } = opts;
 
   // --- Read log file ---
@@ -231,9 +347,20 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
     };
   }
 
-  // --- Call LLM ---
+  // --- Plan input (size guard) ---
+  // Fail soft and pre-flight on oversized input: a distinguishable typed error
+  // (or a head-truncated slice under `truncate`) instead of a generic
+  // `claude -p exited with code 1` that silently stops atom creation.
   const systemPrompt = EXTRACTION_SYSTEM_PROMPT.replace('{{max_atoms}}', String(maxAtoms));
-  const userPrompt = buildExtractPrompt(logContent);
+  // Budget against whichever system prompt is largest across the passes we will run.
+  const effectiveSystemChars = Math.max(
+    systemPrompt.length,
+    preferencePass ? PREFERENCE_EXTRACTION_SYSTEM_PROMPT.length : 0,
+  );
+  const plan = planExtractInput(logContent, effectiveSystemChars, { maxInputChars, truncate });
+  const userPrompt = plan.userPrompt;
+
+  // --- Call LLM ---
   let candidates: CandidateAtom[];
   try {
     const raw = await callLLM(systemPrompt, userPrompt, { model });
@@ -414,5 +541,6 @@ export async function extractFromLog(opts: ExtractOptions): Promise<ExtractResul
     possible_duplicates: possibleDuplicates,
     conflicts,
     atoms: atomResults,
+    ...(plan.truncation ? { truncation: plan.truncation } : {}),
   };
 }

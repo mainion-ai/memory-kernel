@@ -168,6 +168,75 @@ describe('generateCronWrapper', () => {
     }
   });
 
+  it('includes the KNOWLEDGE auto-observe step before reflect (#256)', () => {
+    const out = generateCronWrapper(baseOpts);
+    expect(out).toContain('KNOWLEDGE_DIR="$MEMORY_DIR/KNOWLEDGE"');
+    expect(out).toContain('.knowledge-manifest');
+    expect(out).toContain('mk observe "$doc" --mode document -d "$MEMORY_DIR"');
+    expect(out).toContain('"$KNOWLEDGE_DIR"/draft/*) continue ;;'); // skip work-in-progress
+    expect(out).toContain('"$KNOWLEDGE_DIR"/README.md) continue ;;'); // skip scaffolded doc
+    // Must run BEFORE reflect (so reflect turns the observations into atoms).
+    const lines = out.split('\n');
+    const knowledgeIdx = lines.findIndex((l) => l.includes('KNOWLEDGE_DIR="$MEMORY_DIR/KNOWLEDGE"'));
+    const reflectIdx = lines.findIndex((l) => l.includes('mk reflect -d "$MEMORY_DIR"'));
+    expect(knowledgeIdx).toBeGreaterThanOrEqual(0);
+    expect(reflectIdx).toBeGreaterThan(knowledgeIdx);
+  });
+
+  it('KNOWLEDGE scan: observes changed docs, skips draft/ + README, idempotent (#256 smoke)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mk-cron-knowledge-'));
+    try {
+      const kernel = path.join(root, 'kernel');
+      const kdir = path.join(kernel, 'KNOWLEDGE');
+      fs.mkdirSync(path.join(kdir, 'draft'), { recursive: true });
+      fs.writeFileSync(path.join(kdir, 'paper.md'), '# A finished research doc');
+      fs.writeFileSync(path.join(kdir, 'draft', 'wip.md'), '# work in progress');
+      fs.writeFileSync(path.join(kdir, 'README.md'), '# KNOWLEDGE convention');
+
+      // Fake `mk`: log `observe` targets, no-op everything else.
+      const fakeBin = path.join(root, 'bin');
+      fs.mkdirSync(fakeBin);
+      const mkBin = path.join(fakeBin, 'mk');
+      const observeLog = path.join(root, 'observe.log');
+      fs.writeFileSync(mkBin, `#!/usr/bin/env bash\nif [ "$1" = "observe" ]; then echo "$2" >> "${observeLog}"; fi\nexit 0\n`);
+      fs.chmodSync(mkBin, 0o755);
+
+      const wrapper = path.join(root, 'sync.sh');
+      fs.writeFileSync(wrapper, generateCronWrapper({
+        memoryDir: kernel, claudeMd: path.join(root, 'CLAUDE.md'), memoryRepo: root,
+        kernelVersion: '1.34.0', generatedAt: '2026-06-14T00:00:00Z',
+      }));
+
+      // MK_BIN set to the fake → the wrapper's own PATH logic resolves `mk` to it.
+      const env = { PATH: '/usr/bin:/bin', HOME: root, MK_BIN: mkBin };
+      const observed = () => (fs.existsSync(observeLog) ? fs.readFileSync(observeLog, 'utf8').trim().split('\n').filter(Boolean) : []);
+
+      // Run 1: paper.md observed; draft/wip.md + README.md skipped.
+      execFileSync('bash', [wrapper], { env, encoding: 'utf8' });
+      let log = observed();
+      expect(log).toContain(path.join(kdir, 'paper.md'));
+      expect(log.some((l) => l.includes('/draft/'))).toBe(false);
+      expect(log.some((l) => l.endsWith('README.md'))).toBe(false);
+
+      // The per-host manifest is auto-gitignored (not committed → no cross-host churn).
+      expect(fs.readFileSync(path.join(root, '.gitignore'), 'utf8')).toContain('.knowledge-manifest');
+
+      // Run 2: nothing changed → no new observe (idempotent via manifest).
+      fs.rmSync(observeLog, { force: true });
+      execFileSync('bash', [wrapper], { env, encoding: 'utf8' });
+      expect(observed()).toEqual([]);
+
+      // Run 3: paper.md modified (mtime bumped) → re-observed.
+      const future = Date.now() / 1000 + 60;
+      fs.utimesSync(path.join(kdir, 'paper.md'), future, future);
+      fs.rmSync(observeLog, { force: true });
+      execFileSync('bash', [wrapper], { env, encoding: 'utf8' });
+      expect(observed()).toContain(path.join(kdir, 'paper.md'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('reindexes WITH embeddings before render so new atoms get vectors (#303/#305)', () => {
     const out = generateCronWrapper(baseOpts);
     expect(out).toContain('mk reindex -d "$MEMORY_DIR" --embed');

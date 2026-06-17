@@ -74,6 +74,9 @@ import {
   deriveConceptNames,
   // Extract — automatic atom extraction from conversation logs (v1.15.0+)
   extractFromLog,
+  planExtractInput,           // pure input-size planner (v1.35.0+)
+  ExtractInputTooLargeError,  // typed oversized-input guard (v1.35.0+)
+  DEFAULT_MAX_INPUT_CHARS,    // default assembled-prompt size budget (v1.35.0+)
   // Consolidate — promote auto-extracted drafts (v1.15.0+)
   consolidateAtoms,
 } from 'memory-kernel';
@@ -557,6 +560,75 @@ Run weekly as part of the memory maintenance cycle. Add to cron alongside `mk re
 
 ---
 
+## Grounding — Confidence-vs-Usage Reconciliation (v1.35.0+)
+
+`mk grounding` is an **advisory, read-only** report (#245). It reconciles each atom's *stated* confidence (the **prior**) against a **`grounding_score`** derived purely from the event log — how recently and how often the atom is actually read — and bins each atom into a 2×2 `prior × grounding` quadrant. It **writes no atom files** and **never builds or opens the SQLite index** (it reads `events.ndjson` directly). The destructive confidence write-back is deferred and gated on `human_edit` provenance events (#247).
+
+### CLI
+
+```bash
+# Pretty-printed report, grouped by quadrant
+mk grounding -d ./memory
+
+# Machine-readable JSON (summary + reports[] + shown)
+mk grounding -d ./memory --json
+
+# Only the rows flagged actionable (review / promote / aged-noise)
+mk grounding -d ./memory --actionable-only
+
+# Tune the high/low splits (defaults: prior 0.6, grounding 0.5)
+mk grounding -d ./memory --prior-threshold 0.7 --grounding-threshold 0.4
+
+# Grade every atom, including non-active and conflict-type (default: active, non-conflict)
+mk grounding -d ./memory --include-all
+```
+
+### Programmatic API
+
+```typescript
+import { computeGrounding, classifyQuadrant, listAtoms, readEvents } from 'memory-kernel';
+import type { GroundingResult, GroundingReport } from 'memory-kernel';
+
+const atoms = listAtoms('./memory');
+const events = readEvents('./memory');
+const result: GroundingResult = computeGrounding(atoms, events, {
+  priorThreshold: 0.6,      // high/low confidence split (default 0.6)
+  groundingThreshold: 0.5,  // high/low usage split    (default 0.5)
+  // now, halfLives, recencyWeight, accessHalfSaturation, conflictDecay,
+  // promoteMinSessions, noiseSessions, includeAll are all overridable
+});
+
+// result.summary — { total, actionable, by_quadrant }
+// result.reports — GroundingReport[]
+for (const r of result.reports) {
+  console.log(r.atom_id, r.quadrant, r.prior, r.grounding_score, r.actionable);
+  console.log(r.inputs); // { n_access, session_diversity, n_conflict, days_since_last_read, age_days, sessions_since_creation }
+}
+```
+
+**`grounding_score`** is **prior-independent** — a posterior over *use*, not over the atom's content or stated confidence:
+
+```
+recency   = 0 if never read, else 2^(-days_since_last_read / H)   # H = per-type half-life
+frequency = 1 - 2^(-n_access / 5)
+grounding = clamp( (0.5·recency + 0.5·frequency) · 0.6^n_conflict, 0.01, 1.0 )
+```
+
+A **never-read** atom floors at `0.01` regardless of age — grounding measures use, not birth, so `inputs.age_days` is *reported* but is **not** a score term. `classifyQuadrant(prior, grounding, ctx)` is exported separately for callers that compute scores themselves.
+
+**Quadrants:**
+
+| Quadrant | Prior | Grounding | Actionable when | Meaning |
+|---|---|---|---|---|
+| `review` | high | low | always | Stated confidently, not validated by use |
+| `promote` | low | high | read across ≥2 sessions | Written cautiously, grounded by use |
+| `noise` | low | low | atom ≥5 sessions old | Low confidence, low use |
+| `well-grounded` | high | high | never (inert) | Confidence matches use |
+
+The shared pure engine is what the deferred Phase-2 write-back (#247-gated) will reuse, so the advisory scores and the eventual reconciliation can never diverge.
+
+---
+
 ## Episode Store (v0.6.0+)
 
 ```typescript
@@ -898,28 +970,41 @@ const markdown = renderAgentClaudeMd('./memory', 'alice');
 ### Extract atoms from conversation logs
 
 ```typescript
-import { extractFromLog } from 'memory-kernel';
+import { extractFromLog, ExtractInputTooLargeError, DEFAULT_MAX_INPUT_CHARS } from 'memory-kernel';
 import type { ExtractOptions, ExtractResult, ExtractedAtomResult } from 'memory-kernel';
 
-const result: ExtractResult = await extractFromLog({
-  logPath: './conversation.log',
-  memoryDir: './memory',
-  agentId: 'my-agent',        // optional — tags extracted atoms
-  sessionId: 'session-1',      // optional — tags extracted atoms
-  dryRun: false,                // true = preview only, no files written
-  model: undefined,             // omit for claude -p (default), or 'qwen2.5:14b' for Ollama
-  maxAtoms: 20,                 // max atoms to extract (default: 20)
-  skipLines: 0,                 // skip preamble lines (e.g. CLAUDE.md prefix)
-});
-// result.extracted — count of new atoms written
-// result.skipped — count of invalid/collision atoms
-// result.possible_duplicates — count flagged as possible duplicates
-// result.atoms — per-atom details: { atom_id, slug, type, status, reason?, possible_duplicate_of? }
+try {
+  const result: ExtractResult = await extractFromLog({
+    logPath: './conversation.log',
+    memoryDir: './memory',
+    agentId: 'my-agent',        // optional — tags extracted atoms
+    sessionId: 'session-1',      // optional — tags extracted atoms
+    dryRun: false,                // true = preview only, no files written
+    model: undefined,             // omit for claude -p (default), or 'qwen2.5:14b' for Ollama
+    maxAtoms: 20,                 // max atoms to extract (default: 20)
+    skipLines: 0,                 // skip preamble lines (e.g. CLAUDE.md prefix)
+    maxInputChars: DEFAULT_MAX_INPUT_CHARS, // size budget for the assembled prompt (default 500_000)
+    truncate: false,              // true = keep newest content, drop oldest, instead of throwing
+  });
+  // result.extracted — count of new atoms written
+  // result.skipped — count of invalid/collision atoms
+  // result.possible_duplicates — count flagged as possible duplicates
+  // result.atoms — per-atom details: { atom_id, slug, type, status, reason?, possible_duplicate_of? }
+  // result.truncation — present only when truncate dropped content:
+  //   { original_chars, sent_chars, omitted_chars }
+} catch (err) {
+  if (err instanceof ExtractInputTooLargeError) {
+    // err.inputChars / err.limit — the assembled prompt overran the budget.
+    // Recover by raising maxInputChars, skipping preamble lines, or re-running with truncate: true.
+  }
+}
 ```
 
 **LLM providers:**
 - Default: `claude -p` subprocess (Claude Code CLI). Requires `claude` or `CLAUDE_PATH` on PATH.
 - Ollama: pass `model: 'qwen2.5:14b'` (any name containing `:` or known Ollama model). Connects to `http://localhost:11434`.
+
+**Oversized-input guard (v1.35.0+):** `extractFromLog` pre-flights the assembled prompt size (`system + user`) against `maxInputChars` (default `DEFAULT_MAX_INPUT_CHARS` = 500 000) *before* spawning the LLM. Over-budget input throws a typed `ExtractInputTooLargeError` (with `.inputChars`/`.limit`) — a **distinguishable** failure rather than a generic `claude -p exited with code 1` that previously stopped extraction silently on multi-MB transcripts. Pass `truncate: true` to instead keep the **newest (tail)** content and drop the oldest (head) — the right default for session-end extraction, composing with `skipLines` — with a visible marker prepended to the sent slice and what was omitted reported in `result.truncation`. The pure planner `planExtractInput(content, systemPromptChars, opts)` is exported for callers that want to compute the plan without running extraction. (The guard bounds what reaches the LLM; it measures content already read into memory, and is not a guard against reading a huge file in the first place — see #361.)
 
 Extracted atoms are created with `status: 'draft'` and `source: 'auto-extracted'` in metadata. Use `consolidateAtoms()` to review and promote them.
 

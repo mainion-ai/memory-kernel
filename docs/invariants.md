@@ -6,7 +6,7 @@ Short list of properties that hold project-wide. Code, tests, and docs all rely 
 
 ## 1. Files are the source of truth; the index is a derived cache
 
-Atom markdown files under `ENTITIES/`, `DECISIONS/`, `CONSTRAINTS/`, `BELIEFS/`, `QUESTIONS/`, `PROCEDURES/`, `PREFERENCES/`, and `FACTS/`, plus the `events.ndjson` event log and the per-session files under `EPISODES/`, are the durable, authoritative state. Everything else — the SQLite index at `.memory-index.db`, the rendered views in `INDEX.md` / `DECISIONS.md` / `CONSTRAINTS.md` / `OPEN_QUESTIONS.md` / `HANDOFF.md`, and the rendered `CLAUDE.md` — is a derived cache rebuildable from the files.
+Atom markdown files under `ENTITIES/`, `DECISIONS/`, `CONSTRAINTS/`, `BELIEFS/`, `QUESTIONS/`, `PROCEDURES/`, `PREFERENCES/`, and `FACTS/`, plus the `events.ndjson` event log, the `triples.ndjson` entity-triple sidecar (see §2), and the per-session files under `EPISODES/`, are the durable, authoritative state. Everything else — the SQLite index at `.memory-index.db`, the rendered views in `INDEX.md` / `DECISIONS.md` / `CONSTRAINTS.md` / `OPEN_QUESTIONS.md` / `HANDOFF.md`, and the rendered `CLAUDE.md` — is a derived cache rebuildable from the files.
 
 | Layer | Source of truth? | How to rebuild |
 |---|---|---|
@@ -19,17 +19,17 @@ Atom markdown files under `ENTITIES/`, `DECISIONS/`, `CONSTRAINTS/`, `BELIEFS/`,
 
 The practical consequence: deleting `.memory-index.db` and the rendered views never loses data — `mk reindex` and `mk reflect` reconstruct them from the atom files. Deleting atom files **does** lose data unless the event log retains the corresponding `atom_created` / `atom_updated` events, in which case `mk replay` reconstructs them.
 
-## 2. Exception — `entity_triples` is not derivable from files
+## 2. `entity_triples` — durable via the `triples.ndjson` sidecar
 
-The `entity_triples` table in `.memory-index.db` (added in #75 for Tier-1 semantic conflict detection) is the one part of the index that is **not** rebuildable from atom markdown. Triples are LLM-extracted at atom-write time inside `createAtom()` / `updateAtom()` and are deliberately not serialized into the atom frontmatter or body — only the SQLite row exists on disk.
+The `entity_triples` table in `.memory-index.db` (added in #75 for Tier-1 semantic conflict detection) is LLM-extracted at atom-write time and is deliberately **not** serialized into the atom markdown frontmatter or body. It is therefore not rebuildable from the atom files alone.
 
-To preserve triples across a normal `mk reindex` run, the routine snapshots the existing `entity_triples` rows into a `_saved_triples` TEMP table, rebuilds the schema, and restores the snapshot at the end (see `src/index-db.ts:reindex`). This is the mechanism that lets the otherwise-derived-cache framing continue to hold for the rest of the index.
+Its durable source of truth is instead the **`triples.ndjson` sidecar** at the store root (`src/triples-sidecar.ts`, #370), parallel to `events.ndjson`: `insertTriples` mirrors every row there, so the file is a complete on-disk record of all triples independent of the SQLite index. `mk reindex` rebuilds the table from it. This keeps the "index is a derived cache" framing whole — `entity_triples` is no longer an exception; it is derived from the sidecar rather than from the atom markdown.
 
-**Failure mode.** Deleting `.memory-index.db` outright (rather than running `mk reindex`, which preserves the snapshot in-process) discards entity triples **permanently** for every atom that has not since been re-extracted. There is no on-disk source to rebuild them from. Re-extraction only happens on the next `createAtom` / `updateAtom` for the affected atom; semantic-conflict detection on existing atoms silently degrades until then.
+**Reindex mechanics.** Within a single `mk reindex` the existing rows are still snapshotted into a `_saved_triples` TEMP table and restored (fast path). The sidecar is then reconciled to match the rebuilt table — which also **backfills** pre-#370 stores that have table triples but no sidecar yet, and **prunes** triples whose atom no longer exists. When the snapshot is empty because `.memory-index.db` was deleted outright, reindex **recovers** the triples from the sidecar for atoms that still exist.
 
-**Why this is the design.** Triples are write-time analysis output, not user-edited content, and storing them in frontmatter would couple atom serialization to whatever LLM extractor happens to be in use. The trade-off is the failure mode above, accepted as a known cost.
+**No longer a data-loss failure mode.** Deleting `.memory-index.db` and running `mk reindex` now restores all triples from the sidecar; semantic-conflict detection no longer silently degrades. (Pre-#370 stores must run `mk reindex` once after upgrading to create the sidecar from their existing table.)
 
-**Pointer for future work.** If triples are ever serialized into atom frontmatter (closing the exception), update this document and the header block in `src/index-db.ts`. See [#174](https://github.com/mainion-ai/memory-kernel-dev/issues/174) for the project history of this decision.
+**Why a sidecar rather than frontmatter.** Triples are write-time analysis output, not user-edited content; storing them in frontmatter would couple atom serialization to whatever LLM extractor is in use and ripple into canonicalization, doctor checks, and the privacy scanner. The sidecar keeps the atom file format stable while still making triples disk-durable. See [#174](https://github.com/mainion-ai/memory-kernel-dev/issues/174) and [#370](https://github.com/mainion-ai/memory-kernel-dev/issues/370) for the project history.
 
 ## 3. Exception (minor) — `atom_embeddings` is derivable but expensive
 

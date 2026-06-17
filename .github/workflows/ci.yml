@@ -27,3 +27,24 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+
+  # Coverage is REPORT-ONLY (#390): it prints the v8 summary but does not gate.
+  # A blocking threshold is a separate decision once the baseline is trusted.
+  # Runs in parallel with `test`, so it adds no wall-clock to the gating path.
+  # Excludes the subprocess CLI e2e tests (see vitest.coverage.config.ts) — the
+  # child `mk` process isn't instrumented, so they add no in-process coverage.
+  coverage:
+    runs-on: ubuntu-latest
+    # Report-only: never block a PR. A v8-instrumentation flake (the overhead
+    # class that forced the wander-frontier-cap timeout bump) must not redden the
+    # gate, and this job must not become required without a deliberate decision.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:coverage

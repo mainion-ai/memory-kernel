@@ -17,6 +17,16 @@ import { DEFAULT_TYPE_WEIGHTS, DEFAULT_CONFIDENCE_FLOOR, DEFAULT_TYPE_RESERVATIO
 import { selectAtomsWithReservations, estimateTokens, frontmatterJson } from './budget.js';
 import type { Atom, AtomFrontmatter, ContextBundle, Episode, RecallQuery, AtomType } from './types.js';
 import { AUTO_EXTRACTED_TAG } from './types.js';
+// Pure ranking primitives extracted to ./scoring/* (arch-review Phase A).
+// Imported for internal use here and re-exported below to keep the public
+// barrel (src/index.ts) and the `../src/recall.js` test import path stable.
+import { temporalDecay } from './scoring/temporal.js';
+import { applyMMR } from './scoring/diversity.js';
+import { computeLengthFactors } from './scoring/length.js';
+import { applyGraphBoost } from './scoring/graph-boost.js';
+export { temporalDecay } from './scoring/temporal.js';
+export { computeTextSimilarity, applyMMR } from './scoring/diversity.js';
+export { computeLengthFactors } from './scoring/length.js';
 
 // --- Configurable hybrid ranking parameters ---
 
@@ -94,20 +104,36 @@ function getTypeWeights(query: RecallQueryInternal): Record<AtomType, number> {
   return base;
 }
 
+/**
+ * Single source of truth for "should type-reservations apply?" (#357).
+ *
+ * Reservations are designed for the no-task constitution pipeline (CLAUDE.md
+ * render), not for task-focused recall — so they default ON for the no-task path
+ * and OFF for the task path. An explicit caller choice always wins:
+ *   - `explicit === true`  → on  (`--reservations`, overrides task auto-disable)
+ *   - `explicit === false` → off (`--no-reservations`)
+ *   - `explicit === undefined` → auto (off when a task is present, else on)
+ *
+ * Both the engine (`getTypeReservations`) and any future caller route through
+ * this so the rule cannot drift. `explicit` is the inverse of the
+ * `no_reservations` query field (`no_reservations === undefined ? undefined : !no_reservations`).
+ */
+export function shouldUseReservations(hasTask: boolean, explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit;
+  return !hasTask;
+}
+
 function getTypeReservations(query: RecallQueryInternal): Partial<Record<AtomType, number>> {
-  // Fix 1: When task is provided, skip reservations by default — task recall should
-  // be relevance-driven, not type-guaranteed. Reservations are designed for the
-  // no-task constitution pipeline (CLAUDE.md render), not for task-focused recall.
-  // Fix 2: Explicit --no-reservations / --reservations flag overrides auto-behavior.
-  //   no_reservations === true  → force off (--no-reservations)
-  //   no_reservations === false → force on  (--reservations, overrides task auto-disable)
-  //   no_reservations === undefined → auto (off for task, on for no-task)
-  // Explicit force-off disables reservations entirely, including any caller-supplied overrides.
-  if (query.no_reservations === true) return {};
-  // Task auto-disable: caller-supplied type_reservations still act as an opt-in override.
-  if (query.no_reservations !== false && query.task && query.task.trim().length > 0) {
-    if (query.type_reservations) return { ...query.type_reservations };
-    return {};
+  const hasTask = !!(query.task && query.task.trim().length > 0);
+  // no_reservations is the inverse of the explicit "use reservations" intent.
+  const explicit = query.no_reservations === undefined ? undefined : !query.no_reservations;
+  if (!shouldUseReservations(hasTask, explicit)) {
+    // Reservations are off. A hard force-off (`--no-reservations`,
+    // no_reservations === true) disables them entirely, ignoring even
+    // caller-supplied type_reservations. The task auto-disable is softer:
+    // caller-supplied type_reservations still act as an opt-in override.
+    if (query.no_reservations === true) return {};
+    return query.type_reservations ? { ...query.type_reservations } : {};
   }
   const base = { ...DEFAULT_TYPE_RESERVATIONS };
   const envRaw = process.env.RECALL_TYPE_RESERVATIONS;
@@ -220,143 +246,6 @@ function getMMRLambda(query: RecallQueryInternal): number {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_MMR_LAMBDA;
 }
 
-/**
- * Compute Jaccard similarity on word trigrams between two text bodies.
- * Returns 0.0 (no overlap) to 1.0 (identical trigram sets).
- *
- * Edge case: texts shorter than 3 words produce no trigrams; two empty
- * trigram sets are treated as identical (returns 1.0). In practice atom
- * bodies are always longer than 3 words.
- *
- * Accepts optional pre-computed trigram sets to avoid redundant extraction
- * in the MMR loop (O(n) instead of O(n²) extractions).
- */
-export function computeTextSimilarity(
-  bodyA: string,
-  bodyB: string,
-  precomputedA?: Set<string>,
-  precomputedB?: Set<string>,
-): number {
-  const trigramsA = precomputedA ?? extractTrigrams(bodyA);
-  const trigramsB = precomputedB ?? extractTrigrams(bodyB);
-
-  if (trigramsA.size === 0 && trigramsB.size === 0) return 1.0;
-  if (trigramsA.size === 0 || trigramsB.size === 0) return 0.0;
-
-  let intersection = 0;
-  for (const t of trigramsA) {
-    if (trigramsB.has(t)) intersection++;
-  }
-
-  const union = trigramsA.size + trigramsB.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
-/**
- * Extract word trigrams from text. Lowercase, strip punctuation, split into words,
- * then generate consecutive 3-word windows.
- */
-function extractTrigrams(text: string): Set<string> {
-  const words = text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, '')
-    .split(/\s+/)
-    .filter(w => w.length > 0);
-
-  const trigrams = new Set<string>();
-  for (let i = 0; i <= words.length - 3; i++) {
-    trigrams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
-  }
-  return trigrams;
-}
-
-/**
- * Apply Maximal Marginal Relevance re-ranking (Carbonell & Goldstein, 1998).
- *
- * Greedy selection: pick the highest-scoring atom first, then iteratively select
- * the candidate that maximizes λ * score(d) - (1-λ) * max_sim(d, selected).
- *
- * Scores are normalized to [0, 1] before MMR computation. The returned scores
- * are the MMR scores (for debugging/audit), not the original relevance scores.
- * Note: returned scores can be negative when diversity penalty exceeds relevance
- * (e.g., low-relevance atom highly similar to already-selected atoms).
- *
- * O(n²) similarity comparisons but n is small (typically <200 atoms after
- * filtering). Trigrams are precomputed once per atom to avoid O(n²) extraction.
- */
-export function applyMMR(
-  scored: Array<{ atom: Atom; score: number }>,
-  lambda: number,
-): Array<{ atom: Atom; score: number }> {
-  if (scored.length <= 1 || lambda >= 1.0) return scored;
-
-  // Normalize scores to [0, 1]
-  let maxScore = -Infinity;
-  let minScore = Infinity;
-  for (const s of scored) {
-    if (s.score > maxScore) maxScore = s.score;
-    if (s.score < minScore) minScore = s.score;
-  }
-  const scoreRange = maxScore - minScore || 1;
-
-  // Precompute trigrams once per atom (avoids O(n²) extraction in the loop)
-  const candidates = scored.map(s => ({
-    atom: s.atom,
-    originalScore: s.score,
-    normalizedScore: (s.score - minScore) / scoreRange,
-    body: s.atom.body,
-    trigrams: extractTrigrams(s.atom.body),
-  }));
-
-  const selected: Array<{ atom: Atom; score: number }> = [];
-  const selectedTrigrams: Set<string>[] = [];
-  const remaining = new Set(candidates.map((_, i) => i));
-
-  // First pick: highest normalized score
-  let bestIdx = 0;
-  let bestNorm = -Infinity;
-  for (const i of remaining) {
-    if (candidates[i].normalizedScore > bestNorm) {
-      bestNorm = candidates[i].normalizedScore;
-      bestIdx = i;
-    }
-  }
-  selected.push({ atom: candidates[bestIdx].atom, score: candidates[bestIdx].normalizedScore });
-  selectedTrigrams.push(candidates[bestIdx].trigrams);
-  remaining.delete(bestIdx);
-
-  // Greedy MMR loop
-  while (remaining.size > 0) {
-    let bestMMR = -Infinity;
-    let bestCandIdx = -1;
-
-    for (const i of remaining) {
-      const relevance = candidates[i].normalizedScore;
-
-      // max similarity to any already-selected atom
-      let maxSim = 0;
-      for (const selTri of selectedTrigrams) {
-        const sim = computeTextSimilarity('', '', candidates[i].trigrams, selTri);
-        if (sim > maxSim) maxSim = sim;
-      }
-
-      const mmrScore = lambda * relevance - (1 - lambda) * maxSim;
-      if (mmrScore > bestMMR) {
-        bestMMR = mmrScore;
-        bestCandIdx = i;
-      }
-    }
-
-    if (bestCandIdx === -1) break;
-
-    selected.push({ atom: candidates[bestCandIdx].atom, score: bestMMR });
-    selectedTrigrams.push(candidates[bestCandIdx].trigrams);
-    remaining.delete(bestCandIdx);
-  }
-
-  return selected;
-}
-
 /** Max allowed length_norm_k — values above 2 produce extreme penalties. */
 const MAX_LENGTH_NORM_K = 2;
 
@@ -364,55 +253,6 @@ function getLengthNormK(query: RecallQueryInternal): number {
   if (query.length_norm_k !== undefined) return Math.max(0, Math.min(MAX_LENGTH_NORM_K, query.length_norm_k));
   const v = parseFloat(process.env.RECALL_LENGTH_NORM_K || '');
   return Number.isFinite(v) && v >= 0 && v <= MAX_LENGTH_NORM_K ? v : DEFAULT_LENGTH_NORM_K;
-}
-
-/**
- * Compute per-atom length normalization factors.
- *
- * Atoms longer than the average word count in the result set get a penalty
- * factor < 1.0. Atoms at or below average get 1.0 (no boost).
- *
- * Formula: lengthFactor = 1 / (1 + k * (wordCount / avgWordCount - 1))
- * where k controls penalty strength. Clamped to 1.0 for short atoms.
- */
-export function computeLengthFactors(
-  filtered: Atom[],
-  k: number,
-): Map<string, number> {
-  const factors = new Map<string, number>();
-
-  if (k === 0 || filtered.length === 0) return factors;
-
-  // Compute word counts
-  const wordCounts = new Map<string, number>();
-  let totalWords = 0;
-  for (const atom of filtered) {
-    const wc = atom.body.split(/\s+/).filter(w => w.length > 0).length;
-    wordCounts.set(atom.frontmatter.id, wc);
-    totalWords += wc;
-  }
-
-  const avgWordCount = totalWords / filtered.length;
-
-  // Edge case: all atoms empty or single atom
-  if (avgWordCount === 0) return factors;
-
-  for (const atom of filtered) {
-    const id = atom.frontmatter.id;
-    const wc = wordCounts.get(id) ?? 0;
-    const ratio = wc / avgWordCount;
-
-    if (ratio <= 1.0) {
-      // At or below average — no penalty (factor = 1.0)
-      factors.set(id, 1.0);
-    } else {
-      // Above average — apply penalty
-      const factor = 1 / (1 + k * (ratio - 1));
-      factors.set(id, factor);
-    }
-  }
-
-  return factors;
 }
 
 /**
@@ -490,17 +330,6 @@ function computeSpecificityScores(
   }
 
   return scores;
-}
-
-/**
- * Exponential temporal decay: 1.0 at age=0, 0.5 at age=halfLife, 0.25 at age=2*halfLife.
- * Future-dated atoms are clamped to decay=1.0 (no boost beyond 1).
- */
-export function temporalDecay(createdAt: string, halfLifeDays: number): number {
-  if (halfLifeDays <= 0) return 0; // Guard against division by zero
-  const ageMs = Date.now() - new Date(createdAt).getTime();
-  const ageDays = ageMs / (1000 * 60 * 60 * 24);
-  return Math.pow(0.5, Math.max(0, ageDays) / halfLifeDays);
 }
 
 /**
@@ -603,6 +432,264 @@ function scoreEpisodes(
 /** @internal Extended query with pre-computed embedding vector — not part of the public API. */
 export interface RecallQueryInternal extends RecallQuery {
   queryVector?: number[];
+}
+
+/**
+ * ISSUE #214 — restrict the candidate pool to actually-matched atoms when a task
+ * is set, and derive the recall outcome signal.
+ *
+ * Previously: queryIndex returned ALL status-filtered atoms; FTS only re-ranked
+ * them; atoms with no FTS hit got score 0 and the token budget filled with
+ * whatever sorted first by status priority + recency. This produced confidently-
+ * irrelevant fallback results that scaffold LLM hallucination on no-match
+ * queries, and polluted real-match results with non-matched noise atoms.
+ *
+ * Now: take the union of FTS-matched + semantic-matched atom IDs (the "anchor
+ * set"). When graph_boost is enabled, expand the pool with 1-hop neighbours of
+ * the anchor set — these atoms are legitimately related-by-graph even if they
+ * don't FTS-match themselves, and the existing applyGraphBoost code expects
+ * them in the pool to score them. If the anchor set is empty AND searchFts
+ * didn't crash, report `no_match` and return [] for atoms. If searchFts
+ * returned null (FTS table missing or query crashed beyond our sanitisation
+ * layer), fall back to the prior file-scan-style behaviour so the caller still
+ * gets something — same rationale as the original `filtered.length, 200` cap.
+ */
+function selectCandidatePool(
+  memoryDir: string,
+  query: RecallQueryInternal,
+  filtered: Atom[],
+  ftsResults: { atom_id: string; rank: number }[] | null,
+  ftsScoreMap: Map<string, number>,
+  semanticScoreMap: Map<string, number>,
+): { filtered: Atom[]; recallStatus: 'match' | 'no_match' | 'fts_unavailable' } {
+  const hasFts = ftsScoreMap.size > 0;
+  const hasSemantic = semanticScoreMap.size > 0;
+  const useGraphBoostForPool = query.graph_boost !== undefined
+    ? query.graph_boost
+    : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
+
+  if (ftsResults === null) {
+    // FTS unavailable (missing table or unparseable query that slipped past
+    // the sanitiser). Don't restrict the pool — caller is left with the
+    // file-scan candidate set scored by recency/type. This is a degradation
+    // path, not a regression path.
+    return { filtered, recallStatus: 'fts_unavailable' };
+  }
+  if (!hasFts && !hasSemantic) {
+    // No anchors → no_match. Graph expansion needs anchors to expand from,
+    // so there's nothing to do here either.
+    return { filtered: [], recallStatus: 'no_match' };
+  }
+
+  const anchorIds = new Set<string>([
+    ...ftsScoreMap.keys(),
+    ...semanticScoreMap.keys(),
+  ]);
+  const poolIds = new Set<string>(anchorIds);
+
+  if (useGraphBoostForPool) {
+    // Expand pool by 1-hop neighbours (both directions). The graph-boost
+    // scorer (applied later) then lifts these neighbours' scores; they
+    // get a discounted boost relative to direct matches.
+    const allRelations = getAllRelations(memoryDir);
+    for (const rel of allRelations) {
+      if (anchorIds.has(rel.source_id)) poolIds.add(rel.target_id);
+      if (anchorIds.has(rel.target_id)) poolIds.add(rel.source_id);
+    }
+  }
+
+  return {
+    filtered: filtered.filter((a) => poolIds.has(a.frontmatter.id)),
+    recallStatus: 'match',
+  };
+}
+
+// --- Recall ranking observability (#371) — opt-in via RECALL_DEBUG, stderr only ---
+
+/**
+ * True when `RECALL_DEBUG` is set to an on value (`1`/`true`). Default OFF — the
+ * scoring hot path reads this env var once per recall and does nothing else when
+ * disabled (no row allocation, no string building). No `ContextBundle` field is
+ * added, so this stays entirely off the public surface.
+ */
+function recallDebugEnabled(): boolean {
+  const v = process.env.RECALL_DEBUG;
+  return v === '1' || v === 'true';
+}
+
+/** @internal Per-atom score components captured for the RECALL_DEBUG trace. */
+interface ScoreDebugRow {
+  id: string;
+  fts: number;          // raw FTS score (before specificity/length/coverage)
+  specificity: number;
+  length: number;
+  coverage: number;
+  semantic: number;
+  recency: number;
+  type_weight: number;
+  conf_factor: number;
+  preGraph: number;     // final score before the graph boost
+}
+
+const fmtDebugNum = (n: number): string => (Number.isFinite(n) ? n.toFixed(4) : String(n));
+
+/**
+ * Emit the task-path per-atom score breakdown to stderr, sorted by final score
+ * desc — answers "why did atom X outrank atom Y?". `graph_boost` is the delta the
+ * single-hop spreading-activation step added on top of `preGraph`.
+ *
+ * This is the **scoring-stage** ranking: it reflects `finalScoreMap` right after
+ * the graph boost, BEFORE the downstream MMR diversity re-rank and token-budget
+ * pruning in `recall()`. So the set/order here can differ from the returned
+ * `bundle.atoms` when MMR or `max_tokens` is in play — the header says so.
+ */
+function emitTaskScoreTrace(
+  task: string | undefined,
+  rows: ScoreDebugRow[],
+  finalScoreMap: Map<string, number>,
+): void {
+  const sorted = [...rows].sort(
+    (a, b) => (finalScoreMap.get(b.id) ?? 0) - (finalScoreMap.get(a.id) ?? 0),
+  );
+  process.stderr.write(
+    `recall-debug: task-path scoring ranking for "${task ?? ''}" ` +
+    `(${sorted.length} scored candidates, by final desc — pre-MMR/pre-token-budget)\n`,
+  );
+  for (const r of sorted) {
+    const final = finalScoreMap.get(r.id) ?? 0;
+    const graphBoost = final - r.preGraph;
+    process.stderr.write(
+      `recall-debug:   ${r.id}` +
+      ` fts=${fmtDebugNum(r.fts)} specificity=${fmtDebugNum(r.specificity)}` +
+      ` length=${fmtDebugNum(r.length)} coverage=${fmtDebugNum(r.coverage)}` +
+      ` semantic=${fmtDebugNum(r.semantic)} recency=${fmtDebugNum(r.recency)}` +
+      ` type_weight=${fmtDebugNum(r.type_weight)} conf_factor=${fmtDebugNum(r.conf_factor)}` +
+      ` graph_boost=${fmtDebugNum(graphBoost)} final=${fmtDebugNum(final)}\n`,
+    );
+  }
+}
+
+/**
+ * Emit the no-task ranking trace (status priority, then recency/updated_at) to
+ * stderr. The no-task path has no FTS/semantic scoring — ordering is the
+ * constitution-pipeline sort, so the relevant "why" signals are status + recency.
+ */
+function emitNoTaskTrace(atoms: Atom[], halfLife: number, decayWeight: number): void {
+  const tiebreak = decayWeight === 0 ? 'updated_at' : 'recency';
+  process.stderr.write(
+    `recall-debug: no-task ranking (${atoms.length} atoms, by status priority then ${tiebreak})\n`,
+  );
+  for (const a of atoms) {
+    const recency = temporalDecay(a.frontmatter.created_at, halfLife);
+    process.stderr.write(
+      `recall-debug:   ${a.frontmatter.id} status=${a.frontmatter.status}` +
+      ` status_priority=${getStatusPriority(a.frontmatter.status)}` +
+      ` recency=${fmtDebugNum(recency)} updated_at=${a.frontmatter.updated_at}\n`,
+    );
+  }
+}
+
+/** @internal Pre-computed scoring inputs for the task-path scoring loop. */
+interface TaskScoringInputs {
+  ftsScoreMap: Map<string, number>;
+  semanticScoreMap: Map<string, number>;
+  specificityScores: Map<string, number>;
+  lengthFactors: Map<string, number>;
+  coverageBoosts: Map<string, number>;
+  halfLife: number;
+  decayWeight: number;
+  typeWeights: Record<AtomType, number>;
+  confFloor: number;
+}
+
+/**
+ * Task-path scoring loop. Combines FTS + semantic + specificity + length +
+ * coverage signals into a memoized `final_score` per atom, applies the
+ * single-hop graph boost, and sorts `filtered` in place (score desc, then
+ * status priority, then recency). Returns the populated score map — empty when
+ * no signals exist, in which case `filtered` is left untouched and downstream
+ * `applyTokenBudget` degrades to insertion-order greedy fill.
+ */
+function scoreTaskAtoms(
+  memoryDir: string,
+  query: RecallQueryInternal,
+  filtered: Atom[],
+  inputs: TaskScoringInputs,
+): Map<string, number> {
+  const {
+    ftsScoreMap, semanticScoreMap, specificityScores, lengthFactors,
+    coverageBoosts, halfLife, decayWeight, typeWeights, confFloor,
+  } = inputs;
+  const hasFts = ftsScoreMap.size > 0;
+  const hasSemantic = semanticScoreMap.size > 0;
+
+  const finalScoreMap = new Map<string, number>();
+
+  // Opt-in observability (#371): collect per-atom components only when enabled.
+  const debug = recallDebugEnabled();
+  const debugRows: ScoreDebugRow[] = [];
+
+  if (hasFts || hasSemantic) {
+    // Combine scores using configurable weights (env SEMANTIC_WEIGHT, default 0.6).
+    // When only one signal is available, it gets full weight.
+    const FTS_WEIGHT = hasSemantic ? getFtsWeight() : 1.0;
+    const SEMANTIC_WEIGHT = hasFts ? getSemanticWeight() : 1.0;
+
+    // Memoize final_score per atom before sorting (O(n)) to avoid re-computing
+    // decay + type_weight + conf_factor inside the comparator (O(n log n) otherwise).
+    for (const atom of filtered) {
+      const id = atom.frontmatter.id;
+      const ftsRaw = ftsScoreMap.get(id) ?? 0;
+      const specificity = specificityScores.get(id) ?? 1.0;
+      const length = lengthFactors.get(id) ?? 1.0;
+      const coverage = coverageBoosts.get(id) ?? 1.0;
+      const fts = ftsRaw * specificity * length * coverage;
+      const sem = semanticScoreMap.get(id) ?? 0;
+      const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
+      const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
+      const baseScore = relevance * (1 - decayWeight) + recency * decayWeight;
+      const typeWeight = typeWeights[atom.frontmatter.type] ?? 1.0;
+      // conf_factor: floor + (1-floor)*confidence — ensures even 0-confidence atoms
+      // still contribute at `floor` level rather than being zeroed out
+      const confFactor = confFloor + (1 - confFloor) * atom.frontmatter.confidence;
+      const preGraph = baseScore * typeWeight * confFactor;
+      finalScoreMap.set(id, preGraph);
+      if (debug) {
+        debugRows.push({
+          id, fts: ftsRaw, specificity, length, coverage, semantic: sem,
+          recency, type_weight: typeWeight, conf_factor: confFactor, preGraph,
+        });
+      }
+    }
+
+    // Phase 3: graph-walk boost (single-hop spreading activation).
+    // query.graph_boost takes precedence over env var when explicitly set.
+    const useGraphBoost = query.graph_boost !== undefined
+      ? query.graph_boost
+      : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
+    if (useGraphBoost) {
+      const relations = getAllRelations(memoryDir);
+      if (relations.length > 0) {
+        applyGraphBoost(finalScoreMap, relations, getNeighborBoost());
+      }
+    }
+
+    filtered.sort((a, b) => {
+      const scoreA = finalScoreMap.get(a.frontmatter.id) ?? 0;
+      const scoreB = finalScoreMap.get(b.frontmatter.id) ?? 0;
+
+      if (scoreA !== scoreB) return scoreB - scoreA;
+
+      // Fallback: status priority, then recency
+      const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
+      if (statusOrder !== 0) return statusOrder;
+      return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
+    });
+
+    if (debug) emitTaskScoreTrace(query.task, debugRows, finalScoreMap);
+  }
+
+  return finalScoreMap;
 }
 
 /**
@@ -714,115 +801,19 @@ export function recall(
       }
     }
 
-    const hasFts = ftsScoreMap.size > 0;
-    const hasSemantic = semanticScoreMap.size > 0;
+    // ISSUE #214 — restrict the candidate pool to actually-matched atoms (anchor
+    // set ∪ optional 1-hop graph neighbours) and derive the recall outcome signal.
+    const pool = selectCandidatePool(memoryDir, query, filtered, ftsResults, ftsScoreMap, semanticScoreMap);
+    filtered = pool.filtered;
+    recallStatus = pool.recallStatus;
 
-    // ISSUE #214 — restrict candidate pool to actually-matched atoms when task is set.
-    //
-    // Previously: queryIndex returned ALL status-filtered atoms; FTS only re-ranked
-    // them; atoms with no FTS hit got score 0 and the token budget filled with
-    // whatever sorted first by status priority + recency. This produced confidently-
-    // irrelevant fallback results that scaffold LLM hallucination on no-match
-    // queries, and polluted real-match results with non-matched noise atoms.
-    //
-    // Now: take the union of FTS-matched + semantic-matched atom IDs (the "anchor
-    // set"). When graph_boost is enabled, expand the pool with 1-hop neighbours of
-    // the anchor set — these atoms are legitimately related-by-graph even if they
-    // don't FTS-match themselves, and the existing applyGraphBoost code expects
-    // them in the pool to score them. If the anchor set is empty AND searchFts
-    // didn't crash, report `no_match` and return [] for atoms. If searchFts
-    // returned null (FTS table missing or query crashed beyond our sanitisation
-    // layer), fall back to the prior file-scan-style behaviour so the caller still
-    // gets something — same rationale as the original `filtered.length, 200` cap.
-    const useGraphBoostForPool = query.graph_boost !== undefined
-      ? query.graph_boost
-      : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
-
-    if (ftsResults === null) {
-      // FTS unavailable (missing table or unparseable query that slipped past
-      // the sanitiser). Don't restrict the pool — caller is left with the
-      // file-scan candidate set scored by recency/type. This is a degradation
-      // path, not a regression path.
-      recallStatus = 'fts_unavailable';
-    } else if (!hasFts && !hasSemantic) {
-      // No anchors → no_match. Graph expansion needs anchors to expand from,
-      // so there's nothing to do here either.
-      recallStatus = 'no_match';
-      filtered = [];
-    } else {
-      recallStatus = 'match';
-      const anchorIds = new Set<string>([
-        ...ftsScoreMap.keys(),
-        ...semanticScoreMap.keys(),
-      ]);
-      const poolIds = new Set<string>(anchorIds);
-
-      if (useGraphBoostForPool) {
-        // Expand pool by 1-hop neighbours (both directions). The graph-boost
-        // scorer (applied later) then lifts these neighbours' scores; they
-        // get a discounted boost relative to direct matches.
-        const allRelations = getAllRelations(memoryDir);
-        for (const rel of allRelations) {
-          if (anchorIds.has(rel.source_id)) poolIds.add(rel.target_id);
-          if (anchorIds.has(rel.target_id)) poolIds.add(rel.source_id);
-        }
-      }
-
-      filtered = filtered.filter((a) => poolIds.has(a.frontmatter.id));
-    }
-
-    // finalScoreMap is populated when signals exist; stays empty otherwise.
-    // An empty map degrades gracefully: applyTokenBudget falls back to
-    // insertion-order greedy fill (all scores 0 → stable sort).
-    let finalScoreMap = new Map<string, number>();
-
-    if (hasFts || hasSemantic) {
-      // Combine scores using configurable weights (env SEMANTIC_WEIGHT, default 0.6).
-      // When only one signal is available, it gets full weight.
-      const FTS_WEIGHT = hasSemantic ? getFtsWeight() : 1.0;
-      const SEMANTIC_WEIGHT = hasFts ? getSemanticWeight() : 1.0;
-
-      // Memoize final_score per atom before sorting (O(n)) to avoid re-computing
-      // decay + type_weight + conf_factor inside the comparator (O(n log n) otherwise).
-      for (const atom of filtered) {
-        const id = atom.frontmatter.id;
-        const ftsRaw = ftsScoreMap.get(id) ?? 0;
-        const fts = ftsRaw * (specificityScores.get(id) ?? 1.0) * (lengthFactors.get(id) ?? 1.0) * (coverageBoosts.get(id) ?? 1.0);
-        const sem = semanticScoreMap.get(id) ?? 0;
-        const relevance = fts * FTS_WEIGHT + sem * SEMANTIC_WEIGHT;
-        const recency = temporalDecay(atom.frontmatter.created_at, halfLife);
-        const baseScore = relevance * (1 - decayWeight) + recency * decayWeight;
-        const typeWeight = typeWeights[atom.frontmatter.type] ?? 1.0;
-        // conf_factor: floor + (1-floor)*confidence — ensures even 0-confidence atoms
-        // still contribute at `floor` level rather than being zeroed out
-        const confFactor = confFloor + (1 - confFloor) * atom.frontmatter.confidence;
-        finalScoreMap.set(id, baseScore * typeWeight * confFactor);
-      }
-
-      // Phase 3: graph-walk boost (single-hop spreading activation).
-      // query.graph_boost takes precedence over env var when explicitly set.
-      const useGraphBoost = query.graph_boost !== undefined
-        ? query.graph_boost
-        : (process.env.RECALL_GRAPH_BOOST ?? 'true') !== 'false';
-      if (useGraphBoost) {
-        const relations = getAllRelations(memoryDir);
-        if (relations.length > 0) {
-          applyGraphBoost(finalScoreMap, relations, getNeighborBoost());
-        }
-      }
-
-      filtered.sort((a, b) => {
-        const scoreA = finalScoreMap.get(a.frontmatter.id) ?? 0;
-        const scoreB = finalScoreMap.get(b.frontmatter.id) ?? 0;
-
-        if (scoreA !== scoreB) return scoreB - scoreA;
-
-        // Fallback: status priority, then recency
-        const statusOrder = getStatusPriority(a.frontmatter.status) - getStatusPriority(b.frontmatter.status);
-        if (statusOrder !== 0) return statusOrder;
-        return b.frontmatter.updated_at.localeCompare(a.frontmatter.updated_at);
-      });
-    }
+    // Score the task-path candidate pool (FTS + semantic + specificity + length +
+    // coverage, graph boost, sort). Empty map when no signals → applyTokenBudget
+    // degrades to insertion-order greedy fill. `let` because MMR rebuilds it below.
+    let finalScoreMap = scoreTaskAtoms(memoryDir, query, filtered, {
+      ftsScoreMap, semanticScoreMap, specificityScores, lengthFactors,
+      coverageBoosts, halfLife, decayWeight, typeWeights, confFloor,
+    });
 
     // Phase 8: MMR result diversity — re-rank to prevent redundant atoms filling token budget.
     // Applied after scoring + sorting but BEFORE the token budget.
@@ -865,6 +856,8 @@ export function recall(
       const decayB = temporalDecay(b.frontmatter.created_at, halfLife);
       return decayB - decayA;
     });
+
+    if (recallDebugEnabled()) emitNoTaskTrace(filtered, halfLife, decayWeight);
 
     // Phase 8 (no-task path): MMR diversity for constitution/render pipeline.
     // Uses sort-position as synthetic score so the MMR formula can balance
@@ -1113,43 +1106,5 @@ function applyTokenBudget(
       ? { mode: 'score', scores: finalScoreMap }
       : { mode: 'recency' },
   );
-}
-
-/**
- * Single-hop graph-walk spreading activation (Phase 3).
- *
- * For each edge (source, target): boost the neighbor by source_score * boost_factor.
- * The boost is undirected — high-scoring targets also lift their sources.
- * Diminishing returns formula prevents runaway amplification in dense subgraphs:
- *   accumulated_boost += score * boost * (1 / (1 + accumulated_boost))
- */
-function applyGraphBoost(
-  scoreMap: Map<string, number>,
-  relations: { source_id: string; target_id: string }[],
-  boost: number,
-): void {
-  if (boost === 0) return;
-  const boostAccumulator = new Map<string, number>();
-
-  for (const rel of relations) {
-    const sourceScore = scoreMap.get(rel.source_id);
-    const targetScore = scoreMap.get(rel.target_id);
-
-    // Boost target from source
-    if (sourceScore !== undefined && sourceScore > 0) {
-      const current = boostAccumulator.get(rel.target_id) ?? 0;
-      boostAccumulator.set(rel.target_id, current + sourceScore * boost * (1 / (1 + current)));
-    }
-
-    // Boost source from target (undirected walk)
-    if (targetScore !== undefined && targetScore > 0) {
-      const current = boostAccumulator.get(rel.source_id) ?? 0;
-      boostAccumulator.set(rel.source_id, current + targetScore * boost * (1 / (1 + current)));
-    }
-  }
-
-  for (const [atomId, addedBoost] of boostAccumulator) {
-    scoreMap.set(atomId, (scoreMap.get(atomId) ?? 0) + addedBoost);
-  }
 }
 
