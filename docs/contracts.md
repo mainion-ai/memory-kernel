@@ -64,7 +64,8 @@ Schemas are `.passthrough()` — an **additive** field in a later version won't 
 
 - **`summary` is always the full graded set**; **`reports` honors `--actionable-only`**, and **`shown` = `reports.length`** so a consumer never mistakes `summary.total` for the number of rows present.
 - **`grounding_score` ∈ [0.01, 1]** is **prior-independent** — a posterior over *use* (recency + read-frequency, ×`0.6` per conflict; a never-read atom is `0.01` regardless of age). `inputs.age_days` is *reported* but is **not** a score term.
-- **Read-only contract:** `mk grounding` **writes no atom files** and **does not build or open the SQLite index** (it reads `events.ndjson` directly). The confidence write-back (mutating `confidence`) is **deferred and gated on `human_edit` provenance events (#247)** — until then this command is purely advisory.
+- **Read-only by default:** plain `mk grounding` (no `--apply`) **writes no atom files** and **does not build or open the SQLite index** (it reads `events.ndjson` directly) — purely advisory.
+- **`--apply` is the mutating write-back (#364, v1.36.0+).** For the actionable `review`/`promote` atoms it nudges `confidence` toward the grounding value (`reconciled = clamp(prior + α·(grounding − prior))`, α_neg = 0.08 > α_pos = 0.03 so disconfirmation moves faster) and emits one `atom_reconciled` event per write (auditable + replayable). **Atoms carrying a `human_edit` event are skipped** (human-asserted confidence) unless `--override`. `--apply --dry-run` previews. `--apply --json` emits `{ scanned, candidates, applied, skipped_human_edit, skipped_below_min_delta, dry_run, changes[] }` (a different shape from the advisory report).
 
 ---
 

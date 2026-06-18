@@ -19,6 +19,7 @@ import {
 import { assertWithinDir, listAtoms, readAtom, writeAtom, atomFilePath, writeView, readView } from './store.js';
 import { indexExists, indexAtom, removeFromIndex } from './index-db.js';
 import { generateAtomId } from './schema.js';
+import { backfillHumanEdits } from './provenance.js';
 import type { Atom, AtomType, ReflectResult } from './types.js';
 import { AUTO_EXTRACTED_TAG } from './types.js';
 
@@ -26,6 +27,14 @@ export interface ReflectOptions {
   agent_id: string;
   session_id: string;
   memoryDir: string;
+  /**
+   * #247: detect unprovenanced writes (off-band filesystem edits) and emit
+   * synthetic `human_edit` events for clearly-scattered ones (bulk migration
+   * clusters are skipped). Off by default — opt in via `mk reflect
+   * --backfill-human-edits` — because content-diff also flags legitimate but
+   * eventless mk writes (relate/relink/enrich), so emission must be deliberate.
+   */
+  backfillHumanEdits?: boolean;
 }
 
 /**
@@ -97,13 +106,31 @@ export function reflect(opts: ReflectOptions): ReflectResult {
   const conflictResult = detectConflicts(opts, atoms);
   result.conflicts_found = conflictResult.total;
 
+  // 4b. Unprovenanced-write detection + synthetic human_edit backfill (#247).
+  // Opt-in: re-reads the event log AFTER the mutations above so the latest
+  // snapshots (promotions, archives) are the baseline and aren't misread as
+  // off-band edits.
+  let backfilled = 0;
+  if (opts.backfillHumanEdits) {
+    const events = readEvents(opts.memoryDir);
+    const backfill = backfillHumanEdits(
+      { memoryDir: opts.memoryDir, agent_id: opts.agent_id, session_id: opts.session_id },
+      atoms,
+      events,
+    );
+    result.unprovenanced_writes = backfill.detected;
+    result.human_edits_backfilled = backfill.backfilled;
+    backfilled = backfill.backfilled;
+  }
+
   // 5. Regenerate views — re-read from disk for accuracy
   // (views need the absolute latest state including file renames from promotion)
   regenerateViews(opts);
 
   // Count per-atom events emitted by sub-phases
   // Each expired/deduped/promoted atom generates one event; only NEW conflicts emit events
-  result.events_emitted = result.expired + result.deduped + result.promoted + conflictResult.newCount;
+  result.events_emitted =
+    result.expired + result.deduped + result.promoted + conflictResult.newCount + backfilled;
 
   // Emit reflect event
   appendEvent(opts.memoryDir, 'reflect_completed', {

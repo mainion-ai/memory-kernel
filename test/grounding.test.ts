@@ -551,4 +551,56 @@ describe('mk grounding (CLI) — wiring + no-writes invariant', () => {
     const res = mk('grounding', '-d', testDir, '--prior-threshold', '5');
     expect(res.exitCode).not.toBe(0);
   });
+
+  // --- Phase 2 write-back (#364) ---
+
+  it('--apply writes reconciled confidence back and emits atom_reconciled (CLI)', () => {
+    const a = activeAtom('confident-unused', 'fact', 0.9); // never read → review → write-back
+
+    const res = mk('grounding', '-d', testDir, '--apply', '--json');
+    expect(res.exitCode).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.applied).toBe(1);
+    expect(parsed.dry_run).toBe(false);
+
+    const reconciled = readAtomFile(testDir, a.frontmatter.id).frontmatter.confidence;
+    expect(reconciled).toBeLessThan(0.9);
+  });
+
+  it('rejects --dry-run / --override without --apply (forgotten-apply trap)', () => {
+    activeAtom('x', 'fact', 0.9);
+    expect(mk('grounding', '-d', testDir, '--dry-run').exitCode).not.toBe(0);
+    expect(mk('grounding', '-d', testDir, '--override').exitCode).not.toBe(0);
+  });
+
+  it('--apply --dry-run previews without touching the store tree', () => {
+    activeAtom('confident-unused', 'fact', 0.9);
+    const before = walkTree(testDir);
+
+    const res = mk('grounding', '-d', testDir, '--apply', '--dry-run', '--json');
+    expect(res.exitCode).toBe(0);
+    expect(JSON.parse(res.stdout).dry_run).toBe(true);
+
+    const after = walkTree(testDir);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [rel, snap] of before) {
+      expect(after.get(rel)!.body).toBe(snap.body);
+      expect(after.get(rel)!.mtime).toBe(snap.mtime);
+    }
+  });
 });
+
+/** Read an atom file by id from a real store (CLI integration helper). */
+function readAtomFile(memoryDir: string, id: string): Atom {
+  const dir = path.join(memoryDir, 'ENTITIES');
+  for (const f of fs.readdirSync(dir)) {
+    if (!f.endsWith('.md')) continue;
+    const body = fs.readFileSync(path.join(dir, f), 'utf-8');
+    if (body.includes(`id: ${id}`)) {
+      // minimal parse: pull the confidence line
+      const m = body.match(/^confidence:\s*([\d.]+)/m);
+      return { frontmatter: { id, confidence: m ? Number(m[1]) : NaN } as any, body };
+    }
+  }
+  throw new Error(`atom ${id} not found`);
+}

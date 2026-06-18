@@ -162,6 +162,9 @@ export const EVENT_ACTIONS = [
   'conflict_detected',
   'conflict_resolved',
   'human_edit',
+  // #364: confidence write-back from the grounding reconciliation pass — one
+  // event per atom whose confidence was nudged toward its usage-grounded value.
+  'atom_reconciled',
   'reflect_completed',
   'gc_completed',
   'session_started',
@@ -296,6 +299,10 @@ export interface ReflectResult {
   archived: number;
   conflicts_found: number;
   events_emitted: number;
+  // #247: only present when reflect runs with `backfillHumanEdits`. Optional so
+  // the default reflect result shape is unchanged.
+  unprovenanced_writes?: number; // candidates detected (all confidences)
+  human_edits_backfilled?: number; // synthetic human_edit events emitted (scattered, non-cluster)
 }
 
 // --- Replay result ---

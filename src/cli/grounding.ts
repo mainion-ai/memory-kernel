@@ -14,6 +14,7 @@ import { listAtoms } from '../store.js';
 import { readEvents } from '../event-log.js';
 import { computeGrounding, DEFAULT_PRIOR_THRESHOLD, DEFAULT_GROUNDING_THRESHOLD } from '../grounding.js';
 import type { GroundingQuadrant, GroundingReport } from '../grounding.js';
+import { reconcileGrounding } from '../reconcile.js';
 
 const QUADRANT_LABELS: Record<GroundingQuadrant, string> = {
   'well-grounded': 'Well-grounded (confidence matches use)',
@@ -41,13 +42,18 @@ function parseThreshold(raw: string | undefined, fallback: number, flag: string,
 export function registerGroundingCommand(program: Command): void {
   program
     .command('grounding')
-    .description('Advisory report: reconcile atom confidence (prior) against usage grounding (read-only)')
+    .description('Reconcile atom confidence (prior) against usage grounding. Advisory by default; --apply writes back')
     .option('-d, --dir <dir>', 'Memory directory', './memory')
     .option('--json', 'Output as JSON')
     .option('--prior-threshold <n>', 'Confidence threshold for the high/low prior split (0–1)')
     .option('--grounding-threshold <n>', 'Grounding threshold for the high/low split (0–1)')
     .option('--actionable-only', 'Show only atoms flagged actionable')
     .option('--include-all', 'Include non-active atoms and conflict-type atoms (default: active, non-conflict only)')
+    .option('--apply', 'Write reconciled confidence back to review/promote atoms (#364). Emits atom_reconciled events')
+    .option('--dry-run', 'With --apply: preview the write-back without mutating files or emitting events')
+    .option('--override', 'With --apply: also adjust atoms a human has edited (default: skip human_edit-touched atoms)')
+    .option('--agent-id <id>', 'Agent ID recorded on emitted atom_reconciled events', 'cli')
+    .option('--session-id <id>', 'Session ID recorded on emitted atom_reconciled events', 'mk-grounding')
     .action(
       (opts: {
         dir: string;
@@ -56,10 +62,22 @@ export function registerGroundingCommand(program: Command): void {
         groundingThreshold?: string;
         actionableOnly?: boolean;
         includeAll?: boolean;
+        apply?: boolean;
+        dryRun?: boolean;
+        override?: boolean;
+        agentId: string;
+        sessionId: string;
       }) => {
         const memoryDir = resolveDir(opts.dir, program.opts().agent);
         if (!fs.existsSync(memoryDir)) {
           exitWithError(`Memory directory not found: ${memoryDir}`, opts.json);
+        }
+
+        // --dry-run / --override only modify the write-back; without --apply the
+        // command silently runs the read-only report, so a forgotten --apply
+        // would masquerade as a previewed write-back. Fail loudly instead.
+        if ((opts.dryRun || opts.override) && !opts.apply) {
+          exitWithError('--dry-run and --override only apply with --apply (the write-back path)', opts.json);
         }
 
         const priorThreshold = parseThreshold(opts.priorThreshold, DEFAULT_PRIOR_THRESHOLD, '--prior-threshold', opts.json);
@@ -69,6 +87,45 @@ export function registerGroundingCommand(program: Command): void {
           '--grounding-threshold',
           opts.json,
         );
+
+        // --- Phase 2 write-back path (#364) ---
+        if (opts.apply) {
+          const r = reconcileGrounding({
+            memoryDir,
+            agent_id: opts.agentId,
+            session_id: opts.sessionId,
+            dryRun: opts.dryRun,
+            override: opts.override,
+            grounding: { priorThreshold, groundingThreshold, includeAll: opts.includeAll },
+          });
+
+          if (opts.json) {
+            console.log(JSON.stringify(r, null, 2));
+            return;
+          }
+
+          const prefix = r.dry_run ? '[dry-run] ' : '';
+          console.log(`⚖️  ${prefix}Grounding write-back (#364)\n`);
+          if (r.changes.length === 0) {
+            console.log('No confidence changes — no actionable review/promote atoms cleared the gates.');
+          } else {
+            for (const c of r.changes) {
+              const arrow = c.delta < 0 ? '↓' : '↑';
+              console.log(
+                `  ${arrow} ${c.atom_id} [${c.type}] ${c.quadrant}: ` +
+                  `${fmt(c.prior)} → ${fmt(c.reconciled_confidence)} ` +
+                  `(grounding ${fmt(c.grounding_score)}, Δ ${c.delta >= 0 ? '+' : ''}${c.delta})`,
+              );
+            }
+            console.log();
+          }
+          console.log(
+            `Summary: ${r.candidates} candidate${r.candidates === 1 ? '' : 's'} · ` +
+              `${prefix ? 'would apply' : 'applied'} ${r.changes.length} · ` +
+              `skipped ${r.skipped_human_edit} human-edited, ${r.skipped_below_min_delta} below min-delta`,
+          );
+          return;
+        }
 
         const atoms = listAtoms(memoryDir);
         const events = readEvents(memoryDir);
@@ -132,7 +189,7 @@ export function registerGroundingCommand(program: Command): void {
             `${result.summary.actionable} actionable · ` +
             `well-grounded ${q['well-grounded']}, review ${q.review}, promote ${q.promote}, noise ${q.noise}`,
         );
-        console.log('\nAdvisory only. Confidence write-back is deferred (gated on human_edit events, #247).');
+        console.log('\nAdvisory by default. Run with --apply to write reconciled confidence back to review/promote atoms (#364; --dry-run to preview).');
       },
     );
 }

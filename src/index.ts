@@ -153,6 +153,15 @@ export { runUpgrade } from './upgrade.js';
 export type { UpgradeOptions, UpgradeResult, UpgradeStep } from './upgrade.js';
 export { markExecuted } from './execute.js';
 export type { ExecuteOptions, ExecuteResult } from './execute.js';
+export { editAtom } from './edit.js';
+export type { EditOptions, EditResult, EditorRunner } from './edit.js';
+export { detectUnprovenancedWrites, backfillHumanEdits } from './provenance.js';
+export type {
+  UnprovenancedWrite,
+  DetectionConfidence,
+  BackfillOptions,
+  BackfillResult,
+} from './provenance.js';
 export type {
   RetainOptions,
   ResolveConflictOptions,
@@ -296,6 +305,16 @@ export type {
   ClassifyContext,
   QuadrantVerdict,
 } from './grounding.js';
+
+// Confidence write-back from grounding (Phase 2 — mutating, gated on #247) (#364)
+export {
+  reconcileGrounding,
+  reconciledConfidence,
+  DEFAULT_ALPHA_NEG,
+  DEFAULT_ALPHA_POS,
+  DEFAULT_MIN_DELTA,
+} from './reconcile.js';
+export type { ReconcileOptions, ReconcileResult, ReconcileChange } from './reconcile.js';
 
 // Eval — golden-query recall runner (#300)
 export { loadFixtures, runFixture, runEval, resolveEmbed, exitCodeForEval, EvalError, DEFAULT_TOP_K, DEFAULT_THRESHOLD } from './eval.js';

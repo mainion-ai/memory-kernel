@@ -93,6 +93,17 @@ export const MUTATION_ACTIONS = [
   //       and keeps the latest per atom_ref (it's always terminal, so
   //       this just means the resolved event survives compaction).
   'conflict_resolved',
+  // #247: human_edit carries a full snapshot of the post-edit atom (forward
+  //       path = `mk edit`; backward path = reflect backfill). It is a
+  //       non-terminal mutation — replay reconstructs the edited state, and
+  //       compaction keeps the latest per atom_ref. Treating it as a mutation
+  //       is also what makes the backward-detector idempotent: the emitted
+  //       event becomes the atom's latest snapshot baseline.
+  'human_edit',
+  // #364: atom_reconciled carries the post-write-back snapshot (confidence
+  //       nudged toward the grounding value). A non-terminal mutation like
+  //       atom_updated — replay reconstructs it, compaction keeps the latest.
+  'atom_reconciled',
 ] as const;
 
 export function isMutationAction(action: string): boolean {

@@ -198,6 +198,38 @@ const r = markExecuted({ memoryDir: './memory', atomId: 'PROC-2026-06-13-DEPLOY-
 // The next `reflect()` promotes the procedure draft (status-only) at confidence ≥ 0.7.
 ```
 
+### Record a human edit / backfill past ones (#247)
+
+```typescript
+import {
+  editAtom,
+  detectUnprovenancedWrites,
+  backfillHumanEdits,
+  listAtoms,
+  readEvents,
+} from 'memory-kernel';
+
+// Forward path: open the atom in $EDITOR and emit a provenanced human_edit
+// event on change. Inject `runEditor` to drive it non-interactively (tests).
+const r = editAtom({ memoryDir: './memory', atomId: 'FACT-2026-06-17-X-ab12' });
+// → { atom_id, type, changed, hash_before, hash_after, lines_added, lines_removed, updated_at }
+
+// Backward path: detect off-band filesystem edits (no event was emitted),
+// labelled by confidence ('content-diff' | 'timestamp-heuristic'); same-second
+// bulk-migration clusters are flagged `cluster: true`.
+const detected = detectUnprovenancedWrites(listAtoms('./memory'), readEvents('./memory'));
+
+// Emit synthetic human_edit events for the clearly-scattered (non-cluster) ones.
+// Idempotent — the emitted event becomes the atom's latest snapshot baseline.
+const bf = backfillHumanEdits(
+  { memoryDir: './memory', agent_id: 'reflect', session_id: 's' },
+  listAtoms('./memory'),
+  readEvents('./memory'),
+);
+// → { detected, backfilled, clustered_skipped, by_confidence }
+// Or via the CLI: `mk reflect --backfill-human-edits`.
+```
+
 ### Idempotent lifecycle seed (v1.33.0+)
 
 ```typescript
@@ -562,7 +594,9 @@ Run weekly as part of the memory maintenance cycle. Add to cron alongside `mk re
 
 ## Grounding — Confidence-vs-Usage Reconciliation (v1.35.0+)
 
-`mk grounding` is an **advisory, read-only** report (#245). It reconciles each atom's *stated* confidence (the **prior**) against a **`grounding_score`** derived purely from the event log — how recently and how often the atom is actually read — and bins each atom into a 2×2 `prior × grounding` quadrant. It **writes no atom files** and **never builds or opens the SQLite index** (it reads `events.ndjson` directly). The destructive confidence write-back is deferred and gated on `human_edit` provenance events (#247).
+`mk grounding` is an **advisory, read-only** report by default (#245). It reconciles each atom's *stated* confidence (the **prior**) against a **`grounding_score`** derived purely from the event log — how recently and how often the atom is actually read — and bins each atom into a 2×2 `prior × grounding` quadrant. Plain `mk grounding` **writes no atom files** and **never builds or opens the SQLite index** (it reads `events.ndjson` directly).
+
+**`mk grounding --apply` (Phase 2, #364, v1.36.0+)** is the destructive companion: for the actionable `review`/`promote` atoms it nudges `confidence` toward the grounding value and emits an `atom_reconciled` audit event per write. It is gated on `human_edit` provenance events (#247) — atoms a human has edited are skipped unless `--override`.
 
 ### CLI
 
@@ -581,6 +615,11 @@ mk grounding -d ./memory --prior-threshold 0.7 --grounding-threshold 0.4
 
 # Grade every atom, including non-active and conflict-type (default: active, non-conflict)
 mk grounding -d ./memory --include-all
+
+# Phase 2 (#364): write reconciled confidence back to review/promote atoms.
+mk grounding -d ./memory --apply --dry-run   # preview the write-back
+mk grounding -d ./memory --apply             # apply; emits atom_reconciled events
+mk grounding -d ./memory --apply --override  # also adjust human_edit-touched atoms
 ```
 
 ### Programmatic API
@@ -604,6 +643,25 @@ for (const r of result.reports) {
   console.log(r.atom_id, r.quadrant, r.prior, r.grounding_score, r.actionable);
   console.log(r.inputs); // { n_access, session_diversity, n_conflict, days_since_last_read, age_days, sessions_since_creation }
 }
+```
+
+#### Confidence write-back (Phase 2, #364)
+
+```typescript
+import { reconcileGrounding, reconciledConfidence } from 'memory-kernel';
+
+// Pure: the asymmetric convex pull of prior toward grounding (α_neg=0.08 > α_pos=0.03).
+reconciledConfidence(0.9, 0.31); // review (down): 0.9 + 0.08·(0.31−0.9) ≈ 0.8528
+
+// Mutating: reuses computeGrounding, writes back review/promote confidences,
+// skips human_edit-touched atoms (unless override), emits atom_reconciled events.
+const r = reconcileGrounding({
+  memoryDir: './memory',
+  dryRun: true,            // preview without writing
+  // override: true,       // also adjust human-edited atoms
+  // alphaNeg, alphaPos, minDelta, grounding: { priorThreshold, ... } all overridable
+});
+// → { scanned, candidates, applied, skipped_human_edit, skipped_below_min_delta, dry_run, changes[] }
 ```
 
 **`grounding_score`** is **prior-independent** — a posterior over *use*, not over the atom's content or stated confidence:

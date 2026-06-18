@@ -8,6 +8,7 @@
  *   mk checkpoint              Generate a checkpoint/handoff
  *   mk recall [--task "..."]   Load relevant context
  *   mk reflect                 Consolidate, TTL, promote, dedup
+ *   mk edit <id>               Edit an atom in $EDITOR, record a human_edit event
  *   mk gc                      Archive expired atoms
  *   mk doctor                  Validate schema, links, conflicts
  *   mk status                  Show memory stats
@@ -66,6 +67,7 @@ import { registerSupersedeCommand } from './supersede.js';
 import { registerSeedCommand } from './seed.js';
 import { registerUpgradeCommand } from './upgrade.js';
 import { registerExecuteCommand } from './execute.js';
+import { registerEditCommand } from './edit.js';
 import { closure } from '../closure.js';
 import { isIsolated, initSharedStore, initIsolatedBase, initAgentStore, listAgents } from '../isolation.js';
 import { shareAtom, unshareAtom, listSharedAtoms } from '../share.js';
@@ -620,14 +622,26 @@ program
   .option('-d, --dir <dir>', 'Memory directory', './memory')
   .option('--agent-id <id>', 'Agent ID', 'cli')
   .option('--session-id <id>', 'Session ID', 'cli-session')
+  .option(
+    '--backfill-human-edits',
+    'Detect off-band filesystem edits and emit synthetic human_edit events for ' +
+      'clearly-scattered ones (bulk migration clusters are skipped). See #247.',
+  )
   .option('--json', 'Output as JSON')
-  .action((opts: { dir: string; agentId: string; sessionId: string; json?: boolean }) => {
+  .action((opts: {
+    dir: string;
+    agentId: string;
+    sessionId: string;
+    backfillHumanEdits?: boolean;
+    json?: boolean;
+  }) => {
     const memoryDir = resolveContextDir(opts);
     requireExistingDir(memoryDir, opts.json);
     const result = reflect({
       memoryDir,
       agent_id: opts.agentId,
       session_id: opts.sessionId,
+      backfillHumanEdits: opts.backfillHumanEdits,
     });
 
     if (opts.json) {
@@ -641,6 +655,10 @@ program
     console.log(`  Promoted:   ${result.promoted}`);
     console.log(`  Archived:   ${result.archived}`);
     console.log(`  Conflicts:  ${result.conflicts_found}`);
+    if (opts.backfillHumanEdits) {
+      console.log(`  Unprovenanced writes: ${result.unprovenanced_writes ?? 0}`);
+      console.log(`  human_edits backfilled: ${result.human_edits_backfilled ?? 0}`);
+    }
     console.log(`  Events:     ${result.events_emitted}`);
   });
 
@@ -1724,6 +1742,7 @@ registerSupersedeCommand(program);
 registerSeedCommand(program);
 registerUpgradeCommand(program);
 registerExecuteCommand(program);
+registerEditCommand(program);
 
 // Rewrite argv to strip/translate deprecated flags before commander parses.
 // Without this, `mk render --fill` (from an old wrapper) would fail with a

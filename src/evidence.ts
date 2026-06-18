@@ -31,6 +31,16 @@ export function hashEvidence(data: Buffer): string {
 }
 
 /**
+ * Compute the SHA-256 hex digest of a UTF-8 string. Shared by the #247
+ * provenance paths (edit.ts hashes raw file content for the human_edit diff
+ * summary; provenance.ts hashes serialized atoms for content-diff detection) so
+ * the hash incantation lives in exactly one place.
+ */
+export function sha256Hex(s: string): string {
+  return crypto.createHash('sha256').update(s, 'utf-8').digest('hex');
+}
+
+/**
  * Write evidence to the content-addressed store.
  * Returns the SHA-256 hex hash. Idempotent: same bytes = same hash = no-op.
  */

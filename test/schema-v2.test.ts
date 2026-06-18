@@ -85,6 +85,10 @@ describe('MUTATION_ACTIONS', () => {
     //       atom and carries the final snapshot) — must be tracked by
     //       compactLog and replay alongside the other archive-like actions.
     expect(MUTATION_ACTIONS).toContain('conflict_resolved');
+    // #247: human_edit carries a full post-edit snapshot (mk edit forward path
+    //       + reflect backfill) — a non-terminal mutation, tracked like
+    //       atom_updated by compactLog and replay.
+    expect(MUTATION_ACTIONS).toContain('human_edit');
   });
 
   it('does not contain non-mutation actions', () => {
@@ -107,8 +111,8 @@ describe('isMutationAction', () => {
     expect(isMutationAction('gc_completed')).toBe(false);
     expect(isMutationAction('session_started')).toBe(false);
     expect(isMutationAction('session_ended')).toBe(false);
-    expect(isMutationAction('human_edit')).toBe(false);
     expect(isMutationAction('conflict_detected')).toBe(false);
+    // #247: human_edit moved INTO MUTATION_ACTIONS (covered by the loop above).
     // #109: conflict_resolved IS a mutation (archives the atom)
     expect(isMutationAction('conflict_resolved')).toBe(true);
   });
